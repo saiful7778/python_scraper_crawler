@@ -2,5 +2,7 @@
   "python.terminal.useEnvFile": true,
   "files.associations": {
     "**/.graphifyignore": "ignore"
-  }
+  },
+  "python.analysis.indexing": true,
+  "editor.suggestSelection": "first"
 }
