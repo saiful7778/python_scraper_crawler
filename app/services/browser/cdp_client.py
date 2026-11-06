@@ -2,6 +2,7 @@ import json
 import queue
 import threading
 from typing import Any, TypedDict
+
 from .ws_client import WebSocketClient
 
 CDP_DEAD = object()
@@ -56,10 +57,10 @@ class CDPClient:
         self._next_id: int = 0
         self._id_lock: threading.Lock = threading.Lock()
         # id -> Queue(1) holding the one-and-only reply for that call
-        self._pending: dict[int, "queue.Queue[CDPMessage]"] = {}
+        self._pending: dict[int, queue.Queue[CDPMessage]] = {}
         # (session_id, method) -> list of subscriber queues
         self._subscriptions: dict[
-            tuple[str | None, str], list["queue.Queue[Params | object]"]
+            tuple[str | None, str], list[queue.Queue[Params | object]]
         ] = {}
         self._subscriptions_lock: threading.Lock = threading.Lock()
 
@@ -84,7 +85,7 @@ class CDPClient:
                 raw: str = self.ws.recv_text()
                 message: CDPMessage = json.loads(raw)
                 if "id" in message:
-                    reply_queue: "queue.Queue[CDPMessage] | None" = self._pending.pop(
+                    reply_queue: queue.Queue[CDPMessage] | None = self._pending.pop(
                         message["id"], None
                     )
                     if reply_queue is not None:
@@ -95,7 +96,7 @@ class CDPClient:
                         message.get("method", ""),
                     )
                     with self._subscriptions_lock:
-                        subscribers: tuple["queue.Queue[Params | object]", ...] = tuple(
+                        subscribers: tuple[queue.Queue[Params | object], ...] = tuple(
                             self._subscriptions.get(key, ())
                         )
                     params: Params = message.get("params", {})
@@ -109,7 +110,7 @@ class CDPClient:
             for reply_queue in list(self._pending.values()):
                 reply_queue.put(error_reply)
             with self._subscriptions_lock:
-                all_subscribers: list["queue.Queue[Params | object]"] = [
+                all_subscribers: list[queue.Queue[Params | object]] = [
                     q for qs in self._subscriptions.values() for q in qs
                 ]
             for subscriber in all_subscribers:
@@ -140,7 +141,7 @@ class CDPClient:
             self._next_id += 1
             message_id: int = self._next_id
 
-        reply_queue: "queue.Queue[CDPMessage]" = queue.Queue(1)
+        reply_queue: queue.Queue[CDPMessage] = queue.Queue(1)
         self._pending[message_id] = reply_queue
         if self.closed:
             # The reader died after the check above and will never answer.
@@ -209,7 +210,7 @@ class CDPClient:
         """
         key: tuple[str | None, str] = (session_id, method)
         with self._subscriptions_lock:
-            subscribers: list["queue.Queue[Params | object]"] = self._subscriptions.get(
+            subscribers: list[queue.Queue[Params | object]] = self._subscriptions.get(
                 key, []
             )
             if event_queue in subscribers:

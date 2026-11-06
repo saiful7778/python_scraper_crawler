@@ -1,6 +1,7 @@
 import queue
 import time
-from .cdp_client import CDPClient, Params, Result, CDPError, JSONValue
+
+from .cdp_client import CDPClient, CDPError, JSONValue, Params, Result
 
 
 class BrowserTab:
@@ -100,7 +101,7 @@ class BrowserTab:
         :raises CDPError: If navigation is rejected or the load event does
             not arrive in time.
         """
-        load_queue: "queue.Queue[Params | object]" = self.client.subscribe_events(
+        load_queue: queue.Queue[Params | object] = self.client.subscribe_events(
             "Page.loadEventFired", self.session_id
         )
         try:

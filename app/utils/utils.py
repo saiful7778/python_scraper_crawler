@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
 import sys
+from datetime import UTC, datetime
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def log(msg: object) -> None:
