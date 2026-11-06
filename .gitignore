@@ -1,0 +1,69 @@
+# ==========================================
+# FastAPI Startkit Comprehensive .gitignore
+# ==========================================
+
+# --- 1. Environment & Secrets ---
+# FastAPI Startkit loads .env files automatically[citation:2]
+# Never commit actual secrets!
+.env
+.env.*
+!.env.example
+
+# --- 2. Python & General ---
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- 3. FastAPI Startkit Specifics ---
+# SQLite database files (default DB_CONNECTION is sqlite)[citation:7][citation:26]
+*.sqlite
+database.sqlite
+
+# Migration generated files (if you choose to ignore them, though usually committed)
+# databases/migrations/*.py
+
+# Vite / Frontend assets generated files[citation:4]
+/node_modules/
+/dist/
+.vite/
+
+# AI Agent test cassettes (recorded responses)[citation:24]
+# Keep them if you want deterministic CI, ignore if they contain sensitive data
+# tests/cassettes/
+
+# --- 4. IDE & Editor ---
+.idea/
+*.swp
+*.swo
+*~
+
+# --- 5. OS Generated Files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+graphify-out/
