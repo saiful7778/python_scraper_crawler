@@ -31,6 +31,9 @@ include = [
     "tasks/**/*.py",
     "tests/**/test_*.py"
 ]
+exclude = [
+    "app/migrations/**/*.py"
+]
 
 [tool.tortoise]
 tortoise_orm = "config.tortoise.TORTOISE_ORM"
