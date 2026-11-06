@@ -9,7 +9,7 @@ createInertiaApp({
       import.meta as ImportMeta & {
         glob<T>(
           pattern: string,
-          options: { eager: true; import: "default" },
+          options: { eager: true; import: "default" }
         ): Record<string, T>;
       }
     ).glob<ComponentType>("./Pages/**/*.tsx", {
