@@ -1,0 +1,36 @@
+import os
+from dataclasses import asdict, dataclass, field
+
+
+@dataclass
+class TortoiseConfig:
+    connections: dict = field(
+        default_factory=lambda: {
+            "default": {
+                "engine": "tortoise.backends.asyncpg",
+                "credentials": {
+                    "host": os.getenv("DB_HOST", "127.0.0.1"),
+                    "port": int(os.getenv("DB_PORT", "5432")),
+                    "user": os.getenv("DB_USERNAME", "user"),
+                    "password": os.getenv("DB_PASSWORD", "password"),
+                    "database": os.getenv("DB_DATABASE", "db"),
+                },
+            }
+        }
+    )
+
+    apps: dict = field(
+        default_factory=lambda: {
+            "models": {
+                "models": ["app.models"],
+                "default_connection": "default",
+                "migrations": "app.migrations",
+            }
+        }
+    )
+
+    use_tz: bool = True
+    timezone: str = "UTC"
+
+
+TORTOISE_ORM = asdict(TortoiseConfig())

@@ -5,6 +5,7 @@ requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi-startkit[fastapi,inertia,vite]==0.74.0",
     "ruff>=0.17.4",
+    "tortoise-orm[asyncpg,ipython]>=1.1.9",
 ]
 
 [dependency-groups]
@@ -30,3 +31,6 @@ include = [
     "tasks/**/*.py",
     "tests/**/test_*.py"
 ]
+
+[tool.tortoise]
+tortoise_orm = "config.tortoise.TORTOISE_ORM"
