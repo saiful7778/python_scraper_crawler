@@ -1,7 +1,7 @@
 import json
 import queue
 import threading
-from typing import Any, Final, TypedDict
+from typing import Any, TypedDict
 from .ws_client import WebSocketClient
 
 CDP_DEAD = object()
@@ -44,7 +44,7 @@ class CDPClient:
     """
 
     #: A sentinel queued onto subscribers when the reader dies.
-    _DEAD: Final[object] = CDP_DEAD
+    _DEAD = CDP_DEAD
 
     def __init__(self, ws_url: str, timeout: float = 30.0) -> None:
         #: Optional browser-wide user agent applied to each attached tab.
