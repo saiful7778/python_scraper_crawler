@@ -1,0 +1,13 @@
+{
+  "resources/**/*.{ts,tsx}": [
+    "eslint --max-warnings 0 --config ./eslint.config.js"
+  ],
+  "resources/**/*": [
+    "prettier --write"
+  ],
+  "{app,bootstrap,config,providers,routes,tests}/**/*.py": [
+    "ruff check --fix",
+    "ruff format"
+  ],
+  "*.md": ["prettier --write"]
+}

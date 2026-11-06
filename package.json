@@ -7,7 +7,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"./resources/**/*.{ts,tsx}\"",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=26"
@@ -26,6 +28,8 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
     "@eslint-react/eslint-plugin": "^5.28.8",
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.0.0",
@@ -38,6 +42,10 @@
     "eslint-plugin-react-refresh": "^0.5.7",
     "fastapi-vite-plugin": "^0.0.3",
     "globals": "^17.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.72.1",
