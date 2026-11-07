@@ -4,12 +4,18 @@ version = "0.1.0"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi-startkit[fastapi,inertia,vite]==0.74.0",
+    "playwright>=1.64.1",
     "ruff>=0.17.4",
     "tortoise-orm[asyncpg,ipython]>=1.1.9",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.28"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "pyright>=1.1.414",
+]
 
 [tool.uv]
 package = false
@@ -33,6 +39,28 @@ include = [
 ]
 exclude = [
     "app/migrations/**/*.py"
+]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingImports = true
+reportMissingTypeStubs = true
+venvPath = "."
+venv = ".venv"
+include = [
+    "app",
+    "bootstrap",
+    "config",
+    "providers",
+    "routes",
+    "tests"
+]
+exclude = [
+    "**/__pycache__",
+    "**/.venv",
+    "**/node_modules",
+    "app/migrations"
 ]
 
 [tool.tortoise]
