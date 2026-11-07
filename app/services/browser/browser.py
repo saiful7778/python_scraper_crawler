@@ -13,14 +13,14 @@ import tempfile
 import time
 from typing import Final, Self
 
-from app.services.browser.browser_error import BrowserError
-from app.services.browser.cdp_client import CDPClient, CDPError
-from app.services.browser.launcher import build_launch_args, launch_chrome
-from app.services.browser.locator import (
+from .browser_error import BrowserError
+from .cdp_client import CDPClient, CDPError
+from .launcher import build_launch_args, launch_chrome
+from .locator import (
     PROFILE_PREFIX,
     locate_chrome_binary,
 )
-from app.services.browser.proxy import split_proxy_url
+from .proxy import split_proxy_url
 
 from .constants import PY
 

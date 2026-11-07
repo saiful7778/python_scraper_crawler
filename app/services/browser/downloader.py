@@ -19,7 +19,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import BinaryIO, Final
 
-from app.services.browser.locator import (
+from .locator import (
     chrome_for_testing_platform,
     ensure_engine_home,
     headless_shell_path,

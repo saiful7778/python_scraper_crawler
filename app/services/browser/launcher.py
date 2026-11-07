@@ -14,7 +14,7 @@ import time
 from collections.abc import Sequence
 from typing import IO, Final
 
-from app.services.browser.browser_error import BrowserError
+from .browser_error import BrowserError
 
 from .constants import APT_LINE
 

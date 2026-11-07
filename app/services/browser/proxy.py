@@ -12,8 +12,8 @@ import queue
 import threading
 import urllib.parse
 
-from app.services.browser.cdp_client import CDPError
-from app.services.browser.tab import BrowserTab
+from .cdp_client import CDPError
+from .tab import BrowserTab
 
 
 class ProxyAuthenticator:
