@@ -1,13 +1,14 @@
 import os
 import subprocess
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from app.services.browser import browser as browser_module
 from app.services.browser.browser import Browser
 from app.services.browser.browser_error import BrowserError
-from app.services.browser.cdp_client import CDPError
+from app.services.browser.cdp_error import CDPError
 
 CHROME = "/usr/bin/fake-chrome"
 DEVTOOLS_PATH = "/devtools/browser/abc"
@@ -53,7 +54,9 @@ class FakeProcess:
         self.events.append("wait")
         if self.hang_once:
             self.hang_once = False
-            raise subprocess.TimeoutExpired(cmd=CHROME, timeout=timeout)
+            raise subprocess.TimeoutExpired(
+                cmd=CHROME, timeout=timeout if timeout is not None else 0.0
+            )
         self.running = False
         return 0
 
@@ -218,10 +221,10 @@ def test_dispose_sends_the_context_id(chrome, profile):
 def test_dispose_ignores_a_dead_connection(chrome, profile, error):
     browser = _browser(profile)
 
-    def dead(method, params=None):
+    def dead(method, params=None, session_id=None, timeout=None):
         raise error
 
-    browser.cdp.call = dead
+    chrome.cdp.call = dead
 
     browser.dispose("ctx-1")
     browser.close()
@@ -229,31 +232,34 @@ def test_dispose_ignores_a_dead_connection(chrome, profile, error):
 
 def test_kill_terminates_the_process_immediately(chrome, profile):
     browser = _browser(profile)
-    browser.proc = FakeProcess()
+    process = FakeProcess()
+    browser.proc = cast(subprocess.Popen[bytes], process)
 
     browser.kill()
 
-    assert browser.proc.events == ["kill"]
+    assert process.events == ["kill"]
     browser.close()
 
 
 def test_close_terminates_a_running_process(chrome, profile):
     browser = _browser(profile)
-    browser.proc = FakeProcess()
+    process = FakeProcess()
+    browser.proc = cast(subprocess.Popen[bytes], process)
 
     browser.close()
 
-    assert browser.proc.events == ["terminate", "wait"]
+    assert process.events == ["terminate", "wait"]
     assert chrome.cdp.closed
 
 
 def test_close_escalates_to_kill_when_terminate_hangs(chrome, profile):
     browser = _browser(profile)
-    browser.proc = FakeProcess(hang_once=True)
+    process = FakeProcess(hang_once=True)
+    browser.proc = cast(subprocess.Popen[bytes], process)
 
     browser.close()
 
-    assert browser.proc.events == ["terminate", "wait", "kill", "wait"]
+    assert process.events == ["terminate", "wait", "kill", "wait"]
 
 
 def test_close_removes_an_owned_profile(chrome):

@@ -1,7 +1,8 @@
 import queue
 import time
 
-from .cdp_client import CDPClient, CDPError, JSONValue, Params, Result
+from .cdp_client import CDPClient, JSONValue, Params, Result
+from .cdp_error import CDPError
 
 
 class BrowserTab:

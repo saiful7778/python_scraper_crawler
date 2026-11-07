@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from app.services.browser.cdp_client import CDPClient, CDPError
+from app.services.browser.cdp_client import CDPClient
+from app.services.browser.cdp_error import CDPError
 from tests.services.browser.fakes import FakeWebSocket, wait_until
 
 

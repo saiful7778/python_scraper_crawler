@@ -11,7 +11,8 @@ the newly parsed rows.
 import queue
 from typing import Final
 
-from app.services.browser.cdp_client import CDPError, Params
+from app.services.browser.cdp_client import Params
+from app.services.browser.cdp_error import CDPError
 from app.services.browser.tab import BrowserTab
 from app.services.google_map_scraper.extract_details import (
     PlaceRecord,

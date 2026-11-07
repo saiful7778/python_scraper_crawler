@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from app.services.browser.cdp_client import CDPError
+from app.services.browser.cdp_error import CDPError
 from app.services.google_map_scraper.google_map import collector
 from app.services.google_map_scraper.google_map.selectors import (
     CONSENT_COOKIES,
@@ -105,9 +105,7 @@ def test_collects_batches_until_depth_is_reached(run):
     tab = FakeTab()
     tab.evaluations[JS_FEED_LINKS] = Script([])
 
-    (leads, reason, stats), reader = run(
-        tab, [batch(ROW_A), batch(ROW_B)], depth=2
-    )
+    (leads, reason, stats), reader = run(tab, [batch(ROW_A), batch(ROW_B)], depth=2)
 
     assert leads == [ROW_A, ROW_B]
     assert reason == "depth"
@@ -252,9 +250,7 @@ def test_reraises_error_when_nothing_was_collected(run):
 def test_stops_when_stop_callback_fires(run):
     tab = FakeTab()
 
-    (leads, reason, _), _ = run(
-        tab, [batch(ROW_A)], depth=5, stop=lambda: True
-    )
+    (leads, reason, _), _ = run(tab, [batch(ROW_A)], depth=5, stop=lambda: True)
 
     assert leads == [ROW_A]
     assert reason == "stopped"
@@ -263,9 +259,7 @@ def test_stops_when_stop_callback_fires(run):
 def test_reports_timeout_when_wall_clock_budget_is_spent(run):
     tab = FakeTab()
 
-    (leads, reason, _), _ = run(
-        tab, [batch(ROW_A)], depth=5, max_seconds=0.0
-    )
+    (leads, reason, _), _ = run(tab, [batch(ROW_A)], depth=5, max_seconds=0.0)
 
     assert leads == [ROW_A]
     assert reason == "timeout"

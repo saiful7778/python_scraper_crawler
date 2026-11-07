@@ -14,7 +14,8 @@ import time
 from typing import Final, Self
 
 from .browser_error import BrowserError
-from .cdp_client import CDPClient, CDPError
+from .cdp_client import CDPClient
+from .cdp_error import CDPError
 from .launcher import build_launch_args, launch_chrome
 from .locator import (
     PROFILE_PREFIX,

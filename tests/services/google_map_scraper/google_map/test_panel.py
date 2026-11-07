@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.browser.cdp_client import CDPError
+from app.services.browser.cdp_error import CDPError
 from app.services.google_map_scraper.google_map import panel
 from tests.services.google_map_scraper.google_map.fakes import (
     FakeClock,

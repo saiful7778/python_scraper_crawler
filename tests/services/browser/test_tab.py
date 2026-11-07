@@ -1,6 +1,7 @@
 import pytest
 
-from app.services.browser.cdp_client import CDPClient, CDPError
+from app.services.browser.cdp_client import CDPClient
+from app.services.browser.cdp_error import CDPError
 from app.services.browser.tab import BrowserTab
 from tests.services.browser.fakes import FakeWebSocket, ScriptedBrowser, sequence
 

@@ -4,6 +4,7 @@ import threading
 from typing import Any, TypedDict
 
 from .ws_client import WebSocketClient
+from .cdp_error import CDPError
 
 CDP_DEAD = object()
 
@@ -25,10 +26,6 @@ class CDPMessage(TypedDict, total=False):
     sessionId: str
     result: Result
     error: dict[str, str]
-
-
-class CDPError(Exception):
-    """Raised when a CDP call fails, times out, or the connection is lost."""
 
 
 class CDPClient:

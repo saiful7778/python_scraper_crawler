@@ -1,5 +1,5 @@
 from app.services.browser.browser_error import BrowserError
-from app.services.browser.cdp_client import CDPError
+from app.services.browser.cdp_error import CDPError
 
 
 def test_browser_error_is_a_runtime_error():

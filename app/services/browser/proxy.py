@@ -12,7 +12,7 @@ import queue
 import threading
 import urllib.parse
 
-from .cdp_client import CDPError
+from .cdp_error import CDPError
 from .tab import BrowserTab
 
 
