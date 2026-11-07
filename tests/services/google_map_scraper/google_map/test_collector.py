@@ -1,7 +1,8 @@
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from app.services.browser import BrowserTab
 from app.services.browser.cdp_error import CDPError
 from app.services.google_map_scraper.google_map import collector
 from app.services.google_map_scraper.google_map.selectors import (
@@ -85,7 +86,7 @@ def run(monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr(collector, "BatchResponseReader", factory)
         kwargs.setdefault("log", lambda message: None)
-        result = collector.collect_leads(tab, URL, **kwargs)
+        result = collector.collect_leads(cast(BrowserTab, tab), URL, **kwargs)
         return result, readers[0]
 
     return _run

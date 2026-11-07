@@ -1,5 +1,8 @@
+from typing import cast
+
 import pytest
 
+from app.services.browser import BrowserTab
 from app.services.browser.cdp_error import CDPError
 from app.services.google_map_scraper.google_map import panel
 from tests.services.google_map_scraper.google_map.fakes import (
@@ -30,7 +33,7 @@ def test_returns_body_of_first_matching_json_response(clock: FakeClock):
     tab.client.events.put(_response("R1", PANEL_URL))
     tab.replies["Network.getResponseBody"] = Script({"body": "PANEL"})
 
-    body = panel.fetch_lead_panel_json(tab, URL)
+    body = panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert body == "PANEL"
     assert tab.navigated == [URL]
@@ -44,7 +47,7 @@ def test_subscribes_to_response_events_and_unsubscribes_afterwards(
     tab.client.events.put(_response("R1", PANEL_URL))
     tab.replies["Network.getResponseBody"] = Script({"body": "PANEL"})
 
-    panel.fetch_lead_panel_json(tab, URL)
+    panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert tab.client.subscriptions == [
         ("Network.responseReceived", "S1", tab.client.events)
@@ -58,7 +61,7 @@ def test_ignores_matching_url_that_is_not_json(clock: FakeClock):
     tab = FakeTab()
     tab.client.events.put(_response("R1", PANEL_URL, mime="text/html"))
 
-    body = panel.fetch_lead_panel_json(tab, URL, timeout=1.0)
+    body = panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL, timeout=1.0)
 
     assert body == ""
     assert tab.calls == []
@@ -67,7 +70,7 @@ def test_ignores_matching_url_that_is_not_json(clock: FakeClock):
 def test_returns_empty_on_timeout_without_reading_body(clock: FakeClock):
     tab = FakeTab()
 
-    body = panel.fetch_lead_panel_json(tab, URL, timeout=1.0)
+    body = panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL, timeout=1.0)
 
     assert body == ""
     assert clock.now >= 1.0
@@ -80,7 +83,7 @@ def test_returns_empty_when_google_serves_sorry_page(clock: FakeClock):
     tab.redirect_to = "https://www.google.com/sorry/index?continue=x"
     tab.client.events.put(_response("R1", PANEL_URL))
 
-    body = panel.fetch_lead_panel_json(tab, URL)
+    body = panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert body == ""
     assert tab.calls == []
@@ -94,7 +97,7 @@ def test_retries_body_read_while_response_is_still_downloading(clock: FakeClock)
         CDPError("No data found"), {"body": "READY"}
     )
 
-    body = panel.fetch_lead_panel_json(tab, URL)
+    body = panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert body == "READY"
     assert len(tab.calls) == 2
@@ -107,7 +110,7 @@ def test_reraises_body_read_error_when_connection_is_closed(clock: FakeClock):
     tab.replies["Network.getResponseBody"] = Script(CDPError("gone"))
 
     with pytest.raises(CDPError, match="gone"):
-        panel.fetch_lead_panel_json(tab, URL)
+        panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert len(tab.client.unsubscribed) == 1
 
@@ -117,6 +120,6 @@ def test_raises_when_event_queue_delivers_connection_loss(clock: FakeClock):
     tab.client.events.put(object())
 
     with pytest.raises(CDPError, match="connection lost"):
-        panel.fetch_lead_panel_json(tab, URL)
+        panel.fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert len(tab.client.unsubscribed) == 1
