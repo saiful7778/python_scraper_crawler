@@ -1,4 +1,4 @@
-from fastapi_startkit.vite.config.vite import ViteConfig as BaseViteConfig
+from fastapi_startkit.vite.config.vite import ViteConfig as BaseViteConfig  # pyright: ignore[reportMissingTypeStubs]
 
 
 class ViteConfig(BaseViteConfig):

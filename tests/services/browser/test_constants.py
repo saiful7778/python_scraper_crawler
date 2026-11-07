@@ -2,7 +2,7 @@ from app.services.browser import constants
 
 
 def test_every_pinned_hash_has_a_known_platform_tag():
-    known_tags = set(constants._CFT_PLATFORMS.values())
+    known_tags = set(constants.CFT_PLATFORMS.values())
 
     assert set(constants.CFT_SHA256) <= known_tags
 
