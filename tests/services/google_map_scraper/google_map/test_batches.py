@@ -3,11 +3,8 @@ from typing import Any, cast
 import pytest
 
 from app.services.browser.cdp_error import CDPError
-from app.services.google_map_scraper.google_map import batches
-from app.services.google_map_scraper.google_map.batches import (
-    _MAX_BODY_READ_TRIES,
-    BatchResponseReader,
-)
+from app.services.google_map_scraper.google_map import BatchResponseReader
+from app.services.google_map_scraper.google_map.batches import _MAX_BODY_READ_TRIES
 from tests.services.google_map_scraper.google_map.fakes import (
     FakeTab,
     Script,
@@ -29,7 +26,10 @@ def _reader(tab: FakeTab) -> BatchResponseReader:
 
 @pytest.fixture(autouse=True)
 def fake_parse(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(batches, "parse_place_list", lambda body: [{"body": body}])
+    monkeypatch.setattr(
+        "app.services.google_map_scraper.google_map.batches.parse_place_list",
+        lambda body: [{"body": body}],
+    )
 
 
 def _requested(request_id: str, url: str = BATCH_URL) -> dict:

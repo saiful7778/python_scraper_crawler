@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.google_map_scraper.google_map.parsing import (
+from app.services.google_map_scraper.google_map import (
     build_maps_search_url,
     feed_is_exhausted,
     parse_place_href,
@@ -126,9 +126,7 @@ def test_parse_place_href_without_place_path_falls_back_to_label():
 
 
 def test_parse_place_href_with_only_data_id_leaves_other_fields_empty():
-    place = parse_place_href(
-        "https://www.google.com/maps/place/Bar/data=!1s0x3:0x4"
-    )
+    place = parse_place_href("https://www.google.com/maps/place/Bar/data=!1s0x3:0x4")
 
     assert place["title"] == "Bar"
     assert place["data_id"] == "0x3:0x4"

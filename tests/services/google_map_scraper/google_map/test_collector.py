@@ -4,14 +4,14 @@ import pytest
 
 from app.services.browser import BrowserTab
 from app.services.browser.cdp_error import CDPError
-from app.services.google_map_scraper.google_map import collector
-from app.services.google_map_scraper.google_map.selectors import (
+from app.services.google_map_scraper.google_map import (
     CONSENT_COOKIES,
     JS_DISMISS_CONSENT,
     JS_FEED_END_STATE,
     JS_FEED_LINKS,
     JS_FEED_PRESENT,
     JS_SCROLL_FEED_TO_BOTTOM,
+    collect_leads,
 )
 from tests.services.google_map_scraper.google_map.fakes import (
     FakeClock,
@@ -74,7 +74,9 @@ def limited() -> dict[str, Any]:
 def run(monkeypatch: pytest.MonkeyPatch):
     """Run collect_leads over scripted batch steps; returns (result, reader)."""
     clock = FakeClock()
-    monkeypatch.setattr(collector, "time", clock)
+    monkeypatch.setattr(
+        "app.services.google_map_scraper.google_map.collector.time", clock
+    )
 
     def _run(tab: FakeTab, steps: list[Any], **kwargs: Any):
         readers: list[FakeBatchReader] = []
@@ -84,9 +86,12 @@ def run(monkeypatch: pytest.MonkeyPatch):
             readers.append(reader)
             return reader
 
-        monkeypatch.setattr(collector, "BatchResponseReader", factory)
+        monkeypatch.setattr(
+            "app.services.google_map_scraper.google_map.collector.BatchResponseReader",
+            factory,
+        )
         kwargs.setdefault("log", lambda message: None)
-        result = collector.collect_leads(cast(BrowserTab, tab), URL, **kwargs)
+        result = collect_leads(cast(BrowserTab, tab), URL, **kwargs)
         return result, readers[0]
 
     return _run
