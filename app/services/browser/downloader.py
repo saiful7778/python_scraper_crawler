@@ -19,14 +19,13 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import BinaryIO, Final
 
+from .browser_error import BrowserError
+from .constants import CFT_SHA256, CFT_URL, CFT_VERSION
 from .locator import (
     chrome_for_testing_platform,
     ensure_engine_home,
     headless_shell_path,
 )
-
-from .browser_error import BrowserError
-from .constants import CFT_SHA256, CFT_URL, CFT_VERSION
 
 #: Chunk size for streaming the download (1 MiB).
 _CHUNK_SIZE: Final[int] = 1 << 20

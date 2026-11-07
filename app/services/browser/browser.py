@@ -16,14 +16,13 @@ from typing import Final, Self
 from .browser_error import BrowserError
 from .cdp_client import CDPClient
 from .cdp_error import CDPError
+from .constants import PY
 from .launcher import build_launch_args, launch_chrome
 from .locator import (
     PROFILE_PREFIX,
     locate_chrome_binary,
 )
 from .proxy import split_proxy_url
-
-from .constants import PY
 
 #: Seconds between attempts to delete a profile Windows still has open.
 _PROFILE_RETRY_COUNT: Final[int] = 10

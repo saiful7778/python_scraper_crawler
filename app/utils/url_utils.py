@@ -1,7 +1,7 @@
 """Small pure URL helpers."""
 
 import urllib.parse
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def encode_url_as_ascii(url: str) -> str:

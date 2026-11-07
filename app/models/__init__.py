@@ -1,15 +1,15 @@
 from .lead_model import (
-    LeadModel,
     LeadAddressModel,
-    LeadEmailModel,
     LeadCategoryModel,
+    LeadEmailModel,
+    LeadModel,
     LeadSocialModel,
 )
 
 __all__ = [
-    "LeadModel",
     "LeadAddressModel",
-    "LeadEmailModel",
     "LeadCategoryModel",
+    "LeadEmailModel",
+    "LeadModel",
     "LeadSocialModel",
 ]

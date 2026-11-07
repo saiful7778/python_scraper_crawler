@@ -3,8 +3,8 @@ import queue
 import threading
 from typing import Any, TypedDict
 
-from .ws_client import WebSocketClient
 from .cdp_error import CDPError
+from .ws_client import WebSocketClient
 
 CDP_DEAD = object()
 

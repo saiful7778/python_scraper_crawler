@@ -15,7 +15,6 @@ from collections.abc import Sequence
 from typing import IO, Final
 
 from .browser_error import BrowserError
-
 from .constants import APT_LINE
 
 #: Seconds between polls for ``DevToolsActivePort``.
