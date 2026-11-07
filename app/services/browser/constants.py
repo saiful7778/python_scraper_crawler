@@ -34,14 +34,14 @@ HOME_PATH = os.path.join(
     KIT_PATH, ".engine"
 )  # everything the engine keeps: jobs, results, logs, its Chrome
 
-_ARCH_ALIASES: Final[dict[str, str]] = {
+ARCH_ALIASES: Final[dict[str, str]] = {
     "x86_64": "x64",
     "amd64": "x64",
     "arm64": "arm64",
     "aarch64": "arm64",
 }
 
-_CFT_PLATFORMS: Final[dict[tuple[str, str], str]] = {
+CFT_PLATFORMS: Final[dict[tuple[str, str], str]] = {
     ("Darwin", "arm64"): "mac-arm64",
     ("Darwin", "x64"): "mac-x64",
     ("Linux", "x64"): "linux64",

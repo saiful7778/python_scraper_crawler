@@ -21,9 +21,9 @@ import tempfile
 import time
 
 from .constants import (
-    _ARCH_ALIASES,
-    _CFT_PLATFORMS,
+    ARCH_ALIASES,
     CANDIDATES,
+    CFT_PLATFORMS,
     CFT_VERSION,
     HOME_PATH,
     PROFILE_PREFIX,
@@ -41,10 +41,10 @@ def chrome_for_testing_platform(
         ``"mac-arm64"``, ``"win64"``, or ``None`` if the pair is unknown.
     """
     resolved_system = system or platform.system()
-    arch = _ARCH_ALIASES.get((machine or platform.machine()).lower())
+    arch = ARCH_ALIASES.get((machine or platform.machine()).lower())
     if arch is None:
         return None
-    return _CFT_PLATFORMS.get((resolved_system, arch))
+    return CFT_PLATFORMS.get((resolved_system, arch))
 
 
 def headless_shell_path(plat: str | None = None) -> str:

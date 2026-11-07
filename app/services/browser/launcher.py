@@ -111,7 +111,7 @@ def launch_chrome(
     # The caller needs the process handle to terminate it on failure.
     process.kill()
     raise BrowserError(
-        f"Chrome did not open its DevTools port within {timeout} s: " f"{args[0]}"
+        f"Chrome did not open its DevTools port within {timeout} s: {args[0]}"
     )
 
 
