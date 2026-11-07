@@ -1,8 +1,11 @@
 import queue
 import time
+from typing import Self
 
 from .cdp_client import CDPClient, JSONValue, Params, Result
 from .cdp_error import CDPError
+from .browser import Browser
+from .proxy import ProxyAuthenticator, split_proxy_url
 
 
 class BrowserTab:
@@ -199,3 +202,48 @@ class BrowserTab:
         except (CDPError, OSError):
             # A dead socket fails in call() before the reader notices.
             pass
+
+
+class ProxyTab:
+    """A tab in its own browser context that answers the proxy's login challenge.
+
+    Use as a context manager; the tab, the authenticator and the context are
+    released on exit, skipping whatever a dead connection has already dropped.
+    """
+
+    def __init__(self, browser: Browser, proxy: str | None):
+        """Remember the browser and the proxy URL (credentials included, if any)."""
+        self._browser = browser
+        self._proxy = proxy
+        self._context_id: str | None = None
+        self._authenticator: ProxyAuthenticator | None = None
+        self.tab: BrowserTab | None = None
+
+    def __enter__(self) -> Self:
+        """Create the context and tab, and authenticate when the proxy needs it."""
+        assert self._browser.cdp is not None
+        self._context_id = self._browser.context(self._proxy)
+        self.tab = BrowserTab(self._browser.cdp, context=self._context_id)
+        _, user, password = (
+            split_proxy_url(self._proxy) if self._proxy else ("", "", "")
+        )
+        if user or password:
+            self._authenticator = ProxyAuthenticator(self.tab, user, password)
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Release the authenticator, the tab and the browser context."""
+        if self._authenticator:
+            self._authenticator.close()
+        if self.tab and self._connection_alive():
+            self.tab.close()
+        if self._context_id and self._connection_alive():
+            self._browser.dispose(self._context_id)
+
+    @property
+    def refused(self) -> bool:
+        """True once the proxy rejected the supplied credentials."""
+        return bool(self._authenticator and self._authenticator.refused)
+
+    def _connection_alive(self) -> bool:
+        return self._browser.cdp is not None and not self._browser.cdp.closed

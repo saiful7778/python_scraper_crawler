@@ -10,12 +10,13 @@ own modules.
 
 from .browser import Browser
 from .browser_error import BrowserError
+from .browser_session import BrowserSession
 from .cdp_client import CDPClient
 from .cdp_error import CDPError
 from .downloader import download_headless_shell
 from .locator import ensure_engine_home, locate_chrome_binary, prune_stale_profiles
 from .proxy import ProxyAuthenticator, split_proxy_url
-from .tab import BrowserTab
+from .tab import BrowserTab, ProxyTab
 from .website import (
     RenderResult,
     RenderStatus,
@@ -31,7 +32,9 @@ __all__ = [
     "BrowserTab",
     "CDPClient",
     "CDPError",
+    "BrowserSession",
     "ProxyAuthenticator",
+    "ProxyTab",
     "RenderResult",
     "RenderStatus",
     "WebSocketClient",
