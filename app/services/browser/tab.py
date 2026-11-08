@@ -1,11 +1,13 @@
 import queue
 import time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from .cdp_client import CDPClient, JSONValue, Params, Result
 from .cdp_error import CDPError
-from .browser import Browser
 from .proxy import ProxyAuthenticator, split_proxy_url
+
+if TYPE_CHECKING:
+    from .browser import Browser
 
 
 class BrowserTab:
@@ -211,7 +213,7 @@ class ProxyTab:
     released on exit, skipping whatever a dead connection has already dropped.
     """
 
-    def __init__(self, browser: Browser, proxy: str | None):
+    def __init__(self, browser: "Browser", proxy: str | None):
         """Remember the browser and the proxy URL (credentials included, if any)."""
         self._browser = browser
         self._proxy = proxy

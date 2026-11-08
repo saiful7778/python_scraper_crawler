@@ -6,12 +6,15 @@ Orchestrates :mod:`.locator` (find the binary),
 directory, and cleans both up on :meth:`close`.
 """
 
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
 import time
-from typing import Final, Self
+from typing import BinaryIO, Final, Self
+
+from app.utils.errors import describe
 
 from .browser_error import BrowserError
 from .cdp_client import CDPClient
@@ -23,6 +26,8 @@ from .locator import (
     locate_chrome_binary,
 )
 from .proxy import split_proxy_url
+
+logger = logging.getLogger(__name__)
 
 #: Seconds between attempts to delete a profile Windows still has open.
 _PROFILE_RETRY_COUNT: Final[int] = 10
@@ -45,7 +50,7 @@ class Browser:
     :param timeout: Seconds allowed for each startup phase.
     :raises BrowserError: If no binary is found, or startup fails. On
         failure the process and profile are cleaned up before the error
-        propagates.
+        propagates. The message names the step that failed.
     """
 
     def __init__(
@@ -64,40 +69,51 @@ class Browser:
                 "install Google Chrome."
             )
         self._owns_profile = profile is None
-        self.profile = profile or tempfile.mkdtemp(prefix=PROFILE_PREFIX)
-        self._stderr = open(  # noqa: SIM115 -- closed in _finalize
-            os.path.join(self.profile, "chrome-stderr.log"), "w+b"
-        )
-
+        self.profile: str = profile or ""
+        self._stderr: BinaryIO | None = None
         self.proc: subprocess.Popen | None = None
         self.cdp: CDPClient | None = None
-        args = build_launch_args(
-            self.path,
-            self.profile,
-            headless=headless,
-            lang=lang,
-        )
+        step = "creating the profile directory"
         try:
+            self.profile = profile or tempfile.mkdtemp(prefix=PROFILE_PREFIX)
+            step = "opening the Chrome stderr log"
+            stderr = open(
+                os.path.join(self.profile, "chrome-stderr.log"), "w+b"
+            )
+            self._stderr = stderr
+            step = "building the Chrome command line"
+            args = build_launch_args(
+                self.path,
+                self.profile,
+                headless=headless,
+                lang=lang,
+            )
+            step = "launching Chrome"
             try:
-                port, ws_path = launch_chrome(args, self.profile, self._stderr, timeout)
+                port, ws_path, self.proc = launch_chrome(
+                    args, self.profile, stderr, timeout
+                )
             except BrowserError:
                 # Ubuntu 23.10+ (AppArmor) blocks the sandbox for a
                 # browser not installed under /opt, which includes the
                 # downloaded shell. Retry once without the sandbox, as
                 # Playwright does; it only ever loads Google Maps.
-                self._stderr.seek(0)
+                stderr.seek(0)
                 if (
-                    b"No usable sandbox" not in self._stderr.read()
+                    b"No usable sandbox" not in stderr.read()
                     or "--no-sandbox" in args
                 ):
                     raise
-                port, ws_path = launch_chrome(
+                logger.warning("Chrome refused its sandbox; retrying with --no-sandbox")
+                port, ws_path, self.proc = launch_chrome(
                     args + ["--no-sandbox"],
                     self.profile,
-                    self._stderr,
+                    stderr,
                     timeout,
                 )
+            step = "connecting to Chrome's DevTools port"
             self.cdp = CDPClient(f"ws://127.0.0.1:{port}{ws_path}", timeout=timeout)
+            step = "reading Chrome's user agent"
             self._apply_user_agent_fixup()
         except BrowserError:
             self.close()
@@ -105,8 +121,15 @@ class Browser:
         except Exception as error:
             self.close()
             raise BrowserError(
-                f"Could not connect to Chrome's DevTools port: {error}"
+                f"Could not start Chrome while {step}: {describe(error)}"
             ) from error
+
+    def _connection(self) -> CDPClient:
+        if self.cdp is None:
+            raise BrowserError(
+                "Chrome is not connected: it was never started or it was already closed"
+            )
+        return self.cdp
 
     def _apply_user_agent_fixup(self) -> None:
         """Rewrite ``HeadlessChrome/`` in the native UA, if present.
@@ -117,15 +140,14 @@ class Browser:
         this UA before its first request. A window's UA has no
         ``HeadlessChrome`` and is left alone.
         """
-        assert self.cdp is not None
-        native = self.cdp.call("Browser.getVersion")["userAgent"]
+        cdp = self._connection()
+        native = cdp.call("Browser.getVersion")["userAgent"]
         if "HeadlessChrome/" in native:
-            self.cdp.user_agent = native.replace("HeadlessChrome/", "Chrome/")
+            cdp.user_agent = native.replace("HeadlessChrome/", "Chrome/")
 
     def version(self) -> str:
         """Return Chrome's ``product`` string, e.g. ``"Chrome/120.0"``."""
-        assert self.cdp is not None
-        return self.cdp.call("Browser.getVersion").get("product", "")
+        return self._connection().call("Browser.getVersion").get("product", "")
 
     def context(self, proxy: str | None = None) -> str:
         """Create an isolated browser context (like incognito).
@@ -135,63 +157,76 @@ class Browser:
             :class:`ProxyAuthenticator`.
         :returns: The context id.
         """
-        assert self.cdp is not None
         params: dict = {"disposeOnDetach": True}
         if proxy:
             params["proxyServer"] = split_proxy_url(proxy)[0]
-        return self.cdp.call("Target.createBrowserContext", params)["browserContextId"]
+        return self._connection().call("Target.createBrowserContext", params)[
+            "browserContextId"
+        ]
 
     def dispose(self, context_id: str) -> None:
-        """Dispose of a browser context, ignoring a dead connection."""
-        assert self.cdp is not None
+        """Dispose of a browser context. A dead connection is logged, not raised."""
         try:
-            self.cdp.call(
+            self._connection().call(
                 "Target.disposeBrowserContext",
                 {"browserContextId": context_id},
             )
-        except (CDPError, OSError):
-            pass
+        except (CDPError, OSError, BrowserError) as error:
+            logger.warning(
+                "could not dispose browser context %s: %s", context_id, describe(error)
+            )
 
     def kill(self) -> None:
-        """Kill the Chrome process immediately, ignoring errors."""
+        """Kill the Chrome process immediately. A process that is already gone is fine."""
+        if self.proc is None:
+            return
         try:
-            assert self.proc is not None
             self.proc.kill()
-        except (OSError, AttributeError):
-            pass
+        except OSError:
+            logger.warning(
+                "could not kill Chrome (pid %s)", self.proc.pid, exc_info=True
+            )
 
     def close(self) -> None:
         """Close the CDP connection, stop Chrome, and clean up.
 
         Terminates the process (escalating to ``kill`` after a grace
         period) and deletes the profile if :class:`Browser` created it.
-        Safe to call more than once.
+        Safe to call more than once. Each failed step is logged with its
+        traceback, and the remaining steps still run.
         """
         if self.cdp:
             try:
                 self.cdp.close()
-            except Exception:  # noqa: BLE001, S110 -- best effort
-                pass
+            except Exception:
+                logger.warning("closing the DevTools connection failed", exc_info=True)
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(_TERMINATE_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Chrome (pid %s) ignored SIGTERM for %s s; killing it",
+                    self.proc.pid,
+                    _TERMINATE_GRACE_SECONDS,
+                )
                 self.proc.kill()
-                self.proc.wait(_TERMINATE_GRACE_SECONDS)
+                self.proc.wait()
         self._finalize()
 
     def _finalize(self) -> None:
         """Close the stderr log and delete an owned profile."""
-        self._stderr.close()
-        if not self._owns_profile:
+        if self._stderr is not None:
+            self._stderr.close()
+        if not self._owns_profile or not self.profile:
             return
         for _ in range(_PROFILE_RETRY_COUNT):
             # Windows keeps the profile locked for a moment after exit.
             shutil.rmtree(self.profile, ignore_errors=True)
             if not os.path.exists(self.profile):
-                break
+                return
             time.sleep(_PROFILE_RETRY_INTERVAL)
+        logger.warning("could not delete the Chrome profile %s; it is still in use", self.profile)
 
     def __enter__(self) -> Self:
         return self

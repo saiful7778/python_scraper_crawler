@@ -1,16 +1,25 @@
 import base64
 import hashlib
+import logging
 import os
 import socket
 import struct
 import threading
 import urllib.parse
 
+from app.utils.errors import ScraperError, describe
+
+logger = logging.getLogger(__name__)
+
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
-class WebSocketError(OSError):
+class WebSocketError(ScraperError, OSError):
     """Raised when the WebSocket transport fails or the peer misbehaves."""
+
+
+class WebSocketClosed(WebSocketError):
+    """Raised when the peer sends a close frame, an orderly shutdown."""
 
 
 class WebSocketClient:
@@ -40,14 +49,43 @@ class WebSocketClient:
         if parsed.scheme != "ws":
             raise WebSocketError(f"only ws:// is supported, not {parsed.scheme}://")
         host: str | None = parsed.hostname
-        port: int = parsed.port or 80
-        self.sock: socket.socket = socket.create_connection(
-            (host, port), timeout=timeout
-        )
+        if not host:
+            raise WebSocketError(f"no host in the websocket URL {url!r}")
+        try:
+            port: int = parsed.port or 80
+        except ValueError as error:
+            raise WebSocketError(
+                f"bad port in the websocket URL {url!r}: {describe(error)}"
+            ) from error
+        try:
+            self.sock: socket.socket = socket.create_connection(
+                (host, port), timeout=timeout
+            )
+        except OSError as error:
+            raise WebSocketError(
+                f"could not connect to {host}:{port}: {describe(error)}"
+            ) from error
         self.sock.settimeout(timeout)
         self._send_lock: threading.Lock = threading.Lock()
         self._buffer: bytes = b""
+        try:
+            self._handshake(parsed, host, port)
+        except WebSocketError:
+            self.sock.close()
+            raise
+        except OSError as error:
+            self.sock.close()
+            raise WebSocketError(
+                f"websocket handshake with {host}:{port} failed: {describe(error)}"
+            ) from error
 
+    def _handshake(self, parsed: urllib.parse.ParseResult, host: str, port: int) -> None:
+        """Send the HTTP upgrade request and check the server's reply.
+
+        :raises WebSocketError: If the server refuses the upgrade or the
+            ``Sec-WebSocket-Accept`` value is wrong.
+        :raises OSError: On a socket error; the caller wraps it.
+        """
         key: str = base64.b64encode(os.urandom(16)).decode()
         path: str = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
         self.sock.sendall(
@@ -161,7 +199,7 @@ class WebSocketClient:
                 data = bytes(byte ^ mask[i & 3] for i, byte in enumerate(data))
 
             if opcode == 0x8:
-                raise WebSocketError("websocket closed by the server")
+                raise WebSocketClosed("websocket closed by the server")
             if opcode == 0x9:
                 self._send_frame(0xA, data)
                 continue
@@ -177,15 +215,20 @@ class WebSocketClient:
             if fin:
                 message: bytes = b"".join(parts)
                 kind, parts = None, []
-                return message.decode("utf-8")
+                try:
+                    return message.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise WebSocketError(
+                        f"invalid UTF-8 in a websocket text message: {describe(error)}"
+                    ) from error
 
     def close(self) -> None:
         """Send a normal-close frame and close the socket, ignoring errors."""
         try:
             self._send_frame(0x8, struct.pack(">H", 1000))
-        except OSError:
-            pass
+        except OSError as error:
+            logger.debug("close frame not sent: %s", describe(error))
         try:
             self.sock.close()
-        except OSError:
-            pass
+        except OSError as error:
+            logger.debug("socket close failed: %s", describe(error))

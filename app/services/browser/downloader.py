@@ -15,9 +15,12 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import zlib
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import BinaryIO, Final
+
+from app.utils.errors import describe
 
 from .browser_error import BrowserError
 from .constants import CFT_SHA256, CFT_URL, CFT_VERSION
@@ -67,8 +70,13 @@ def download_headless_shell(
         )
     url = CFT_URL.format(v=CFT_VERSION, p=plat)
     install_root = os.path.dirname(os.path.dirname(headless_shell_path(plat)))
-    ensure_engine_home()
-    os.makedirs(install_root, exist_ok=True)
+    try:
+        ensure_engine_home()
+        os.makedirs(install_root, exist_ok=True)
+    except OSError as error:
+        raise BrowserError(
+            f"Could not create the Chrome install folder {install_root}: {error}"
+        ) from error
     archive = os.path.join(install_root, f"{plat}.zip.part")
     log(
         f"▶ No Chrome found, so downloading Chrome for Testing "
@@ -97,12 +105,19 @@ def download_headless_shell(
     if digest.hexdigest() != CFT_SHA256[plat]:
         _unlink_quietly(archive)
         raise BrowserError(
-            "The Chrome download does not match the SHA-256 pinned in "
-            "engine/browser.py, so it was deleted and not run. Try again "
+            f"The Chrome download from {url} has SHA-256 {digest.hexdigest()}, "
+            f"but the pinned value in app/services/browser/constants.py is "
+            f"{CFT_SHA256[plat]}. The file was deleted and not run. Try again "
             "later, or install Google Chrome."
         )
 
-    staging = tempfile.mkdtemp(prefix="unpack-", dir=install_root)
+    try:
+        staging = tempfile.mkdtemp(prefix="unpack-", dir=install_root)
+    except OSError as error:
+        _unlink_quietly(archive)
+        raise BrowserError(
+            f"Could not create a staging folder in {install_root}: {error}"
+        ) from error
     try:
         with zipfile.ZipFile(archive) as archive_zip:
             for member in archive_zip.infolist():
@@ -115,10 +130,17 @@ def download_headless_shell(
                     os.chmod(extracted, 0o755)
         final = os.path.dirname(headless_shell_path(plat))
         shutil.rmtree(final, ignore_errors=True)
+        if os.path.exists(final):
+            raise BrowserError(
+                f"Could not replace the old Chrome folder {final}: it is in use "
+                "by another process. Close it and try again."
+            )
         # Atomic move: a half-unpacked shell never shows up in find.
         os.replace(os.path.join(staging, os.path.basename(final)), final)
-    except (OSError, zipfile.BadZipFile) as error:
-        raise BrowserError(f"Could not unpack the Chrome download: {error}") from error
+    except (OSError, zipfile.BadZipFile, zlib.error) as error:
+        raise BrowserError(
+            f"Could not unpack the Chrome download from {archive}: {describe(error)}"
+        ) from error
     finally:
         shutil.rmtree(staging, ignore_errors=True)
         _unlink_quietly(archive)

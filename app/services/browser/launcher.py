@@ -55,7 +55,7 @@ def launch_chrome(
     profile_dir: str,
     stderr_sink: IO[bytes],
     timeout: float,
-) -> tuple[str, str]:
+) -> tuple[str, str, subprocess.Popen]:
     """Start Chrome and wait for it to publish its DevTools port.
 
     ``DevToolsActivePort`` is written into ``profile_dir`` once Chrome is
@@ -68,9 +68,10 @@ def launch_chrome(
     :param stderr_sink: A writable binary file capturing Chrome's
         stderr, for :func:`describe_launch_failure`.
     :param timeout: Seconds allowed before giving up.
-    :returns: ``(port, websocket_path)``.
+    :returns: ``(port, websocket_path, process)``. The caller owns the
+        process and must terminate it.
     :raises BrowserError: If Chrome exits, or the port is not published
-        in time.
+        in time. The process is killed and reaped before this is raised.
     """
     stderr_sink.seek(0)
     stderr_sink.truncate()
@@ -90,8 +91,8 @@ def launch_chrome(
     except OSError as error:
         raise BrowserError(f"Could not start Chrome ({args[0]}): {error}") from error
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if process.poll() is not None:
             stderr_sink.seek(0)
             raise BrowserError(
@@ -104,14 +105,15 @@ def launch_chrome(
         try:
             with open(active_port_file, encoding="utf-8") as handle:
                 port, websocket_path = handle.read().split()
-            return port, websocket_path
+            return port, websocket_path, process
         except (OSError, ValueError):
             time.sleep(_PORT_POLL_INTERVAL)
 
-    # The caller needs the process handle to terminate it on failure.
     process.kill()
+    process.wait()
     raise BrowserError(
-        f"Chrome did not open its DevTools port within {timeout} s: {args[0]}"
+        f"Chrome did not open its DevTools port within {timeout} s "
+        f"(it published nothing in {active_port_file}): {args[0]}"
     )
 
 
@@ -167,8 +169,16 @@ def build_launch_args(
 
 
 def _unlink_quietly(path: str) -> None:
-    """Remove ``path`` if it exists, ignoring errors."""
+    """Remove ``path`` if it exists.
+
+    A file that cannot be removed would be read as the port of this run,
+    so that failure is raised rather than ignored.
+    """
     try:
         os.remove(path)
-    except OSError:
-        pass
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise BrowserError(
+            f"Could not remove the stale DevTools port file {path}: {error}"
+        ) from error

@@ -1,10 +1,15 @@
 import json
+import logging
 import queue
 import threading
 from typing import Any, TypedDict
 
+from app.utils.errors import describe
+
 from .cdp_error import CDPError
-from .ws_client import WebSocketClient
+from .ws_client import WebSocketClient, WebSocketClosed
+
+logger = logging.getLogger(__name__)
 
 CDP_DEAD = object()
 
@@ -80,7 +85,15 @@ class CDPClient:
         try:
             while True:
                 raw: str = self.ws.recv_text()
-                message: CDPMessage = json.loads(raw)
+                try:
+                    message: CDPMessage = json.loads(raw)
+                except json.JSONDecodeError as error:
+                    logger.warning(
+                        "dropped a CDP message that is not JSON (%s): %.200r",
+                        describe(error),
+                        raw,
+                    )
+                    continue
                 if "id" in message:
                     reply_queue: queue.Queue[CDPMessage] | None = self._pending.pop(
                         message["id"], None
@@ -99,10 +112,14 @@ class CDPClient:
                     params: Params = message.get("params", {})
                     for subscriber in subscribers:
                         subscriber.put(params)
-        except Exception as error:  # noqa: BLE001 -- recorded for waiters
+        except Exception as error:
+            if isinstance(error, WebSocketClosed):
+                logger.info("CDP connection closed by the browser: %s", describe(error))
+            else:
+                logger.error("CDP reader stopped: %s", describe(error), exc_info=True)
             self.closed = error
             error_reply: CDPMessage = {
-                "error": {"message": f"connection lost: {error}"}
+                "error": {"message": f"connection lost: {describe(error)}"}
             }
             for reply_queue in list(self._pending.values()):
                 reply_queue.put(error_reply)
@@ -132,18 +149,11 @@ class CDPClient:
             out, or the connection is lost.
         """
         if self.closed:
-            raise CDPError(f"connection lost: {self.closed}")
+            raise CDPError(f"{method}: connection lost: {describe(self.closed)}")
 
         with self._id_lock:
             self._next_id += 1
             message_id: int = self._next_id
-
-        reply_queue: queue.Queue[CDPMessage] = queue.Queue(1)
-        self._pending[message_id] = reply_queue
-        if self.closed:
-            # The reader died after the check above and will never answer.
-            self._pending.pop(message_id, None)
-            raise CDPError(f"connection lost: {self.closed}")
 
         request: CDPMessage = {
             "id": message_id,
@@ -152,13 +162,28 @@ class CDPClient:
         }
         if session_id:
             request["sessionId"] = session_id
+        try:
+            payload: str = json.dumps(request)
+        except (TypeError, ValueError) as error:
+            raise CDPError(
+                f"{method}: the parameters cannot be sent as JSON: {describe(error)}"
+            ) from error
+
+        reply_queue: queue.Queue[CDPMessage] = queue.Queue(1)
+        self._pending[message_id] = reply_queue
+        if self.closed:
+            # The reader died after the check above and will never answer.
+            self._pending.pop(message_id, None)
+            raise CDPError(f"{method}: connection lost: {describe(self.closed)}")
 
         try:
-            self.ws.send_text(json.dumps(request))
+            self.ws.send_text(payload)
         except OSError as error:
             # The browser died and the reader has not noticed yet.
             self._pending.pop(message_id, None)
-            raise CDPError(f"{method}: connection lost: {error}") from error
+            raise CDPError(
+                f"{method}: connection lost while sending: {describe(error)}"
+            ) from error
 
         effective_timeout: float = timeout or self.timeout
         reply: CDPMessage
@@ -247,9 +272,11 @@ class CDPClient:
             if owns_subscription:
                 self.unsubscribe_events(method, event_queue, session_id)
         if event is self._DEAD:
-            raise CDPError(f"connection lost: {self.closed}")
-        # Narrowing: the sentinel case was handled above.
-        assert isinstance(event, dict)
+            raise CDPError(
+                f"{method}: connection lost: {describe(self.closed) if self.closed else 'closed'}"
+            )
+        if not isinstance(event, dict):
+            raise CDPError(f"{method}: event payload is not an object: {event!r}")
         return event
 
     def close(self) -> None:

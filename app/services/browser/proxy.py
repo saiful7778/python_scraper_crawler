@@ -8,12 +8,20 @@ request and reports the proxy as ``refused`` if the same request is
 challenged again.
 """
 
+import logging
 import queue
 import threading
 import urllib.parse
+from typing import TYPE_CHECKING
+
+from app.utils.errors import ProxyConfigError, describe
 
 from .cdp_error import CDPError
-from .tab import BrowserTab
+
+if TYPE_CHECKING:
+    from .tab import BrowserTab
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyAuthenticator:
@@ -30,7 +38,7 @@ class ProxyAuthenticator:
     :param password: The proxy password.
     """
 
-    def __init__(self, tab: BrowserTab, username: str, password: str) -> None:
+    def __init__(self, tab: "BrowserTab", username: str, password: str) -> None:
         self.tab = tab
         self._username = username
         self._password = password
@@ -71,10 +79,18 @@ class ProxyAuthenticator:
                 continue
             try:
                 self._handle(request_id, event)
-            except CDPError:
+            except CDPError as error:
                 # The tab closed, or the request finished first.
                 if self.tab.client.closed:
                     return
+                logger.debug("proxy auth skipped request %s: %s", request_id, describe(error))
+            except Exception:
+                logger.error(
+                    "proxy authentication stopped while answering request %s",
+                    request_id,
+                    exc_info=True,
+                )
+                return
 
     def _handle(self, request_id: str, event: dict) -> None:
         """Dispatch a single ``Fetch`` event."""
@@ -136,11 +152,20 @@ def split_proxy_url(url: str) -> tuple[str, str, str]:
     :returns: ``(server_url, username, password)``, with credentials
         percent-decoded and possibly empty.
     """
-    parsed = urllib.parse.urlsplit(url)
-    hostname = parsed.hostname or ""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+        hostname = parsed.hostname or ""
+    except ValueError as error:
+        raise ProxyConfigError(
+            f"proxy URL is malformed (the URL is not shown, it may hold a password): "
+            f"{describe(error)}"
+        ) from error
+    if not hostname:
+        raise ProxyConfigError("proxy URL has no host (the URL is not shown)")
     host = f"[{hostname}]" if ":" in hostname else hostname
     scheme = "socks5" if parsed.scheme == "socks5h" else parsed.scheme
-    server = f"{scheme}://{host}" + (f":{parsed.port}" if parsed.port else "")
+    server = f"{scheme}://{host}" + (f":{port}" if port else "")
     username = urllib.parse.unquote(parsed.username or "")
     password = urllib.parse.unquote(parsed.password or "")
     return server, username, password

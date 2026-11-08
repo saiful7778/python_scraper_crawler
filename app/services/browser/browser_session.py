@@ -1,6 +1,7 @@
 """The Browser process a job run uses"""
 
 from .browser import Browser
+from .browser_error import BrowserError
 from .tab import ProxyTab
 
 
@@ -38,7 +39,8 @@ class BrowserSession:
 
     def open_tab(self, proxy: str | None) -> ProxyTab:
         """Return a :class:`ProxyTab` for ``proxy`` in this browser."""
-        assert self._browser is not None
+        if self._browser is None:
+            raise BrowserError("cannot open a tab: the browser is not started")
         return ProxyTab(self._browser, proxy)
 
     def kill(self) -> None:
@@ -49,5 +51,7 @@ class BrowserSession:
     def close(self) -> None:
         """Close Browser gracefully and forget it; calling it again is harmless."""
         if self._browser:
-            self._browser.close()
-            self._browser = None
+            try:
+                self._browser.close()
+            finally:
+                self._browser = None
