@@ -540,6 +540,7 @@ class TestParsePlacePanel:
         assert result == {
             "review_count": 120,
             "reviews_link": "https://reviews.example",
+            "user_reviews": "",
         }
         assert "title" not in result
         assert "review_rating" not in result
@@ -547,7 +548,7 @@ class TestParsePlacePanel:
     def test_accepts_body_without_prefix(self) -> None:
         entity: Any = place(review_count=3)
         result: PanelRecord = parse_place_panel(json.dumps([None] * 6 + [entity]))
-        assert result == {"review_count": 3}
+        assert result == {"review_count": 3, "user_reviews": ""}
 
     def test_adds_reviews_per_rating_histogram(self) -> None:
         entity: Any = merge(place(review_count=10), at(HISTOGRAM_PATH, [1, 2, 3, 4, 0]))
@@ -614,9 +615,9 @@ class TestParsePlacePanel:
         parsed: list[ReviewRecord] = json.loads(result["user_reviews"])
         assert parsed == [{"Rating": 4, "When": "now", "Description": "kept"}]
 
-    def test_no_reviews_key_when_none_parse(self) -> None:
+    def test_empty_reviews_value_when_none_parse(self) -> None:
         result: PanelRecord = parse_place_panel(panel_body(place(review_count=1)))
-        assert "user_reviews" not in result
+        assert result["user_reviews"] == ""
 
 
 class TestBuildPlaceRecord:

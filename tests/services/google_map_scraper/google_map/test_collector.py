@@ -240,7 +240,7 @@ def test_returns_leads_gathered_before_a_mid_scroll_error(run):
 
     assert result == (
         [ROW_A],
-        "error: boom",
+        "error: CDPError: boom",
         {"batches": 1, "dom_links": 0},
     )
     assert reader.closed
