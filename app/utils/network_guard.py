@@ -36,14 +36,21 @@ def resolves_only_to_public_addresses(host: str) -> bool:
     return bool(infos) and all(is_public_ip_address(info[4][0]) for info in infos)
 
 
+class NonPublicAddressError(OSError):
+    """A connection was refused because its peer is not a public address."""
+
+
 def create_public_connection(address, *args, **kwargs) -> socket.socket:
     """Open a TCP connection and refuse it if the peer is not a public address.
 
     Raises:
-        OSError: when the connected peer address is not public.
+        NonPublicAddressError: when the connected peer address is not public.
     """
     connection = socket.create_connection(address, *args, **kwargs)
-    if not is_public_ip_address(connection.getpeername()[0]):
+    peer = connection.getpeername()[0]
+    if not is_public_ip_address(peer):
         connection.close()
-        raise OSError("refused a non-public address")
+        raise NonPublicAddressError(
+            f"refused a non-public address: the connection to {address[0]} reached {peer}"
+        )
     return connection

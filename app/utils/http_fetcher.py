@@ -6,6 +6,7 @@ when the server keeps the socket open.
 """
 
 import http.client
+import logging
 import socket
 import threading
 import time
@@ -13,8 +14,11 @@ import urllib.parse
 import urllib.request
 from typing import Self
 
+from .errors import describe
 from .network_guard import create_public_connection, resolves_only_to_public_addresses
 from .url_utils import encode_url_as_ascii
+
+logger = logging.getLogger(__name__)
 
 _MAX_PAGE_BYTES = 400_000
 SITE_TIMEOUT = 10  # seconds per website request (each socket read)
@@ -174,12 +178,16 @@ class WebPageFetcher:
         A missing scheme defaults to ``http://``.  Non-public hosts, errors and
         timeouts all yield an empty page; at most 400 kB are read.
         """
+        if not isinstance(url, str):
+            logger.debug("website fetch skipped: URL is a %s, not text", type(url).__name__)
+            return ""
         if not url.startswith(("http://", "https://")):
             url = "http://" + url
+        host = ""
         try:
-            if not resolves_only_to_public_addresses(
-                urllib.parse.urlsplit(url).hostname or ""
-            ):
+            host = urllib.parse.urlsplit(url).hostname or ""
+            if not resolves_only_to_public_addresses(host):
+                logger.debug("website %s skipped: it does not resolve to public addresses only", host)
                 return ""
             request = urllib.request.Request(
                 encode_url_as_ascii(url),
@@ -188,7 +196,8 @@ class WebPageFetcher:
             with FetchWindow(), self._opener.open(request, timeout=timeout) as response:
                 body = read_response_capped(response, _MAX_PAGE_BYTES, 2 * timeout)
                 return body.decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 - a failed fetch is an empty page
+        except Exception as error:  # noqa: BLE001 - a failed fetch is an empty page
+            logger.debug("website %s could not be fetched: %s", host, describe(error))
             return ""
 
 
