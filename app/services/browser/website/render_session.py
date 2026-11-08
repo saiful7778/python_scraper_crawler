@@ -1,6 +1,7 @@
 """One headless Chrome that renders pages through a public-only proxy."""
 
 import asyncio
+import logging
 import threading
 import time
 import urllib.parse
@@ -25,6 +26,8 @@ from .render_result import RenderAttempt, RenderResult
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Playwright
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserSlots:
@@ -119,13 +122,20 @@ class RenderSession:
             )
             page = PageRenderer(self._browser, page_deadline)
             return await page.render(target, attempt)
-        except ValueError:
+        except UnsupportedURLError:
             return attempt.failure("blocked")
-        except Exception as error:  # noqa: BLE001 - reported as a status, never as raw text
-            # Never log exception text: it may contain URLs, credentials or page content.
-            return attempt.failure(
-                "timeout" if "timeout" in type(error).__name__.lower() else "error"
+        except Exception as error:
+            # The message may hold URLs, credentials or page text, so only the
+            # error type and the stage are logged.
+            status = "timeout" if "timeout" in type(error).__name__.lower() else "error"
+            logger.warning(
+                "render failed at stage %s with %s (%s)",
+                attempt.stage,
+                type(error).__name__,
+                status,
+                exc_info=True,
             )
+            return attempt.failure(status)
         finally:
             if acquired:
                 self._page_slots.release()
@@ -145,36 +155,41 @@ class RenderSession:
                 if self._browser is not None:
                     # Chrome's graceful close can hang for minutes after many pages, so the
                     # driver is stopped below regardless; stopping it ends the browser too.
-                    await _close_quietly(self._browser.close())
+                    await _close_quietly(self._browser.close(), "browser")
             finally:
                 if self._playwright is not None:
-                    await _close_quietly(self._playwright.stop())
+                    await _close_quietly(self._playwright.stop(), "playwright driver")
         finally:
             if self._has_slot:
                 BROWSER_SLOTS.release()
+                self._has_slot = False
+
+
+class UnsupportedURLError(ValueError):
+    """The URL is not an http(s) address without credentials."""
 
 
 def _parse_web_url(url: str) -> str:
     """Return ``url`` as an http(s) URL with no credentials.
 
-    A bare host is treated as HTTPS.
+    A bare host is treated as HTTPS. The messages never echo the URL,
+    because it may carry credentials.
 
-    :raises ValueError: If the scheme is not http(s), the host is missing,
-        or credentials are present.
+    :raises UnsupportedURLError: If the scheme is not http(s), the host is
+        missing, or credentials are present.
     """
     parsed = urllib.parse.urlsplit(url if "://" in url else "https://" + url)
-    if (
-        parsed.scheme not in ALLOWED_SCHEMES
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-    ):
-        raise ValueError("unsupported URL")
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise UnsupportedURLError(f"scheme {parsed.scheme!r} is not allowed")
+    if not parsed.hostname:
+        raise UnsupportedURLError("the URL has no host")
+    if parsed.username or parsed.password:
+        raise UnsupportedURLError("the URL contains credentials")
     return parsed.geturl()
 
 
-async def _close_quietly(closing: Awaitable[object]) -> None:
+async def _close_quietly(closing: Awaitable[object], what: str) -> None:
     try:
         await asyncio.wait_for(closing, CLOSE_TIMEOUT_SECONDS)
-    except Exception:  # noqa: BLE001, S110 - closing is best effort
-        pass
+    except Exception:
+        logger.warning("closing the %s failed", what, exc_info=True)

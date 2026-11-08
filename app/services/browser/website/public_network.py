@@ -4,6 +4,8 @@ import socket
 import time
 from collections.abc import Callable
 
+from app.utils.errors import describe
+
 from .constants import CONNECT_TIMEOUT_SECONDS
 
 
@@ -21,9 +23,13 @@ def open_public_connection(
     :param deadline: ``time.monotonic()`` value that caps each connect attempt.
     :raises OSError: If the destination is not public or no address answers.
     """
-    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise OSError(f"could not resolve {host}:{port}: {describe(error)}") from error
     if not infos or not all(is_public_ip(str(info[4][0])) for info in infos):
-        raise OSError("non-public destination")
+        raise NonPublicDestinationError(f"{host} resolves to a non-public address")
+    last_error: OSError | None = None
     for family, kind, proto, _, address in infos:
         peer = socket.socket(family, kind, proto)
         try:
@@ -32,8 +38,18 @@ def open_public_connection(
             )
             peer.connect(address)
             if not is_public_ip(peer.getpeername()[0]):
-                raise OSError("non-public peer")
+                raise NonPublicDestinationError(
+                    f"{host} connected to a non-public peer"
+                )
             return peer
-        except OSError:
+        except OSError as error:
+            last_error = error
             peer.close()
-    raise OSError("destination unavailable")
+    raise OSError(
+        f"could not connect to {host}:{port} at any of {len(infos)} address(es): "
+        f"{describe(last_error) if last_error else 'no address'}"
+    ) from last_error
+
+
+class NonPublicDestinationError(OSError):
+    """The host resolves to, or connects to, an address that is not public."""
