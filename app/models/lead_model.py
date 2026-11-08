@@ -20,7 +20,6 @@ class LeadModel(Model):
     descriptions = fields.TextField(null=True)
     owner = fields.TextField(null=True)
     timezone = fields.TextField(null=True)
-    website_fetch_status = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

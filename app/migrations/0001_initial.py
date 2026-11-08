@@ -135,7 +135,6 @@ class Migration(migrations.Migration):
                 ('descriptions', fields.TextField(null=True, unique=False)),
                 ('owner', fields.TextField(null=True, unique=False)),
                 ('timezone', fields.TextField(null=True, unique=False)),
-                ('website_fetch_status', fields.TextField(null=True, unique=False)),
                 ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
             ],
