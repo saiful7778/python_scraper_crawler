@@ -5,6 +5,7 @@ requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi-startkit[fastapi,inertia,vite]==0.74.0",
     "playwright>=1.64.1",
+    "pydantic>=2.14.3",
     "ruff>=0.17.4",
     "tortoise-orm[asyncpg,ipython]>=1.1.9",
 ]
@@ -29,12 +30,11 @@ testpaths = ["tests"]
 include = [
     "app/**/*.py",
     "bootstrap/**/*.py",
-    "commands/**/*.py",
+    "cli/**/*.py",
     "config/**/*.py",
     "databases/**/*.py",
     "providers/**/*.py",
     "routes/**/*.py",
-    "tasks/**/*.py",
     "tests/**/test_*.py"
 ]
 exclude = [
@@ -51,6 +51,7 @@ venv = ".venv"
 include = [
     "app",
     "bootstrap",
+    "cli",
     "config",
     "providers",
     "routes",
