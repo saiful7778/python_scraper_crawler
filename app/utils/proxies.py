@@ -4,11 +4,11 @@ import urllib.parse
 from collections.abc import Sequence
 from typing import Any
 
+from app.utils.errors import ProxyConfigError, describe
+
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 
-_PROXY_FORMAT_HELP = (
-    "invalid proxy: use http://, https://, socks5:// or socks5h://host:port"
-)
+_PROXY_FORMAT_HELP = "use http://, https://, socks5:// or socks5h://host:port"
 
 
 def parse_proxy_urls(value: Any) -> list[str]:
@@ -26,18 +26,21 @@ def parse_proxy_urls(value: Any) -> list[str]:
         or len(value) > 100
         or not all(isinstance(item, str) for item in value)
     ):
-        raise ValueError("invalid proxies: a list of proxy URLs")
-    for proxy in value:
+        raise ProxyConfigError("invalid proxies: a list of up to 100 proxy URLs")
+    # Messages give the entry's position only: the URL may hold a password.
+    for position, proxy in enumerate(value, start=1):
         try:
             parts = urllib.parse.urlsplit(proxy.strip())
             parts.port  # noqa: B018 - raises on a bad port
-        except ValueError:
-            raise ValueError(_PROXY_FORMAT_HELP) from None
+        except ValueError as error:
+            raise ProxyConfigError(
+                f"invalid proxy {position}: {_PROXY_FORMAT_HELP} ({describe(error)})"
+            ) from error
         if parts.scheme not in PROXY_SCHEMES or not parts.hostname:
-            raise ValueError(_PROXY_FORMAT_HELP)
+            raise ProxyConfigError(f"invalid proxy {position}: {_PROXY_FORMAT_HELP}")
         if (parts.username or parts.password) and parts.scheme.startswith("socks"):
-            raise ValueError(
-                "invalid proxy: Chrome cannot log in to a SOCKS5 proxy; use its http:// address "
+            raise ProxyConfigError(
+                f"invalid proxy {position}: Chrome cannot log in to a SOCKS5 proxy; use its http:// address "
                 "with user:pass, or one that allows your IP address"
             )
     return [proxy.strip() for proxy in value]
