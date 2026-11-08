@@ -1,3 +1,4 @@
+import logging
 import threading
 from typing import Any
 
@@ -5,6 +6,7 @@ import pytest
 
 from app.services.browser.cdp_client import CDPClient
 from app.services.browser.cdp_error import CDPError
+from app.services.browser.ws_client import WebSocketClosed
 from tests.services.browser.fakes import FakeWebSocket, wait_until
 
 
@@ -102,7 +104,9 @@ def test_concurrent_calls_are_matched_to_their_own_replies(
 def test_send_failure_raises_cdp_error(client: CDPClient, fake_ws: FakeWebSocket):
     fake_ws.send_error = OSError("broken pipe")
 
-    with pytest.raises(CDPError, match="Page.enable: connection lost: broken pipe"):
+    with pytest.raises(
+        CDPError, match="Page.enable: connection lost while sending: OSError: broken pipe"
+    ):
         client.call("Page.enable")
 
 
@@ -112,8 +116,18 @@ def test_call_after_reader_died_fails_immediately(
     fake_ws.push(OSError("socket reset"))
     wait_until(lambda: client.closed is not None)
 
-    with pytest.raises(CDPError, match="connection lost: socket reset"):
+    with pytest.raises(CDPError, match="connection lost: OSError: socket reset"):
         client.call("Page.enable", timeout=5)
+
+
+def test_server_close_frame_is_not_logged_as_an_error(
+    client: CDPClient, fake_ws: FakeWebSocket, caplog: pytest.LogCaptureFixture
+):
+    fake_ws.push(WebSocketClosed("websocket closed by the server"))
+    wait_until(lambda: client.closed is not None)
+
+    assert client.closed is not None
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 def test_pending_call_is_woken_when_connection_is_lost(
@@ -141,7 +155,7 @@ def test_pending_call_is_woken_when_connection_is_lost(
     thread.join(5)
 
     assert len(errors) == 1
-    assert "connection lost: connection reset" in str(errors[0])
+    assert "connection lost: OSError: connection reset" in str(errors[0])
 
 
 def test_wait_for_event_returns_event_params(client: CDPClient, fake_ws: FakeWebSocket):
@@ -206,7 +220,7 @@ def test_waiter_is_released_with_error_when_connection_is_lost(
     event_queue = client.subscribe_events("Page.loadEventFired")
     fake_ws.push(OSError("socket reset"))
 
-    with pytest.raises(CDPError, match="connection lost: socket reset"):
+    with pytest.raises(CDPError, match="connection lost: OSError: socket reset"):
         client.wait_for_event("Page.loadEventFired", timeout=5, event_queue=event_queue)
 
 

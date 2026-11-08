@@ -20,6 +20,9 @@ class FakeProcess:
     def kill(self) -> None:
         self.killed = True
 
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
 
 @pytest.fixture
 def popen(monkeypatch):
@@ -85,11 +88,12 @@ def test_launch_returns_port_and_websocket_path(popen, tmp_path):
     profile = str(tmp_path)
     popen.on_start = lambda state: _publish_port(profile, "9333", "/devtools/x")
 
-    port, ws_path = launcher.launch_chrome(
+    port, ws_path, process = launcher.launch_chrome(
         ["/usr/bin/chrome", "--flag"], profile, io.BytesIO(), timeout=2
     )
 
     assert (port, ws_path) == ("9333", "/devtools/x")
+    assert process is popen.process
     argv, kwargs = popen.calls[0]
     assert argv == ["/usr/bin/chrome", "--flag", "about:blank"]
     assert kwargs["stdout"] == -3

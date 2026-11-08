@@ -40,6 +40,7 @@ class FakeProcess:
         self.running = True
         self.hang_once = hang_once
         self.events: list[str] = []
+        self.pid = 4242
 
     def poll(self):
         return None if self.running else 0
@@ -70,7 +71,7 @@ def chrome(monkeypatch, tmp_path):
         state.launches.append(list(args))
         if state.launch is not None:
             return state.launch(args, stderr)
-        return "9222", DEVTOOLS_PATH
+        return "9222", DEVTOOLS_PATH, FakeProcess()
 
     def fake_cdp(url, timeout=30.0):
         state.cdp = FakeCDP(url, timeout)
@@ -138,7 +139,7 @@ def test_user_agent_without_headless_token_is_left_alone(chrome, profile):
 def test_sandbox_failure_is_retried_with_no_sandbox(chrome, profile):
     def sandbox_then_ok(args, stderr):
         if "--no-sandbox" in args:
-            return "9222", DEVTOOLS_PATH
+            return "9222", DEVTOOLS_PATH, FakeProcess()
         stderr.write(b"No usable sandbox: set --no-sandbox")
         raise BrowserError("Chrome exited at once")
 
@@ -170,7 +171,10 @@ def test_connection_error_is_wrapped_and_cleans_up(monkeypatch, chrome, profile)
 
     monkeypatch.setattr(browser_module, "CDPClient", broken_cdp)
 
-    with pytest.raises(BrowserError, match="DevTools port: port closed"):
+    with pytest.raises(
+        BrowserError,
+        match="connecting to Chrome's DevTools port: ConnectionRefusedError: port closed",
+    ):
         _browser(profile)
 
 
