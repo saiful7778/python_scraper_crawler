@@ -20,8 +20,16 @@ def is_clean_text(value: Any) -> bool:
     return True
 
 
+def _require_object(body: Any) -> None:
+    if not isinstance(body, Mapping):
+        raise ValueError(  # noqa: TRY004
+            f"the request body must be a JSON object, not {type(body).__name__}"
+        )
+
+
 def read_bool(body: Mapping[str, Any], key: str) -> bool:
     """Read an optional boolean; a missing key is False and ``"false"`` is rejected."""
+    _require_object(body)
     value = body.get(key)
     if value is None:
         return False
@@ -34,6 +42,7 @@ def read_int(
     body: Mapping[str, Any], key: str, default: int, low: int, high: int, label: str
 ) -> int:
     """Read an optional whole number within ``[low, high]`` (booleans are rejected)."""
+    _require_object(body)
     value = body.get(key, default)
     if value is None:
         value = default
