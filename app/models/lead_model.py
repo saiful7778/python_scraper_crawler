@@ -15,10 +15,12 @@ class LeadModel(Model):
     address = fields.TextField(null=True)
     phone = fields.TextField(null=True)
     website = fields.TextField(null=True)
+    website_domain = fields.CharField(max_length=255, null=True, unique=True)
     status = fields.TextField(null=True)
     descriptions = fields.TextField(null=True)
     owner = fields.TextField(null=True)
     timezone = fields.TextField(null=True)
+    website_fetch_status = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -30,6 +32,8 @@ class LeadAddressModel(Model):
     """Lead address model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
+    complete_address = fields.TextField(default="")
+    plus_code = fields.TextField(default="")
     borough = fields.TextField(null=True)
     street = fields.TextField(null=True)
     city = fields.TextField(null=True)

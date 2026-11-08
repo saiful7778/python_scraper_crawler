@@ -1,13 +1,125 @@
 from tortoise import migrations
 from tortoise.migrations import operations as ops
+import functools
+from json import dumps, loads
 from tortoise.fields.base import OnDelete
 from uuid import uuid4
 from tortoise import fields
+from tortoise.indexes import Index
 
 class Migration(migrations.Migration):
     initial = True
 
     operations = [
+        ops.CreateModel(
+            name='GoogleMapProfileModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(default=0)),
+                ('data_id', fields.TextField(null=True, unique=False)),
+                ('place_id', fields.TextField(null=True, unique=False)),
+                ('cid', fields.TextField(null=True, unique=False)),
+                ('link', fields.TextField(null=True, unique=False)),
+                ('price_range', fields.TextField(null=True, unique=False)),
+                ('credit_cards_accepted', fields.TextField(null=True, unique=False)),
+                ('reviews_link', fields.TextField(null=True, unique=False)),
+                ('street_view_url', fields.TextField(null=True, unique=False)),
+                ('about', fields.JSONField(null=True, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads)),
+                ('input_id', fields.TextField(default='', unique=False)),
+                ('reviews_per_rating', fields.TextField(default='', unique=False)),
+                ('open_hours', fields.TextField(default='', unique=False)),
+                ('popular_times', fields.TextField(default='', unique=False)),
+                ('thumbnail', fields.TextField(default='', unique=False)),
+                ('reservations', fields.TextField(default='', unique=False)),
+                ('order_online', fields.TextField(default='', unique=False)),
+                ('menu', fields.TextField(default='', unique=False)),
+                ('images', fields.TextField(default='', unique=False)),
+                ('user_reviews', fields.TextField(default='', unique=False)),
+                ('user_reviews_extended', fields.TextField(default='', unique=False)),
+                ('review_count', fields.IntField(null=True)),
+                ('review_rating', fields.FloatField(null=True)),
+                ('review_star_1_count', fields.IntField(null=True)),
+                ('review_star_2_count', fields.IntField(null=True)),
+                ('review_star_3_count', fields.IntField(null=True)),
+                ('review_star_4_count', fields.IntField(null=True)),
+                ('review_star_5_count', fields.IntField(null=True)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+            ],
+            options={'table': 'google_maps_profiles', 'app': 'models', 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='GoogleMapProfileHourModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(default=0)),
+                ('day', fields.CharField(max_length=16)),
+                ('position', fields.IntField(default=0)),
+                ('span', fields.TextField(null=True, unique=False)),
+                ('google_map', fields.ForeignKeyField('models.GoogleMapProfileModel', source_field='google_map_id', db_constraint=True, to_field='id', related_name='hours', on_delete=OnDelete.CASCADE)),
+            ],
+            options={'table': 'google_map_profile_hours', 'app': 'models', 'unique_together': (('google_map', 'day', 'position'),), 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='GoogleMapProfileImageModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(default=0)),
+                ('isThumbnail', fields.BooleanField(default=False)),
+                ('url', fields.TextField(unique=False)),
+                ('title', fields.TextField(null=True, unique=False)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+                ('google_map', fields.ForeignKeyField('models.GoogleMapProfileModel', source_field='google_map_id', db_constraint=True, to_field='id', related_name='image_rows', on_delete=OnDelete.CASCADE)),
+            ],
+            options={'table': 'google_map_profile_images', 'app': 'models', 'unique_together': (('google_map', 'url'),), 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='GoogleMapProfileReviewModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(default=0)),
+                ('rating', fields.IntField(null=True)),
+                ('when_text', fields.TextField(null=True, unique=False)),
+                ('description', fields.TextField(null=True, unique=False)),
+                ('content_hash', fields.CharField(max_length=64)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+                ('google_map', fields.ForeignKeyField('models.GoogleMapProfileModel', source_field='google_map_id', db_constraint=True, to_field='id', related_name='reviews', on_delete=OnDelete.CASCADE)),
+            ],
+            options={'table': 'google_map_profile_reviews', 'app': 'models', 'unique_together': (('google_map', 'content_hash'),), 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='KeywordModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(null=True, db_index=True)),
+                ('name', fields.CharField(max_length=500)),
+                ('name_key', fields.CharField(unique=True, max_length=500)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+            ],
+            options={'table': 'keywords', 'app': 'models', 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='GoogleMapKeyword',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('counter', fields.IntField(default=0)),
+                ('job_id', fields.CharField(default='', db_index=True, max_length=64)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+                ('google_map', fields.ForeignKeyField('models.GoogleMapProfileModel', source_field='google_map_id', db_constraint=True, to_field='id', related_name='keyword_links', on_delete=OnDelete.CASCADE)),
+                ('keyword', fields.ForeignKeyField('models.KeywordModel', source_field='keyword_id', db_constraint=True, to_field='id', related_name='google_map_links', on_delete=OnDelete.CASCADE)),
+            ],
+            options={'table': 'google_map_keywords', 'app': 'models', 'unique_together': (('google_map', 'keyword'),), 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
         ops.CreateModel(
             name='LeadModel',
             fields=[
@@ -18,10 +130,12 @@ class Migration(migrations.Migration):
                 ('address', fields.TextField(null=True, unique=False)),
                 ('phone', fields.TextField(null=True, unique=False)),
                 ('website', fields.TextField(null=True, unique=False)),
+                ('website_domain', fields.CharField(null=True, unique=True, max_length=255)),
                 ('status', fields.TextField(null=True, unique=False)),
                 ('descriptions', fields.TextField(null=True, unique=False)),
                 ('owner', fields.TextField(null=True, unique=False)),
                 ('timezone', fields.TextField(null=True, unique=False)),
+                ('website_fetch_status', fields.TextField(null=True, unique=False)),
                 ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
             ],
@@ -29,9 +143,21 @@ class Migration(migrations.Migration):
             bases=['Model'],
         ),
         ops.CreateModel(
+            name='GoogleMapProfileToLeadModel',
+            fields=[
+                ('id', fields.IntField(generated=True, primary_key=True, unique=True, db_index=True)),
+                ('map_profile', fields.ForeignKeyField('models.GoogleMapProfileModel', source_field='map_profile_id', db_constraint=True, to_field='id', related_name='lead_link', on_delete=OnDelete.CASCADE)),
+                ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', db_constraint=True, to_field='id', related_name='map_profile_link', on_delete=OnDelete.CASCADE)),
+            ],
+            options={'table': 'google_map_profile_to_lead', 'app': 'models', 'unique_together': (('map_profile_id', 'lead_id'),), 'indexes': [Index(fields=['map_profile_id', 'lead_id'])], 'pk_attr': 'id'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
             name='LeadAddressModel',
             fields=[
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('complete_address', fields.TextField(default='', unique=False)),
+                ('plus_code', fields.TextField(null=True, unique=False)),
                 ('borough', fields.TextField(null=True, unique=False)),
                 ('street', fields.TextField(null=True, unique=False)),
                 ('city', fields.TextField(null=True, unique=False)),
@@ -40,7 +166,6 @@ class Migration(migrations.Migration):
                 ('country', fields.TextField(null=True, unique=False)),
                 ('latitude', fields.FloatField(null=True)),
                 ('longitude', fields.FloatField(null=True)),
-                ('plus_code', fields.TextField(null=True, unique=False)),
                 ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
                 ('lead', fields.OneToOneField('models.LeadModel', source_field='lead_id', db_constraint=True, to_field='id', related_name='detailed_address', on_delete=OnDelete.CASCADE)),
