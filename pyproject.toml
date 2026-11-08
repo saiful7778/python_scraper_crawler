@@ -10,6 +10,9 @@ dependencies = [
     "tortoise-orm[asyncpg,ipython]>=1.1.9",
 ]
 
+[project.scripts]
+google-map-scrape = "cli.google_map_scrape_cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8",
@@ -19,7 +22,7 @@ dev = [
 ]
 
 [tool.uv]
-package = false
+package = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -66,3 +69,10 @@ exclude = [
 
 [tool.tortoise]
 tortoise_orm = "config.tortoise.TORTOISE_ORM"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "bootstrap*", "cli*", "config*", "providers*", "routes*"]

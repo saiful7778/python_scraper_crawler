@@ -1659,7 +1659,7 @@ wheels = [
 [[package]]
 name = "python-scraper-crawler"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "fastapi-startkit", extra = ["fastapi", "inertia", "vite"] },
     { name = "playwright" },
