@@ -8,6 +8,7 @@ each one's body once it is available. It never blocks on the network:
 the newly parsed rows.
 """
 
+import logging
 import queue
 from typing import Final
 
@@ -17,8 +18,12 @@ from app.services.google_map_scraper.extract_details import (
     PlaceRecord,
     parse_place_list,
 )
+from app.utils.errors import describe
 
+from .panel import response_text
 from .selectors import BATCH_URL_PATTERN
+
+logger = logging.getLogger(__name__)
 
 #: After this many retries (one per poll), a batch whose body cannot be
 #: read is dropped as evicted or failed. About 10 s at the collector's
@@ -63,6 +68,9 @@ class BatchResponseReader:
         self.count: int = 0
         #: Batch requests Google answered with 429 Too Many Requests.
         self.limited: int = 0
+        #: Batches given up on after ``_MAX_BODY_READ_TRIES`` tries.
+        self.dropped: int = 0
+        self._last_error: str = ""
 
     @property
     def inflight(self) -> int:
@@ -92,7 +100,10 @@ class BatchResponseReader:
                 break
             if not isinstance(message, dict):
                 # The connection died; the client puts a marker on every queue.
-                raise CDPError(f"connection lost: {self.tab.client.closed}")
+                raise CDPError(
+                    "batch events stopped, connection lost: "
+                    f"{describe(self.tab.client.closed) if self.tab.client.closed else 'closed'}"
+                )
             request_id: str = message.get("requestId", "")
             if "request" in message:
                 # requestWillBeSent: the page asked Google for the next batch.
@@ -116,29 +127,46 @@ class BatchResponseReader:
         rows: list[PlaceRecord] = []
         for request_id in list(self._pending):
             try:
-                body: str = self.tab.call(
+                reply = self.tab.call(
                     "Network.getResponseBody", {"requestId": request_id}
-                )["body"]
-            except CDPError:
+                )
+            except CDPError as error:
                 if self.tab.client.closed:
                     raise
                 self._pending[request_id] += 1
+                self._last_error = describe(error)
                 # Not finished yet; retry next time, for about 10 s.
                 if self._pending[request_id] > _MAX_BODY_READ_TRIES:
                     del self._pending[request_id]
+                    self.dropped += 1
+                    logger.warning(
+                        "dropped batch %s after %d tries; last error: %s",
+                        request_id,
+                        _MAX_BODY_READ_TRIES,
+                        self._last_error,
+                    )
                 continue
             del self._pending[request_id]
+            try:
+                body = response_text(reply, request_id)
+            except CDPError as error:
+                self.dropped += 1
+                logger.warning("dropped batch %s: %s", request_id, describe(error))
+                continue
             self.count += 1
             rows += parse_place_list(body)
         return rows
 
     def close(self) -> None:
-        """Unsubscribe from the three Network events."""
+        """Unsubscribe from the three Network events; a failure is logged and the rest still run."""
         for method in (
             "Network.requestWillBeSent",
             "Network.responseReceived",
             "Network.loadingFailed",
         ):
-            self.tab.client.unsubscribe_events(
-                method, self.event_queue, self.tab.session_id
-            )
+            try:
+                self.tab.client.unsubscribe_events(
+                    method, self.event_queue, self.tab.session_id
+                )
+            except Exception:
+                logger.warning("could not unsubscribe from %s", method, exc_info=True)

@@ -1,10 +1,14 @@
 import json
+import logging
 import math
 import urllib.parse
 from collections.abc import Sequence
 from typing import Any, TypedDict, cast
 
 from app.utils import normalize_unicode_text
+from app.utils.errors import describe
+
+logger = logging.getLogger(__name__)
 
 Path = Sequence[int]
 
@@ -75,8 +79,8 @@ IMAGES_MAX, IMAGE_URL_MAX = (
 # (2026-10-31): title, category, address, rating, lat/lon, place_id, data_id, timezone, thumbnail
 # filled on 60/60 entities, website 55/60, phone 46/60 (listings without one).
 # review_count (4, 8), reviews_link (4, 3, 0) and the week of opening hours come only with Google's
-# full view: a browser whose user agent says HeadlessChrome gets its "limited view", which leaves them
-# empty and lists today's hours only (browser.py sends Chrome/ instead, see there). Full view
+# full view: a browser whose user agent says HeadlessBrowser gets its "limited view", which leaves them
+# empty and lists today's hours only (browser.py sends Browser/ instead, see there). Full view
 # (2026-10-31): count on 20/20 entities, 7 days of hours on 19/20. (37, 1) is the photo count.
 FIELD_PATHS = {
     "title": (11,),
@@ -406,9 +410,13 @@ def parse_place_panel(body: str, limit: int = 5) -> PanelRecord:
         body = body.split("\n", 1)[-1]
     try:
         entity = get_at_path(json.loads(body), PANEL_ENTITY_PATH)
-    except ValueError:
+    except ValueError as error:
+        logger.warning(
+            "place panel is not JSON (%d characters): %s", len(body), describe(error)
+        )
         return {}
     if not isinstance(entity, list):
+        logger.warning("place panel has no place entity at the expected path")
         return {}
     out: dict[str, Any] = {
         k: v for k, v in build_place_record(entity).items() if k in PANEL_FIELDS
@@ -436,8 +444,7 @@ def parse_place_panel(body: str, limit: int = 5) -> PanelRecord:
             )
         if len(reviews) >= limit:
             break
-    if reviews:
-        out["user_reviews"] = json.dumps(reviews, ensure_ascii=False)
+    out["user_reviews"] = json.dumps(reviews, ensure_ascii=False) if reviews else ""
     return cast(PanelRecord, out)
 
 
@@ -485,8 +492,8 @@ def build_place_record(entity: Any) -> PlaceRecord:
     if isinstance(out.get("data_id"), str) and ":" in out["data_id"]:
         try:
             out["cid"] = str(int(out["data_id"].split(":")[1], 16))
-        except ValueError:
-            pass
+        except ValueError as error:
+            logger.debug("no CID from data_id %r: %s", out["data_id"], describe(error))
     return cast(PlaceRecord, out)
 
 
@@ -496,12 +503,19 @@ def parse_place_list(body: str) -> list[PlaceRecord]:
         body = body.split("\n", 1)[-1]
     try:
         data = json.loads(body)
-    except ValueError:
+    except ValueError as error:
+        logger.warning(
+            "search batch is not JSON (%d characters): %s", len(body), describe(error)
+        )
         return []
     entries_PATH = get_at_path(data, (ENTRIES_PATH,))
     if not isinstance(entries_PATH, list):
+        logger.warning(
+            "search batch has no entry list at the expected path; Google may have changed its format"
+        )
         return []
     out: list[PlaceRecord] = []
+    skipped: list[str] = []
     for e in entries_PATH:
         entity = get_at_path(e, ENTRY_ENTITY_PATH)
         if isinstance(entity, list):
@@ -512,8 +526,16 @@ def parse_place_list(body: str) -> list[PlaceRecord]:
                 ValueError,
                 IndexError,
                 AttributeError,
-            ):  # one odd entity, not the whole batch
+            ) as error:  # one odd entity, not the whole batch
+                skipped.append(describe(error))
                 continue
             if row.get("title"):
                 out.append(row)
+    if skipped:
+        logger.warning(
+            "skipped %d malformed place entr%s in a search batch; first error: %s",
+            len(skipped),
+            "y" if len(skipped) == 1 else "ies",
+            skipped[0],
+        )
     return out

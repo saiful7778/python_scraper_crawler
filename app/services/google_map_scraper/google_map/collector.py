@@ -25,12 +25,14 @@ allowed for its answer. While the feed is still rendering the last batch
 clock restarts.
 """
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Final, cast
 
 from app.services.browser import BrowserTab, CDPError
 from app.services.google_map_scraper.extract_details import PlaceRecord
+from app.utils.errors import describe
 
 from .batches import BatchResponseReader
 from .parsing import (
@@ -50,6 +52,8 @@ from .selectors import (
     SETTLE_SECONDS,
     SLOW_BATCH_SECONDS,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Default number of result batches to read.
 _DEFAULT_DEPTH: Final[int] = 5
@@ -100,7 +104,7 @@ def collect_leads(
 
     reader = BatchResponseReader(tab)
     seen: dict[str, PlaceRecord | PlaceLink] = {}
-    started = time.time()
+    started = time.monotonic()
     reason = "depth"
     stale = 0
     try:
@@ -109,10 +113,15 @@ def collect_leads(
             return [], "blocked", {"batches": 0, "dom_links": 0}
         if "consent.google" in tab.get_url():
             tab.evaluate(JS_DISMISS_CONSENT)
-            tab.wait_for_truthy(
+            if not tab.wait_for_truthy(
                 "!location.href.includes('consent.google')",
                 timeout=_FEED_TIMEOUT_SECONDS,
-            )
+            ):
+                logger.warning(
+                    "the consent page did not clear within %s s: %s",
+                    _FEED_TIMEOUT_SECONDS,
+                    tab.get_url(),
+                )
         if not tab.wait_for_truthy(JS_FEED_PRESENT, timeout=_FEED_TIMEOUT_SECONDS):
             if "/maps/place/" in tab.get_url():
                 # The query resolved to a single place, not a list.
@@ -121,6 +130,11 @@ def collect_leads(
                     "single",
                     {"batches": 0, "dom_links": 1},
                 )
+            logger.warning(
+                "the results feed did not render within %s s; page: %s",
+                _FEED_TIMEOUT_SECONDS,
+                tab.get_url(),
+            )
             return [], "no-feed", {"batches": 0, "dom_links": 0}
 
         def take() -> int:
@@ -142,9 +156,9 @@ def collect_leads(
 
         try:
             # The first batch arrives with the page itself.
-            first_batch_deadline = time.time() + _FIRST_BATCH_TIMEOUT_SECONDS
+            first_batch_deadline = time.monotonic() + _FIRST_BATCH_TIMEOUT_SECONDS
             while (
-                time.time() < first_batch_deadline
+                time.monotonic() < first_batch_deadline
                 and reader.count == 0
                 and not reader.limited
             ):
@@ -154,7 +168,7 @@ def collect_leads(
 
             while (
                 reader.count < depth
-                and time.time() - started < max_seconds
+                and time.monotonic() - started < max_seconds
                 and not stop()
             ):
                 if feed_is_exhausted(tab.evaluate(JS_FEED_END_STATE)):
@@ -167,10 +181,10 @@ def collect_leads(
                 count_before = reader.count
                 asked_before = reader.asked
                 height_before = tab.evaluate(JS_SCROLL_FEED_TO_BOTTOM)
-                scrolled_at = time.time()
+                scrolled_at = time.monotonic()
                 settle_deadline = scrolled_at + SETTLE_SECONDS
                 while (
-                    time.time() < settle_deadline
+                    time.monotonic() < settle_deadline
                     and reader.count == count_before
                     and not stop()
                 ):
@@ -185,7 +199,7 @@ def collect_leads(
                         height = tab.evaluate(JS_SCROLL_FEED_TO_BOTTOM)
                         if height != height_before:
                             height_before = height
-                            scrolled_at = time.time()
+                            scrolled_at = time.monotonic()
                             settle_deadline = scrolled_at + SETTLE_SECONDS
 
                 if reader.count == count_before:
@@ -211,7 +225,7 @@ def collect_leads(
             else:
                 if stop():
                     reason = "stopped"
-                elif time.time() - started >= max_seconds:
+                elif time.monotonic() - started >= max_seconds:
                     reason = "timeout"
                 elif reader.count == 0 and reader.limited:
                     reason = "blocked"
@@ -220,11 +234,18 @@ def collect_leads(
             dom_links: list[dict[str, str]] = tab.evaluate(JS_FEED_LINKS) or []
 
         except CDPError as error:
+            logger.error(
+                "collecting leads from %s stopped after %d batches: %s",
+                url,
+                reader.count,
+                describe(error),
+                exc_info=True,
+            )
             if not seen:
                 raise
             return (
                 list(seen.values()),
-                f"error: {error}",
+                f"error: {describe(error)}",
                 {"batches": reader.count, "dom_links": 0},
             )
 
