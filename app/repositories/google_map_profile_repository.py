@@ -39,7 +39,6 @@ LEAD_FIELDS = (
     "descriptions",
     "owner",
     "timezone",
-    "website_fetch_status",
 )
 
 
