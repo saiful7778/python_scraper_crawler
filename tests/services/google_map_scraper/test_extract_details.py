@@ -311,7 +311,7 @@ class TestFormatAddress:
             ADDRESS_PATH,
             ["Downtown", "1 Main St", None, "Springfield", "12345", "IL", "US"],
         )
-        result: dict[str, str] = json.loads(format_address(entity))
+        result = format_address(entity)
         assert result == {
             "borough": "Downtown",
             "street": "1 Main St",
@@ -323,7 +323,7 @@ class TestFormatAddress:
 
     def test_missing_parts_become_empty_strings(self) -> None:
         entity: list[Any] = at(ADDRESS_PATH, ["", "1 Main St"])
-        result: dict[str, str] = json.loads(format_address(entity))
+        result = format_address(entity)
         assert result == {
             "borough": "",
             "street": "1 Main St",
@@ -335,15 +335,16 @@ class TestFormatAddress:
 
     def test_normalizes_unicode_spaces(self) -> None:
         entity: list[Any] = at(ADDRESS_PATH, [None, "1\u00a0Main St"])
-        result: dict[str, str] = json.loads(format_address(entity))
+        result = format_address(entity)
+        assert result is not None
         assert result["street"] == "1 Main St"
 
-    def test_returns_empty_when_no_parts(self) -> None:
-        assert format_address({}) == ""
-        assert format_address(at(ADDRESS_PATH, ["", "", None])) == ""
+    def test_returns_none_when_no_parts(self) -> None:
+        assert format_address({}) is None
+        assert format_address(at(ADDRESS_PATH, ["", "", None])) is None
 
-    def test_returns_empty_for_non_list_parts(self) -> None:
-        assert format_address(at(ADDRESS_PATH, "1 Main St")) == ""
+    def test_returns_none_for_non_list_parts(self) -> None:
+        assert format_address(at(ADDRESS_PATH, "1 Main St")) is None
 
 
 class TestExtractAttributesAndCards:
@@ -617,7 +618,7 @@ class TestParsePlacePanel:
 
     def test_empty_reviews_value_when_none_parse(self) -> None:
         result: PanelRecord = parse_place_panel(panel_body(place(review_count=1)))
-        assert result["user_reviews"] == ""
+        assert result.get("user_reviews") == ""
 
 
 class TestBuildPlaceRecord:
@@ -707,7 +708,7 @@ class TestBuildPlaceRecord:
         )
         record: PlaceRecord = build_place_record(entity)
         assert "complete_address" in record
-        address: dict[str, str] = json.loads(record["complete_address"])
+        address = record["complete_address"]
         assert "menu" in record
         menu: dict[str, str] = json.loads(record["menu"])
         assert address["city"] == "Town"

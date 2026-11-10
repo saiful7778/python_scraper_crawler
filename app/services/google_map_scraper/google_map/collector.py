@@ -25,7 +25,6 @@ allowed for its answer. While the feed is still rendering the last batch
 clock restarts.
 """
 
-import logging
 import time
 from collections.abc import Callable
 from typing import Final, cast
@@ -33,6 +32,7 @@ from typing import Final, cast
 from app.services.browser import BrowserTab, CDPError
 from app.services.google_map_scraper.extract_details import PlaceRecord
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .batches import BatchResponseReader
 from .parsing import (
@@ -53,7 +53,7 @@ from .selectors import (
     SLOW_BATCH_SECONDS,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: Default number of result batches to read.
 _DEFAULT_DEPTH: Final[int] = 5
@@ -74,7 +74,6 @@ def collect_leads(
     *,
     depth: int = _DEFAULT_DEPTH,
     max_seconds: float = _DEFAULT_MAX_SECONDS,
-    log: Callable[[str], None] = print,
     stop: Callable[[], bool] = lambda: False,
     on_batch: Callable[[list[PlaceRecord], int], None] | None = None,
 ) -> tuple[list[PlaceLink | PlaceRecord], str, BatchStats]:
@@ -85,7 +84,6 @@ def collect_leads(
         :func:`parsing.build_maps_search_url`).
     :param depth: Maximum number of result batches to read.
     :param max_seconds: Wall-clock budget for the whole collection.
-    :param log: Called with human-readable progress lines.
     :param stop: Polled between steps; when it returns true, collection
         stops with reason ``"stopped"``.
     :param on_batch: Optional callback invoked after each batch with the
@@ -164,7 +162,7 @@ def collect_leads(
             ):
                 take()
                 time.sleep(FEED_GROWTH_POLL_SECONDS)
-            log(f"  batch {reader.count}: {len(seen)} leads")
+            logger.info("  batch %s: %s leads", reader.count, len(seen))
 
             while (
                 reader.count < depth
@@ -221,7 +219,7 @@ def collect_leads(
                         break
                 else:
                     stale = 0
-                    log(f"  batch {reader.count}: {len(seen)} leads")
+                    logger.info("  batch %s: %s leads", reader.count, len(seen))
             else:
                 if stop():
                     reason = "stopped"
@@ -234,12 +232,10 @@ def collect_leads(
             dom_links: list[dict[str, str]] = tab.evaluate(JS_FEED_LINKS) or []
 
         except CDPError as error:
-            logger.error(
-                "collecting leads from %s stopped after %d batches: %s",
+            logger.exception(
+                "collecting leads from %s stopped after %d batches",
                 url,
                 reader.count,
-                describe(error),
-                exc_info=True,
             )
             if not seen:
                 raise

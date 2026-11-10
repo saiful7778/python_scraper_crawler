@@ -8,7 +8,6 @@ each one's body once it is available. It never blocks on the network:
 the newly parsed rows.
 """
 
-import logging
 import queue
 from typing import Final
 
@@ -19,11 +18,12 @@ from app.services.google_map_scraper.extract_details import (
     parse_place_list,
 )
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .panel import response_text
 from .selectors import BATCH_URL_PATTERN
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: After this many retries (one per poll), a batch whose body cannot be
 #: read is dropped as evicted or failed. About 10 s at the collector's

@@ -9,7 +9,6 @@ response's body. It is the single-place analogue of
 from __future__ import annotations
 
 import base64
-import logging
 import queue
 import time
 from typing import Final
@@ -17,10 +16,11 @@ from typing import Final
 from app.services.browser import BrowserTab, CDPError
 from app.services.browser.cdp_client import Params
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .selectors import LEAD_PANEL_URL_PATTERN
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: How often the response queue is drained while waiting.
 _POLL_INTERVAL_SECONDS: Final[float] = 0.3

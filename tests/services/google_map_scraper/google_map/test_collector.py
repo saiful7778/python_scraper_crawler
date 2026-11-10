@@ -1,3 +1,4 @@
+import logging
 from typing import Any, cast
 
 import pytest
@@ -12,6 +13,7 @@ from app.services.google_map_scraper.google_map import (
     JS_FEED_PRESENT,
     JS_SCROLL_FEED_TO_BOTTOM,
     collect_leads,
+    collector,
 )
 from tests.services.google_map_scraper.google_map.fakes import (
     FakeClock,
@@ -90,7 +92,6 @@ def run(monkeypatch: pytest.MonkeyPatch):
             "app.services.google_map_scraper.google_map.collector.BatchResponseReader",
             factory,
         )
-        kwargs.setdefault("log", lambda message: None)
         result = collect_leads(cast(BrowserTab, tab), URL, **kwargs)
         return result, readers[0]
 
@@ -271,15 +272,11 @@ def test_reports_timeout_when_wall_clock_budget_is_spent(run):
     assert reason == "timeout"
 
 
-def test_logs_progress_for_each_batch(run):
+def test_logs_progress_for_each_batch(run, caplog):
     tab = FakeTab()
-    messages: list[str] = []
 
-    run(
-        tab,
-        [batch(ROW_A), batch(ROW_B)],
-        depth=2,
-        log=messages.append,
-    )
+    with caplog.at_level(logging.INFO, logger=collector.__name__):
+        run(tab, [batch(ROW_A), batch(ROW_B)], depth=2)
 
+    messages = [r.getMessage() for r in caplog.records if r.name == collector.__name__]
     assert messages == ["  batch 1: 1 leads", "  batch 2: 2 leads"]

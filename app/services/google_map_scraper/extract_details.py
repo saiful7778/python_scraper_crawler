@@ -1,5 +1,4 @@
 import json
-import logging
 import math
 import urllib.parse
 from collections.abc import Sequence
@@ -7,8 +6,9 @@ from typing import Any, TypedDict, cast
 
 from app.utils import normalize_unicode_text
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 Path = Sequence[int]
 
@@ -19,6 +19,17 @@ class ReviewRecord(TypedDict):
     Rating: int
     When: str
     Description: str
+
+
+class AddressRecord(TypedDict):
+    """The parts of a postal address. A part is "" when the source has none."""
+
+    borough: str
+    street: str
+    city: str
+    postal_code: str
+    state: str
+    country: str
 
 
 class PlaceRecord(TypedDict, total=False):
@@ -45,7 +56,7 @@ class PlaceRecord(TypedDict, total=False):
     address_lines: str
     open_hours: str
     images: str
-    complete_address: str
+    complete_address: AddressRecord
     about: str
     credit_cards_accepted: str
     reservations: str
@@ -60,7 +71,7 @@ class PanelRecord(TypedDict, total=False):
     review_count: int
     reviews_link: str
     open_hours: str
-    complete_address: str
+    complete_address: AddressRecord
     about: str
     credit_cards_accepted: str
     reservations: str
@@ -290,16 +301,28 @@ def format_gallery(entity: Any) -> str:
     return json.dumps(found, ensure_ascii=False) if found else ""
 
 
-def format_address(entity: Any) -> str:
-    """Return the address parts as JSON, or "" if every part is empty."""
+def format_address(entity: Any) -> AddressRecord | None:
+    """Return the address parts, or None if every part is empty."""
     parts = get_at_path(entity, ADDRESS_PATH)
     if not isinstance(parts, list):
-        return ""
+        return None
     out = {
         k: normalize_unicode_text(parts[i]) if i < len(parts) else ""
         for k, i in ADDRESS_PARTS.items()
     }
-    return json.dumps(out, ensure_ascii=False) if any(out.values()) else ""
+    return cast(AddressRecord, out) if any(out.values()) else None
+
+
+def address_json(address: object) -> str:
+    """Return the address parts as JSON, or "" when there is no address or every part is empty."""
+    if not isinstance(address, dict) or not any(address.values()):
+        return ""
+    return json.dumps(address, ensure_ascii=False)
+
+
+def parse_address_json(text: str) -> AddressRecord | None:
+    """Return the address parts stored by address_json, or None for an empty text."""
+    return cast(AddressRecord, json.loads(text)) if text else None
 
 
 def extract_attributes_and_cards(entity: Any) -> tuple[str, str]:
