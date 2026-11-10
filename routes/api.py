@@ -12,3 +12,4 @@ router.get("/health", homeController.health)
 
 router.get("/leads", leadController.index)
 router.get("/leads/{lead_id}", leadController.show)
+router.delete("/leads/{lead_id}", leadController.destroy)

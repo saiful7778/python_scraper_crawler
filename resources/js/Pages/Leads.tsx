@@ -1,9 +1,12 @@
-import { Link } from "@inertiajs/react";
+import { Link, router } from "@inertiajs/react";
+import { useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { DeleteDialog } from "@/components/DeleteDialog";
 import {
   DashboardShellHeader,
   DashboardShellTitle,
 } from "@/components/dashboard-shell/DashboardShellHeader";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -12,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TrashIcon } from "@phosphor-icons/react";
 
 export interface Lead {
   id: string;
@@ -30,6 +34,27 @@ interface LeadsProps {
 }
 
 export default function Leads({ leads }: LeadsProps) {
+  const [openDialog, setOpenDialog] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  function openDeleteDialog(lead: Lead) {
+    setSelectedLead(lead);
+    setOpenDialog(true);
+  }
+
+  function confirmDelete() {
+    if (!selectedLead) {
+      return;
+    }
+    setIsDeleting(true);
+    router.delete(`/leads/${selectedLead.id}`, {
+      preserveScroll: true,
+      onSuccess: () => setOpenDialog(false),
+      onFinish: () => setIsDeleting(false),
+    });
+  }
+
   return (
     <DashboardShell
       header={
@@ -45,6 +70,7 @@ export default function Leads({ leads }: LeadsProps) {
             <TableHead>Title</TableHead>
             <TableHead>Category</TableHead>
             <TableHead>Website</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -78,6 +104,16 @@ export default function Leads({ leads }: LeadsProps) {
                   "—"
                 )}
               </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  variant="destructive"
+                  size="icon-sm"
+                  onClick={() => openDeleteDialog(lead)}
+                >
+                  <TrashIcon size={32} />
+                  <span className="sr-only">delete lead</span>
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
           {leads.length === 0 && (
@@ -92,6 +128,12 @@ export default function Leads({ leads }: LeadsProps) {
           )}
         </TableBody>
       </Table>
+      <DeleteDialog
+        openDialog={openDialog}
+        setOpenDialog={setOpenDialog}
+        onDelete={confirmDelete}
+        isDeleteing={isDeleting}
+      />
     </DashboardShell>
   );
 }

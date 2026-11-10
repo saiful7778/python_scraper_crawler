@@ -44,8 +44,9 @@ class LeadRepository(BaseRepository):
     async def find_by_domain(self, domain: str):
         return await self._model.get_or_none(website_domain=domain)
 
-    async def all(self) -> list[LeadModel]:
-        return await self._model.all().order_by("counter").prefetch_related("emails")
+    async def all(self, descending: bool = False) -> list[LeadModel]:
+        order = "-counter" if descending else "counter"
+        return await self._model.all().order_by(order).prefetch_related("emails")
 
     async def find_details(self, lead_id: UUID) -> LeadModel | None:
         return await self._model.get_or_none(id=lead_id).prefetch_related(
@@ -58,6 +59,9 @@ class LeadRepository(BaseRepository):
 
     async def find_address(self, lead_id: UUID) -> LeadAddressModel | None:
         return await LeadAddressModel.get_or_none(lead_id=lead_id)
+
+    async def delete(self, lead_id: UUID) -> bool:
+        return await self._model.filter(id=lead_id).delete() > 0
 
     async def create(self, values: dict):
         return await self._model.create(
