@@ -28,6 +28,7 @@ package = true
 asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["postgres: needs a reachable Postgres server; skipped otherwise"]
 
 [tool.ruff]
 include = [
