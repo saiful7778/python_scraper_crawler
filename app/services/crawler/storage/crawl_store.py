@@ -9,6 +9,8 @@ scrape store uses to clean up and read back a scrape's website data.
 from collections.abc import Coroutine, Sequence
 from typing import TYPE_CHECKING, TypeVar
 
+from tortoise import Tortoise
+
 from app.services.google_map_scraper.scrape.scrape_models import (
     ScrapeLeadModel,
     ScrapeSettingsModel,
@@ -94,14 +96,28 @@ async def _queue_websites(scrape_id: str) -> int:
 
 async def _count_pending_websites(scrape_id: str) -> int:
     return await CrawlWebsiteModel.filter(
-        scrape_id=scrape_id, crawl_status=CrawlStatus.PENDING
+        scrape_id=scrape_id,
+        crawl_status__in=[CrawlStatus.PENDING, CrawlStatus.RUNNING],
     ).count()
 
 
 async def _skip_pending_websites(scrape_id: str) -> int:
     return await CrawlWebsiteModel.filter(
-        scrape_id=scrape_id, crawl_status=CrawlStatus.PENDING
+        scrape_id=scrape_id,
+        crawl_status__in=[CrawlStatus.PENDING, CrawlStatus.RUNNING],
     ).update(crawl_status=CrawlStatus.SKIPPED)
+
+
+_CLAIM_WEBSITES_SQL = """
+UPDATE crawl_websites SET crawl_status = ?
+WHERE scrape_id = ? AND crawl_status = ? AND id IN (
+    SELECT id FROM crawl_websites
+    WHERE scrape_id = ? AND crawl_status = ?
+    ORDER BY created_at, lead_position
+    LIMIT ?
+)
+RETURNING lead_position
+"""
 
 
 async def _next_website_batch(size: int) -> WebsiteBatch | None:
@@ -112,23 +128,30 @@ async def _next_website_batch(size: int) -> WebsiteBatch | None:
     )
     if first is None:
         return None
-    settings = await ScrapeSettingsModel.get(scrape_id=first.scrape_id)
-    queued = (
-        await CrawlWebsiteModel.filter(
-            scrape_id=first.scrape_id, crawl_status=CrawlStatus.PENDING
-        )
-        .order_by("created_at", "lead_position")
-        .limit(size)
+    scrape_id = first.scrape_id
+    claimed = await Tortoise.get_connection("default").execute_query_dict(
+        _CLAIM_WEBSITES_SQL,
+        [
+            CrawlStatus.RUNNING,
+            scrape_id,
+            CrawlStatus.PENDING,
+            scrape_id,
+            CrawlStatus.PENDING,
+            size,
+        ],
     )
+    if not claimed:
+        return await _next_website_batch(size)
+    positions = [int(row["lead_position"]) for row in claimed]
+    settings = await ScrapeSettingsModel.get(scrape_id=scrape_id)
     leads = {
         lead.position: lead
         for lead in await ScrapeLeadModel.filter(
-            scrape_id=first.scrape_id,
-            position__in=[entry.lead_position for entry in queued],
+            scrape_id=scrape_id, position__in=positions
         )
     }
     return WebsiteBatch(
-        scrape_id=first.scrape_id,
+        scrape_id=scrape_id,
         collect_emails=settings.collect_emails,
         collect_socials=settings.collect_socials,
         crawl_max_pages=settings.crawl_max_pages,
@@ -136,13 +159,19 @@ async def _next_website_batch(size: int) -> WebsiteBatch | None:
         crawl_store_html=settings.crawl_store_html,
         websites=[
             WebsiteTarget(
-                row_id=leads[entry.lead_position].id,
-                position=entry.lead_position,
-                website=leads[entry.lead_position].website,
+                row_id=leads[position].id,
+                position=position,
+                website=leads[position].website,
             )
-            for entry in queued
-            if entry.lead_position in leads
+            for position in positions
+            if position in leads
         ],
+    )
+
+
+async def _requeue_running_websites() -> int:
+    return await CrawlWebsiteModel.filter(crawl_status=CrawlStatus.RUNNING).update(
+        crawl_status=CrawlStatus.PENDING
     )
 
 
@@ -156,7 +185,7 @@ async def _save_website_result(
     updated = await CrawlWebsiteModel.filter(
         scrape_id=scrape_id,
         lead_position=position,
-        crawl_status=CrawlStatus.PENDING,
+        crawl_status__in=[CrawlStatus.PENDING, CrawlStatus.RUNNING],
     ).update(crawl_status=CrawlStatus.DONE, **tech_values)
     if not updated:
         return
@@ -203,8 +232,12 @@ class CrawlStore:
         return self.run_async(_skip_pending_websites(scrape_id))
 
     def next_website_batch(self, size: int) -> WebsiteBatch | None:
-        """The next leads to check, all from one scrape, or ``None`` when the queue is empty."""
+        """Claim the next leads to check, all from one scrape, or ``None`` when the queue is empty."""
         return self.run_async(_next_website_batch(size))
+
+    def requeue_running_websites(self) -> int:
+        """Put websites claimed by an earlier run back in the queue; returns how many."""
+        return self.run_async(_requeue_running_websites())
 
     def save_website_result(
         self,

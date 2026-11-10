@@ -118,3 +118,33 @@ def test_crawler_worker_stores_what_it_finds(store):
     rows = store.read_rows(scrape_id)
     assert rows[0]["emails"] == "hi@bakery.studio.de"
     assert CrawlStore(store).count_pending_websites(scrape_id) == 0
+
+
+def test_concurrent_batches_claim_different_websites(store):
+    scrape_id = store.create_scrape("nightly", _settings())
+    store.append_rows(
+        scrape_id,
+        [_lead(f"Bakery {i}", website=f"https://site{i}.example") for i in range(25)],
+    )
+    CrawlStore(store).queue_websites(scrape_id)
+
+    first = CrawlStore(store).next_website_batch(10)
+    second = CrawlStore(store).next_website_batch(10)
+    third = CrawlStore(store).next_website_batch(10)
+    assert first is not None and second is not None and third is not None
+    claimed = [t.position for b in (first, second, third) for t in b.websites]
+    assert len(first.websites) == len(second.websites) == 10
+    assert len(third.websites) == 5
+    assert len(set(claimed)) == 25
+    assert CrawlStore(store).next_website_batch(10) is None
+    assert CrawlStore(store).count_pending_websites(scrape_id) == 25
+
+
+def test_requeue_puts_claimed_websites_back_in_the_queue(store):
+    scrape_id = _scrape_with_two_leads(store)
+    CrawlStore(store).queue_websites(scrape_id)
+    assert CrawlStore(store).next_website_batch(8) is not None
+    assert CrawlStore(store).next_website_batch(8) is None
+
+    assert CrawlStore(store).requeue_running_websites() == 1
+    assert CrawlStore(store).next_website_batch(8) is not None

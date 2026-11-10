@@ -19,6 +19,7 @@ class CrawlStatus:
 
     NONE = ""
     PENDING = "pending"
+    RUNNING = "running"
     DONE = "done"
     SKIPPED = "skipped"
 

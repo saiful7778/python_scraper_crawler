@@ -26,7 +26,8 @@ from .storage.postgres_sink import PostgresSink
 
 logger = get_logger(__name__)
 
-WEBSITE_WORKERS = 8
+WEBSITE_WORKERS = 10
+BATCHES_IN_PARALLEL = 3
 _IDLE_POLL_SECONDS = 2
 _RETRY_PAUSE_SECONDS = 2
 
@@ -67,9 +68,18 @@ class CrawlerWorker(threading.Thread):
                 "marking the crawls of an earlier run as interrupted failed"
             )
         try:
+            self._store.requeue_running_websites()
+        except Exception:
+            logger.exception("requeuing the websites of an earlier run failed")
+        try:
             self._copy_leftovers()
         except Exception:
             logger.exception("copying the finished websites of an earlier run failed")
+        with ThreadPoolExecutor(BATCHES_IN_PARALLEL) as pool:
+            for _ in range(BATCHES_IN_PARALLEL):
+                pool.submit(self._check_batches)
+
+    def _check_batches(self) -> None:
         while not self._stopped.is_set():
             try:
                 batch = self._store.next_website_batch(WEBSITE_WORKERS)
@@ -82,7 +92,7 @@ class CrawlerWorker(threading.Thread):
                 self._stopped.wait(_RETRY_PAUSE_SECONDS)
 
     def shutdown(self, wait: float = 0) -> None:
-        """Stop after the current batch; optionally wait for the thread to end."""
+        """Stop after the current batches; optionally wait for the thread to end."""
         self._stopped.set()
         if wait and self.is_alive():
             self.join(wait)
