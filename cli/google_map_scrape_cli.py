@@ -2,10 +2,10 @@ import argparse
 import asyncio
 import csv
 import json
-import logging
 import os
 import re
 import sys
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from pydantic import Field, ValidationError
@@ -14,20 +14,22 @@ from tortoise import Tortoise
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.helpers.ingest import Ingester
 from app.repositories import GoogleMapProfileRepository, LeadRepository
-from app.services.google_map_scraper.job.job_types import LeadRow
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.place_scraper import (
     SALVAGE,
     columns_for,
     scrape_place,
 )
+from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.utils.errors import ScraperError, describe
+from app.utils.logger import get_logger
 from config.tortoise import TORTOISE_ORM
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 FLAG_NAMES = {"proxies": "--proxy", "output_format": "--format"}
-OUTPUT_DIR = "/storage/scrape-leads"
+OUTPUT_DIR = "./storage/scrape-leads"
 
 
 class CliQuery(PlaceQuery):
@@ -54,7 +56,7 @@ class CliQuery(PlaceQuery):
         ge=1,
         le=1200,
         strict=True,
-        description="Time limit in seconds for each job.",
+        description="Time limit in seconds for each scrape.",
     )
     output: str | None = Field(default=None, description="CSV file to write.")
     dry_run: bool = Field(
@@ -92,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="proxies",
         action="append",
         metavar="URL",
-        help="proxy for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); repeatable: the jobs take turns through the proxies",
+        help="proxy for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); repeatable: the scrapes take turns through the proxies",
     )
     ap.add_argument("--depth", type=int, default=5)
     ap.add_argument(
@@ -104,16 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--website-depth",
         type=int,
-        choices=(1, 2, 3),
+        choices=(1,),
         default=1,
         metavar="N",
-        help="website crawler level: 1=emails and socials from the homepage, 2=+browser rendering for sites that need JavaScript, 3=same as 2 (internal crawl is not in the job engine yet) (default: 1)",
+        help="website crawler level: 1=emails, socials, tech from the websute (default: 1)",
     )
     ap.add_argument(
         "--grid",
         type=int,
         metavar="N",
-        help="split the --city area into N x N map tiles, one job each, deduped (breaks Google's ~120 per search cap; max 10)",
+        help="split the --city area into N x N map tiles, one scrape each, deduped (breaks Google's ~120 per search cap; max 10)",
     )
     ap.add_argument(
         "--deep-scan",
@@ -125,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_time",
         type=int,
         default=600,
-        help="time limit in SECONDS for each job (default: 600, max 1200)",
+        help="time limit in SECONDS for each scrape (default: 600, max 1200)",
     )
     ap.add_argument("--limit", type=int, metavar="N", help="stop at N rows")
     ap.add_argument(
@@ -227,12 +229,23 @@ def write_output(
         raise OSError(f"could not write {path}: {describe(error)}") from error
 
 
-async def ingest_rows(rows: list[LeadRow]) -> tuple[int, int]:
+async def with_database[T](action: Callable[[], Awaitable[T]]) -> T:
+    """Open Tortoise, run ``action``, and close the connections, all on one event loop."""
     await Tortoise.init(config=TORTOISE_ORM)
     try:
-        return await Ingester(GoogleMapProfileRepository(LeadRepository())).run(rows)
+        return await action()
     finally:
         await Tortoise.close_connections()
+
+
+async def load_known_keys() -> frozenset[str]:
+    repository = GoogleMapProfileRepository(LeadRepository())
+    return frozenset(seen_keys_of(await repository.key_rows()))
+
+
+async def ingest_rows(rows: list[LeadRow]) -> tuple[int, int]:
+    repository = GoogleMapProfileRepository(LeadRepository())
+    return await Ingester(repository).run(rows)
 
 
 def print_plan(query: CliQuery, output: str) -> None:
@@ -251,7 +264,7 @@ def print_plan(query: CliQuery, output: str) -> None:
         )
     )
     print(
-        f"Depth: {query.scroll_depth} batch(es) per keyword, {query.max_seconds}s per job"
+        f"Depth: {query.scroll_depth} batch(es) per keyword, {query.max_seconds}s per scrape"
     )
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
@@ -282,15 +295,11 @@ def main() -> None:
 
     if query.scroll_depth >= 10 or (query.grid or 1) ** 2 >= 4:
         print(
-            "\nHeads-up: this is a large job (high depth or a grid).\n"
-            "Running it back-to-back without proxies can get your IP temporarily rate-limited by Google (clears in minutes-hours; returns empty/failed jobs meanwhile).\n"
+            "\nHeads-up: this is a large scrape (high depth or a grid).\n"
+            "Running it back-to-back without proxies can get your IP temporarily rate-limited by Google (clears in minutes-hours; returns empty/failed scrapes meanwhile).\n"
             "For big or repeated runs, add proxies. Proceeding....\n",
         )
 
-    if query.website_depth == 3:
-        print(
-            "! --website-depth 3 needs the internal crawl, which the job engine does not have yet: running level 2."
-        )
     output = query.output or default_output(
         query.keyword, query.city, query.output_format
     )
@@ -311,7 +320,15 @@ def main() -> None:
     check_output_path(output)
 
     try:
-        result = scrape_place(query)
+        known_keys = asyncio.run(with_database(load_known_keys))
+    except Exception as exc:  # noqa: BLE001 - any database failure should exit cleanly
+        sys.exit(
+            f"✗ Could not read the existing leads from the database: {describe(exc)}"
+        )
+    print(f"▶ {len(known_keys)} known lead keys loaded; duplicates are skipped\n")
+
+    try:
+        result = scrape_place(query, known_keys)
     except KeyboardInterrupt:
         if SALVAGE["rows"]:
             try:
@@ -337,15 +354,13 @@ def main() -> None:
     if result.blocked:
         print("⚠ Google rate-limited this IP. The rows found before that are kept.")
     if result.skipped:
-        print(f"⚠ {result.skipped} job(s) skipped; see the ⚠ lines above.")
+        print(f"⚠ {result.skipped} scrape(s) skipped; see the ⚠ lines above.")
     if result.finished == 0:
-        sys.exit("✗ No job finished; the reason is in the ✗ line above.")
+        sys.exit("✗ No scrape finished; the reason is in the ✗ line above.")
 
     try:
-        saved, failed = asyncio.run(ingest_rows(result.rows))
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 -- the CSV is already written; report and exit
+        saved, failed = asyncio.run(with_database(lambda: ingest_rows(result.rows)))
+    except Exception as exc:  # noqa: BLE001 - any database failure should exit cleanly
         sys.exit(f"✗ Could not save the leads to the database: {describe(exc)}")
     print(f"✓ {saved} leads saved to the database")
     if failed:
