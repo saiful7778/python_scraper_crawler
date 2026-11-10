@@ -47,9 +47,9 @@ def parse_proxy_urls(value: Any) -> list[str]:
 
 
 def mask_proxy_credentials(proxy: str) -> str:
-    """Hide the password of a proxy URL so it can be shown in the job list.
+    """Hide the password of a proxy URL so it can be shown in the scrape list.
 
-    A malformed URL (possible for jobs created by older versions) is fully
+    A malformed URL (possible for scrapes created by older versions) is fully
     masked instead of raising.
     """
     try:

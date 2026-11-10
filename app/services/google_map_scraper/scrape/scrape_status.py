@@ -1,12 +1,12 @@
-"""Named string values shared by the store, the worker and the public job view.
+"""Named string values shared by the store, the worker and the public scrape view.
 
 The values are plain strings (not enums) because they are persisted as JSON
 and compared against rows written by older versions of the engine.
 """
 
 
-class JobStatus:
-    """Lifecycle status of a job record."""
+class ScrapeStatus:
+    """Lifecycle status of a scrape record."""
 
     PENDING = "pending"
     WORKING = "working"
@@ -14,8 +14,17 @@ class JobStatus:
     FAILED = "failed"
 
 
-class JobStage:
-    """Pipeline stage a job is in; persisted so an interrupted job can resume."""
+class CrawlStatus:
+    """Where a lead's website is in the contact search; empty when none was queued."""
+
+    NONE = ""
+    PENDING = "pending"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
+class ScrapeStage:
+    """Pipeline stage a scrape is in; persisted so an interrupted scrape can resume."""
 
     QUEUED = "queued"
     SEARCH = "search"

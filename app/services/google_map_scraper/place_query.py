@@ -4,12 +4,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
-from .job.job_settings import CleanText, JobSettings
+from .scrape.scrape_settings import CleanText, ScrapeSettings
 
 CountryCode = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2}$")]
 
 
-class PlaceQuery(JobSettings):
+class PlaceQuery(ScrapeSettings):
     """Keyword and city, plus how to tile the city and which rows to keep."""
 
     keyword: CleanText = Field(
@@ -20,12 +20,9 @@ class PlaceQuery(JobSettings):
         default=None, max_length=200, description="Optional state or region."
     )
     country: CountryCode = Field(description="Country code, 2 letters (us, de, br).")
-    website_depth: Literal[1, 2, 3] = Field(
+    website_depth: Literal[1] = Field(
         default=1,
-        description=(
-            "1: emails and socials from the homepage; 2: also render sites that "
-            "need JavaScript; 3: same as 2, the internal crawl is not built yet."
-        ),
+        description=("1: emails, socials, tech from the website"),
     )
     grid: int | None = Field(
         default=None,
@@ -55,16 +52,15 @@ class PlaceQuery(JobSettings):
             data["grid"] = 3
         data["email"] = True
         data["socials"] = True
-        data["browser_sites"] = data.get("website_depth", 1) in (2, 3)
         return data
 
-    def engine_settings(self) -> JobSettings:
-        """The settings the job engine runs with; the place-only fields are left out.
+    def engine_settings(self) -> ScrapeSettings:
+        """The settings the scrape engine runs with; the place-only fields are left out.
 
         The row limit reaches the engine only when nothing trims rows after the
         search (filters, grid bounding box), so the engine never stops too early.
         """
-        data = self.model_dump(include=set(JobSettings.model_fields))
+        data = self.model_dump(include=set(ScrapeSettings.model_fields))
         if self.has_phone or self.has_email or self.has_website or self.grid:
             data["limit"] = None
-        return JobSettings.model_validate(data)
+        return ScrapeSettings.model_validate(data)

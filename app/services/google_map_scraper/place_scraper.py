@@ -1,11 +1,11 @@
-"""Place-level scraping: one keyword in one city, as a single job or a grid of jobs."""
+"""Place-level scraping: one keyword in one city, as a single scrape or a grid of scrapes."""
 
-import logging
 from dataclasses import dataclass
 from typing import cast
 
 from app.services.browser import CDPError
 from app.utils.errors import ScraperError, describe
+from app.utils.logger import get_logger
 
 from .google_map.geo import (
     BoundingBox,
@@ -15,15 +15,16 @@ from .google_map.geo import (
     get_geocode,
     is_in_bounding_box,
 )
-from .job.job_runner import check_job_requirements, run_job
-from .job.job_status import JobStatus
-from .job.job_types import LeadRow
-from .job.lead_rows import result_columns
 from .place_query import PlaceQuery
+from .scrape.dedupe import dedupe_rows
+from .scrape.lead_rows import result_columns
+from .scrape.scrape_runner import run_scrape
+from .scrape.scrape_status import ScrapeStatus
+from .scrape.scrape_types import LeadRow
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-SATURATED = 20  # rows per job that indicates a tile hit Google's cap
+SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
 SALVAGE: dict[str, list[LeadRow]] = {"rows": []}  # kept for Ctrl-C salvage
 
 
@@ -41,36 +42,6 @@ class ScrapeResult:
 def columns_for(query: PlaceQuery) -> list[str]:
     """The CSV columns a query produces."""
     return result_columns(query.engine_settings())
-
-
-def dedupe(rows: list[LeadRow]) -> list[LeadRow]:
-    seen, out = {}, []
-
-    def add(r: LeadRow, weak: bool) -> None:
-        for k in _keys(r, weak):
-            seen.setdefault(k, set()).add(r.get("place_id", ""))
-
-    def known(r: LeadRow, k: str) -> bool:
-        ids, pid = seen.get(k), r.get("place_id", "")
-        return ids is not None and (
-            not k.startswith("t") or not pid or "" in ids or pid in ids
-        )
-
-    for r in rows:
-        if not any(known(r, k) for k in _keys(r, weak=True)):
-            add(r, False)
-            out.append(r)
-    return out
-
-
-def _keys(r: LeadRow, weak: bool = False) -> list[str]:
-    ks = [f"{k}:{r[k]}" for k in ("place_id", "cid", "link") if r.get(k)]
-    t = r.get("title")
-    if t:
-        ks.append(f"ta:{t}|{r.get('address', '')}")
-        if weak:
-            ks += [f"t{c[0]}:{t}|{r[c]}" for c in ("phone", "website") if r.get(c)]
-    return ks
 
 
 def _keep(row: LeadRow, query: PlaceQuery) -> bool:
@@ -120,14 +91,15 @@ def _no_bounding_box(query: PlaceQuery) -> ScrapeResult:
     return ScrapeResult([], columns_for(query), 0, 0, False)
 
 
-def scrape_place(query: PlaceQuery) -> ScrapeResult:
+def scrape_place(
+    query: PlaceQuery, known_keys: frozenset[str] = frozenset()
+) -> ScrapeResult:
     settings = query.engine_settings()
     columns = result_columns(settings)
-    check_job_requirements(settings)
     SALVAGE["rows"] = []
 
     place = ", ".join(part for part in (query.city, query.state) if part)
-    name = f"{query.keyword} @ {place}"[:80]  # the job name is what the web UI lists
+    name = f"{query.keyword} @ {place}"[:80]  # the scrape name is what the web UI lists
 
     print(f'▶ Geocoding "{place}"')
     bounding_box: BoundingBox | None = None
@@ -164,14 +136,14 @@ def scrape_place(query: PlaceQuery) -> ScrapeResult:
     )
 
     if not cells:
-        print(f"▶ Creating job: 1 keyword @ {lat},{lon} depth={query.scroll_depth}")
-        result = run_job(name, anchored)
-        if result.status == JobStatus.FAILED:
+        print(f"▶ Creating scrape: 1 keyword @ {lat},{lon} depth={query.scroll_depth}")
+        result = run_scrape(name, anchored, known_keys=known_keys)
+        if result.status == ScrapeStatus.FAILED:
             print(f"✗ {result.note}")
             return ScrapeResult([], columns, 0, 1, result.blocked)
         if result.note:
             print(f"  ⚠ {result.note}")
-        rows = _finalize(result.rows, query, None)
+        rows = _finalize(dedupe_rows(result.rows, known_keys), query, None)
         return ScrapeResult(rows, columns, 1, 0, result.blocked)
 
     deep_scan_note = (
@@ -180,7 +152,7 @@ def scrape_place(query: PlaceQuery) -> ScrapeResult:
         else ""
     )
     print(
-        f"▶ Grid {query.grid}x{query.grid}: {len(cells)} jobs, one at a time, "
+        f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, "
         f"depth={query.scroll_depth}{deep_scan_note}"
     )
 
@@ -189,7 +161,7 @@ def scrape_place(query: PlaceQuery) -> ScrapeResult:
     blocked = False
     index = 0
 
-    # Sequential on purpose: never run parallel jobs against Google.
+    # Sequential on purpose: never run parallel scrapes against Google.
     while index < len(cells):
         cell = cells[index]
         index += 1
@@ -207,23 +179,23 @@ def scrape_place(query: PlaceQuery) -> ScrapeResult:
         )
 
         try:
-            result = run_job(name, cell_settings)
+            result = run_scrape(name, cell_settings, known_keys=known_keys)
         except CDPError as exc:
             # The browser connection is gone; every later cell would fail the same way.
             print(
                 f"\n  ✗ Stopped at cell {index}/{len(cells)}: Chrome connection lost "
                 f"({describe(exc)})"
             )
-            logger.error("cell %d stopped on a lost Chrome connection", index, exc_info=True)
+            logger.exception("cell %d stopped on a lost Chrome connection", index)
             skipped += 1
             break
         except Exception as exc:
             print(f"\n  ⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
-            logger.error("cell %d skipped", index, exc_info=True)
+            logger.exception("cell %d skipped", index)
             skipped += 1
             continue
 
-        rows = dedupe(rows + result.rows)
+        rows = dedupe_rows(rows + result.rows, known_keys)
         if result.blocked:
             blocked = True
             print(
@@ -231,7 +203,7 @@ def scrape_place(query: PlaceQuery) -> ScrapeResult:
                 "this IP; the cells after it were not searched."
             )
             break
-        if result.status == JobStatus.FAILED:
+        if result.status == ScrapeStatus.FAILED:
             print(f"\n  ⚠ cell {index}/{len(cells)} skipped: {result.note}")
             skipped += 1
             continue

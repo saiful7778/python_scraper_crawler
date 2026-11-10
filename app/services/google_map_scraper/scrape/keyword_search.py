@@ -1,62 +1,60 @@
 """Searches each keyword on Google Maps, with proxy rotation and recovery."""
 
-import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from app.services.browser import BrowserSession, CDPError
 from app.services.google_map_scraper.extract_details import PlaceRecord
-from app.utils.errors import describe
 from app.services.google_map_scraper.google_map import (
     build_maps_search_url,
     collect_leads,
 )
 from app.services.google_map_scraper.google_map.parsing import BatchStats, PlaceLink
-from app.services.google_map_scraper.job.lead_rows import (
-    build_lead_row,
-    lead_identity_key,
-)
+from app.services.google_map_scraper.scrape.lead_rows import build_lead_row
+from app.utils.errors import describe
 from app.utils.failure_messages import is_proxy_failure, is_timeout_failure
+from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
 
-from .job_failures import LOGIN_REFUSED
-from .job_limits import (
+from .dedupe import add_if_new
+from .run_state import RunState
+from .scrape_failures import LOGIN_REFUSED
+from .scrape_limits import (
     BACKOFF_SECONDS,
     MAX_BROWSER_RELAUNCHES,
     NO_FEED_RETRY_MARGIN_SECONDS,
     ROTATE_WAIT_SECONDS,
 )
-from .job_outcome import search_percent
-from .job_progress import JobProgress
-from .job_settings import JobSettings
-from .job_status import SearchEndReason
-from .job_store import JobStore
-from .job_types import LeadRow
-from .run_state import RunState
+from .scrape_outcome import search_percent
+from .scrape_progress import ScrapeProgress
+from .scrape_settings import ScrapeSettings
+from .scrape_status import SearchEndReason
+from .scrape_store import ScrapeStore
+from .scrape_types import LeadRow
+from .website_resolver import resolve_website
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class KeywordSearch:
-    """Runs the Maps search for every keyword of a job, from ``first_keyword`` on."""
+    """Runs the Maps search for every keyword of a scrape, from ``first_keyword`` on."""
 
     def __init__(
         self,
         *,
-        job_id: str,
-        settings: JobSettings,
-        store: JobStore,
+        scrape_id: str,
+        settings: ScrapeSettings,
+        store: ScrapeStore,
         browser: BrowserSession,
         rotation: ProxyRotation,
-        progress: JobProgress,
+        progress: ScrapeProgress,
         state: RunState,
         stop: threading.Event,
         deadline: float,
-        log: Callable[[str], object],
     ):
-        """Wire the search to the job's store, browser, progress and shared state."""
-        self._job_id = job_id
+        """Wire the search to the scrape's store, browser, progress and shared state."""
+        self._scrape_id = scrape_id
         self._settings = settings
         self._store = store
         self._browser = browser
@@ -65,12 +63,11 @@ class KeywordSearch:
         self._state = state
         self._stop = stop
         self._deadline = deadline
-        self._log = log
         self._index = 0
         self._keyword = ""
 
     def run(self, first_keyword: int) -> None:
-        """Search keywords in order until all are done, the time runs out or the job stops."""
+        """Search keywords in order until all are done, the time runs out or the scrape stops."""
         keywords = self._settings.keywords
         index, again, relaunches = first_keyword, False, 0
         while (
@@ -109,8 +106,8 @@ class KeywordSearch:
                     and self._time_left() > 0
                 ):
                     relaunches += 1
-                    self._log(
-                        f"job {self._job_id} keyword {self._position()}: browser stopped ({message}); starting it again"
+                    logger.info(
+                        f"scrape {self._scrape_id} keyword {self._position()}: browser stopped ({message}); starting it again"
                     )
                     self._browser.restart()
                     continue
@@ -124,21 +121,22 @@ class KeywordSearch:
                 ):
                     self._state.retries += 1
                     self._rotation.advance()
-                    self._log(
-                        f"job {self._job_id} keyword {self._position()}: the proxy failed; retry "
+                    logger.info(
+                        f"scrape {self._scrape_id} keyword {self._position()}: the proxy failed; retry "
                         f"{self._state.retries}/{len(BACKOFF_SECONDS)} through the next proxy"
                     )
                     continue
                 self._state.errors.append(describe(error))
-                logger.error(
-                    "job %s keyword %s failed: %s",
-                    self._job_id,
+                logger.exception(
+                    "scrape %s keyword %s failed",
+                    self._scrape_id,
+                    self._position(),
+                )
+                logger.warning(
+                    "scrape %s keyword %s: error: %s",
+                    self._scrape_id,
                     self._position(),
                     describe(error),
-                    exc_info=True,
-                )
-                self._log(
-                    f"job {self._job_id} keyword {self._position()}: error: {describe(error)}"
                 )
                 all_proxies_refused = (
                     self._state.refused_proxies
@@ -150,7 +148,7 @@ class KeywordSearch:
                     break
                 if self._stop.is_set():
                     break
-                size = self._store.append_rows(self._job_id, [])
+                size = self._store.append_rows(self._scrape_id, [])
                 if size is None:
                     break
                 index += 1
@@ -164,16 +162,14 @@ class KeywordSearch:
                 )
                 continue
             except Exception as error:
-                logger.error(
-                    "keyword %s failed while reading its results: %s",
+                logger.exception(
+                    "keyword %s failed while reading its results",
                     self._position(),
-                    describe(error),
-                    exc_info=True,
                 )
                 self._state.errors.append(
                     f"keyword {self._position()}: {describe(error)}"
                 )
-                size = self._store.append_rows(self._job_id, [])
+                size = self._store.append_rows(self._scrape_id, [])
                 if size is None:
                     break
                 index += 1
@@ -204,8 +200,8 @@ class KeywordSearch:
                     if time.monotonic() + wait < self._deadline:
                         self._state.retries += 1
                         self._rotation.advance()
-                        self._log(
-                            f"job {self._job_id} keyword {self._position()}: Google's unusual-traffic page; "
+                        logger.info(
+                            f"scrape {self._scrape_id} keyword {self._position()}: Google's unusual-traffic page; "
                             f"retry {self._state.retries}/{len(BACKOFF_SECONDS)} in {wait} s"
                             + (
                                 " through the next proxy"
@@ -218,8 +214,10 @@ class KeywordSearch:
                             break
                         continue
                 self._state.blocked = True
-                self._log(
-                    f"job {self._job_id} keyword {self._position()}: Google's unusual-traffic page; stopping"
+                logger.warning(
+                    "scrape %s keyword %s: Google's unusual-traffic page; stopping",
+                    self._scrape_id,
+                    self._position(),
                 )
                 break
 
@@ -231,8 +229,8 @@ class KeywordSearch:
                 again = True
                 if len(self._rotation) > 1:
                     self._rotation.advance()
-                self._log(
-                    f"job {self._job_id} keyword {self._position()}: no result list; one more try"
+                logger.info(
+                    f"scrape {self._scrape_id} keyword {self._position()}: no result list; one more try"
                 )
                 continue
 
@@ -256,7 +254,7 @@ class KeywordSearch:
             if SearchEndReason.is_timeout(reason):
                 self._state.timed_out = True
 
-            size = self._store.append_rows(self._job_id, [])
+            size = self._store.append_rows(self._scrape_id, [])
             if size is None:
                 break
             if SearchEndReason.is_error(reason):
@@ -268,8 +266,8 @@ class KeywordSearch:
                 failed=len(self._state.errors),
                 last_error=self._state.last_error,
             )
-            self._log(
-                f"job {self._job_id} keyword {self._position()}: {len(leads)} leads, "
+            logger.info(
+                f"scrape {self._scrape_id} keyword {self._position()}: {len(leads)} leads, "
                 f"{len(self._state.rows)} in all, {stats['batches']} batches, "
                 f"{time.monotonic() - started:.1f} s ({reason})"
             )
@@ -297,7 +295,6 @@ class KeywordSearch:
                     url,
                     depth=self._settings.scroll_depth,
                     max_seconds=seconds_left,
-                    log=lambda _message: None,
                     stop=lambda: self._stop.is_set() or not self._has_room(),
                     on_batch=self._record_batch,
                 )
@@ -317,12 +314,12 @@ class KeywordSearch:
         for lead in leads:
             if not self._has_room(len(fresh)):
                 break
-            key = lead_identity_key(lead)
-            if key and key not in self._state.seen_keys:
-                self._state.seen_keys.add(key)
-                fresh.append(build_lead_row(lead, self._keyword))
+            row = build_lead_row(lead, self._keyword)
+            if add_if_new(row, self._state.seen_keys):
+                row["website"] = resolve_website(row["website"])
+                fresh.append(row)
         self._state.rows.extend(fresh)
-        if fresh and self._store.append_rows(self._job_id, fresh) is None:
+        if fresh and self._store.append_rows(self._scrape_id, fresh) is None:
             self._stop.set()
         self._progress.save(
             percent=search_percent(

@@ -1,8 +1,8 @@
-"""The base schema of a scraping job.
+"""The base schema of a scraping scrape.
 
 The CLI, the REST API and direct library calls all validate their input against
-:class:`JobSettings` or a subclass of it, so the rules are written once.  Field
-aliases are the keys stored with each job record, so older records still load.
+:class:`ScrapeSettings` or a subclass of it, so the rules are written once.  Field
+aliases are the keys stored with each scrape record, so older records still load.
 """
 
 from typing import Annotated, Any, Self
@@ -36,8 +36,8 @@ Language = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2
 Country = Annotated[str, StringConstraints(to_lower=True, pattern=r"^([A-Za-z]{2})?$")]
 
 
-class JobSettings(BaseModel):
-    """Everything one scraping job needs to know.
+class ScrapeSettings(BaseModel):
+    """Everything one scraping scrape needs to know.
 
     Field names are the engine's names; the aliases are the keys of the stored
     record and of the REST body.  Latitude and longitude are both set or both
@@ -56,7 +56,7 @@ class JobSettings(BaseModel):
     keywords: tuple[CleanText, ...] = Field(
         min_length=1,
         max_length=500,
-        description="Search terms; the job visits each one in turn.",
+        description="Search terms; the scrape visits each one in turn.",
     )
     language: Language = Field(
         default="en",
@@ -86,7 +86,7 @@ class JobSettings(BaseModel):
         ge=1,
         le=86400,
         strict=True,
-        description="Time limit of the job in seconds.",
+        description="Time limit of the scrape in seconds.",
     )
     fast_mode: bool = Field(default=False, strict=True)
     collect_emails: bool = Field(
@@ -101,12 +101,6 @@ class JobSettings(BaseModel):
         strict=True,
         description="Look for social profiles on each lead's website.",
     )
-    use_browser_for_websites: bool = Field(
-        default=False,
-        alias="browser_sites",
-        strict=True,
-        description="Render websites in a browser when plain HTTP finds nothing.",
-    )
     proxies: tuple[str, ...] = Field(
         default=(),
         max_length=100,
@@ -118,11 +112,30 @@ class JobSettings(BaseModel):
         strict=True,
         description="Stop the search once this many leads are collected.",
     )
+    crawl_max_pages: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        strict=True,
+        description="Pages the website crawler reads per site.",
+    )
+    crawl_max_depth: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        strict=True,
+        description="Link depth the website crawler follows from the first page.",
+    )
+    crawl_store_html: bool = Field(
+        default=True,
+        strict=True,
+        description="Keep the HTML of each crawled page.",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def _zero_point_means_none(cls, data: Any) -> Any:
-        """Jobs saved before the point was optional stored 0, 0 for "no point"."""
+        """Scrapes saved before the point was optional stored 0, 0 for "no point"."""
         if isinstance(data, dict) and data.get("lat") == 0 and data.get("lon") == 0:
             return {**data, "lat": None, "lon": None}
         return data

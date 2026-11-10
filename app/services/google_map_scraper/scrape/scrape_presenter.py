@@ -1,27 +1,27 @@
-"""The public (API/UI) view of a stored job."""
+"""The public (API/UI) view of a stored scrape."""
 
 from app.utils.proxies import mask_proxy_credentials
 
-from .job_status import JobStage, JobStatus
-from .job_types import JobRecord, PublicJob, PublicProgress
+from .scrape_status import ScrapeStage, ScrapeStatus
+from .scrape_types import PublicProgress, PublicScrape, ScrapeRecord
 
 
-def to_public_job(job: JobRecord) -> PublicJob:
-    """Return a copy of ``job`` safe and convenient to show to a client.
+def to_public_scrape(scrape: ScrapeRecord) -> PublicScrape:
+    """Return a copy of ``scrape`` safe and convenient to show to a client.
 
     Proxy passwords are masked and the raw progress dict is replaced by a
     stable summary (keywords done/total, leads, percent, stage and, when a
-    reviews pass runs, reviews done/total).  Jobs created by 1.x versions may
+    reviews pass runs, reviews done/total).  Scrapes created by 1.x versions may
     hold arbitrary data, so every field is read defensively.
     """
-    data, progress = job["Data"], job["Progress"]
+    data, progress = scrape["Data"], scrape["Progress"]
     total_keywords = len(data.get("keywords") or [])
     stage = progress.get("stage") or (
-        JobStage.QUEUED if job["Status"] == JobStatus.PENDING else ""
+        ScrapeStage.QUEUED if scrape["Status"] == ScrapeStatus.PENDING else ""
     )
-    is_ok = job["Status"] == JobStatus.OK
+    is_ok = scrape["Status"] == ScrapeStatus.OK
     if is_ok:
-        stage = JobStage.DONE
+        stage = ScrapeStage.DONE
     proxies = data.get("proxies")
     raw_proxies = proxies if isinstance(proxies, list) else []
     masked_proxies = [
@@ -39,11 +39,11 @@ def to_public_job(job: JobRecord) -> PublicJob:
         summary["reviews_done"] = progress.get("reviews_done", 0)
         summary["reviews_total"] = reviews_total
     return {
-        "ID": job["ID"],
-        "Name": job["Name"],
-        "Date": job["Date"],
-        "Status": job["Status"],
+        "ID": scrape["ID"],
+        "Name": scrape["Name"],
+        "Date": scrape["Date"],
+        "Status": scrape["Status"],
         "Data": {**data, "proxies": masked_proxies},
-        "Error": job["Error"],
+        "Error": scrape["Error"],
         "Progress": summary,
     }

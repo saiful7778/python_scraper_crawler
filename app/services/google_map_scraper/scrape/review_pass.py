@@ -13,11 +13,13 @@ from app.services.google_map_scraper.google_map import (
     fetch_lead_panel_json,
 )
 
-from .job_progress import JobProgress
-from .job_settings import JobSettings
-from .job_types import LeadRow, is_lead_key
+from .lead_rows import review_start_columns
+from .scrape_progress import ScrapeProgress
+from .scrape_settings import ScrapeSettings
+from .scrape_types import LeadRow, is_lead_key
 
 _PANEL_ONLY_FIELDS = ("user_reviews", "reviews_per_rating")
+_COORDINATE_FIELDS = ("latitude", "longitude")
 
 
 class ReviewPass:
@@ -27,11 +29,11 @@ class ReviewPass:
         self,
         *,
         browser: BrowserSession,
-        settings: JobSettings,
+        settings: ScrapeSettings,
         deadline: float,
         stop: threading.Event,
         proxies: list[str],
-        progress: JobProgress,
+        progress: ScrapeProgress,
         notes: list[str],
     ):
         """Use ``proxies`` in order, the first one for the whole pass."""
@@ -91,6 +93,12 @@ class ReviewPass:
     def _merge_panel(row: LeadRow, panel: PanelRecord) -> None:
         row["user_reviews"] = panel.get("user_reviews", "")
         row["reviews_per_rating"] = panel.get("reviews_per_rating", "")
+        row.update(review_start_columns(row["reviews_per_rating"]))
         for key, value in panel.items():
-            if is_lead_key(key) and key not in _PANEL_ONLY_FIELDS and not row.get(key):
+            if (
+                is_lead_key(key)
+                and key not in _PANEL_ONLY_FIELDS
+                and key not in _COORDINATE_FIELDS
+                and not row.get(key)
+            ):
                 row[key] = str(value)

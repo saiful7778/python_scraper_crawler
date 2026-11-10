@@ -1,8 +1,7 @@
-"""Typed shapes of the dicts that pass between the job modules."""
+"""Typed shapes of the dicts that pass between the scrape modules."""
 
+from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict, TypeGuard, get_args
-
-SocialKey = Literal["instagram", "facebook", "linkedin", "tiktok", "youtube", "x"]
 
 LeadKey = Literal[
     "input_id",
@@ -18,6 +17,11 @@ LeadKey = Literal[
     "review_count",
     "review_rating",
     "reviews_per_rating",
+    "review_star_1_count",
+    "review_star_2_count",
+    "review_star_3_count",
+    "review_star_4_count",
+    "review_star_5_count",
     "latitude",
     "longitude",
     "cid",
@@ -42,13 +46,6 @@ LeadKey = Literal[
     "user_reviews_extended",
     "emails",
     "categories",
-    "instagram",
-    "facebook",
-    "linkedin",
-    "tiktok",
-    "youtube",
-    "x",
-    "website_fetch_status",
 ]
 
 _LEAD_KEYS = frozenset(get_args(LeadKey))
@@ -75,6 +72,11 @@ class LeadRow(TypedDict):
     review_count: str
     review_rating: str
     reviews_per_rating: str
+    review_star_1_count: str
+    review_star_2_count: str
+    review_star_3_count: str
+    review_star_4_count: str
+    review_star_5_count: str
     latitude: float | None
     longitude: float | None
     cid: str
@@ -99,20 +101,13 @@ class LeadRow(TypedDict):
     user_reviews_extended: str
     emails: str
     categories: str
-    instagram: NotRequired[str]
-    facebook: NotRequired[str]
-    linkedin: NotRequired[str]
-    tiktok: NotRequired[str]
-    youtube: NotRequired[str]
-    x: NotRequired[str]
-    website_fetch_status: NotRequired[str]
 
 
 class SettingsData(TypedDict):
-    """The settings stored in ``job_records.settings``.
+    """The settings stored in ``scrape_records.settings``.
 
     Only ``keywords``, ``lang`` and ``max_time`` are always present; the other
-    keys may be missing in jobs written by older versions.
+    keys may be missing in scrapes written by older versions.
     """
 
     keywords: list[str]
@@ -127,12 +122,36 @@ class SettingsData(TypedDict):
     fast_mode: NotRequired[bool]
     email: NotRequired[bool]
     socials: NotRequired[bool]
-    browser_sites: NotRequired[bool]
     proxies: NotRequired[list[str]]
+    crawl_max_pages: NotRequired[int]
+    crawl_max_depth: NotRequired[int]
+    crawl_store_html: NotRequired[bool]
+
+
+@dataclass(frozen=True)
+class WebsiteTarget:
+    """One lead whose website the crawler checks."""
+
+    row_id: int
+    position: int
+    website: str
+
+
+@dataclass(frozen=True)
+class WebsiteBatch:
+    """Leads of one scrape whose websites the crawler checks next."""
+
+    scrape_id: str
+    collect_emails: bool
+    collect_socials: bool
+    crawl_max_pages: int
+    crawl_max_depth: int
+    crawl_store_html: bool
+    websites: list[WebsiteTarget]
 
 
 class ProgressData(TypedDict, total=False):
-    """The progress of a job, saved so an interrupted job can resume."""
+    """The progress of a scrape, saved so an interrupted scrape can resume."""
 
     stage: str
     done: int
@@ -150,8 +169,8 @@ class ProgressData(TypedDict, total=False):
     resumes: int
 
 
-class JobRecord(TypedDict):
-    """A stored job as the engine works with it."""
+class ScrapeRecord(TypedDict):
+    """A stored scrape as the engine works with it."""
 
     ID: str
     Name: str
@@ -174,8 +193,8 @@ class PublicProgress(TypedDict):
     reviews_total: NotRequired[int]
 
 
-class PublicJob(TypedDict):
-    """A job as shown to API and UI clients."""
+class PublicScrape(TypedDict):
+    """A scrape as shown to API and UI clients."""
 
     ID: str
     Name: str

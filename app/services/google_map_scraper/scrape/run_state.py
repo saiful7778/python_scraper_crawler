@@ -1,8 +1,8 @@
-"""Mutable facts gathered while one job run is in progress."""
+"""Mutable facts gathered while one scrape run is in progress."""
 
 from dataclasses import dataclass, field
 
-from .job_types import LeadRow
+from .scrape_types import LeadRow
 
 
 @dataclass

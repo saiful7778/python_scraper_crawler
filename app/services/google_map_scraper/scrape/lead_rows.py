@@ -1,14 +1,22 @@
 """Conversion of raw Maps leads into output rows (pure functions)."""
 
+import json
 import math
 import urllib.parse
 from collections.abc import Mapping
-from typing import Final
 
-from ..extract_details import PlaceRecord, encode_plus_code
+from app.constant import SOCIALS
+from app.services.crawler.extractors.tech import TECH_FIELDS
+
+from ..extract_details import (
+    PlaceRecord,
+    address_json,
+    encode_plus_code,
+    parse_address_json,
+)
 from ..google_map.parsing import PlaceLink
-from .job_settings import JobSettings
-from .job_types import LeadRow, SocialKey
+from .scrape_settings import ScrapeSettings
+from .scrape_types import LeadRow
 
 COLUMNS: list[str] = [
     "input_id",
@@ -24,6 +32,11 @@ COLUMNS: list[str] = [
     "review_count",
     "review_rating",
     "reviews_per_rating",
+    "review_star_1_count",
+    "review_star_2_count",
+    "review_star_3_count",
+    "review_star_4_count",
+    "review_star_5_count",
     "latitude",
     "longitude",
     "cid",
@@ -51,37 +64,17 @@ COLUMNS: list[str] = [
 
 EXTRA: list[str] = ["categories"]
 
-SOCIALS: Final[tuple[SocialKey, ...]] = (
-    "instagram",
-    "facebook",
-    "linkedin",
-    "tiktok",
-    "youtube",
-    "x",
-)
-
 _MAPS_SEARCH_URL = "https://www.google.com/maps/search/?api=1&query="
 
 
-def result_columns(settings: JobSettings) -> list[str]:
-    """Return the ordered output column names for a job's settings."""
+def result_columns(settings: ScrapeSettings) -> list[str]:
+    """Return the ordered output column names for a scrape's settings."""
     return (
         COLUMNS
         + EXTRA
         + (list(SOCIALS) if settings.collect_socials else [])
-        + (["website_fetch_status"] if settings.use_browser_for_websites else [])
+        + TECH_FIELDS
     )
-
-
-def lead_identity_key(lead: Mapping[str, object]) -> str | None:
-    """Return the value that identifies a lead, used to drop duplicates."""
-    key = (
-        lead.get("data_id")
-        or lead.get("place_id")
-        or lead.get("link")
-        or lead.get("title")
-    )
-    return str(key) if key else None
 
 
 def _sanitize_cell(value: object) -> str:
@@ -107,6 +100,22 @@ def _cell(source: Mapping[str, object], key: str) -> str:
     return _sanitize_cell(source[key]) if key in source else ""
 
 
+def review_start_columns(histogram: str) -> dict[str, str]:
+    """Split a ``reviews_per_rating`` JSON histogram into one count per star rating."""
+    try:
+        counts = json.loads(histogram) if histogram else {}
+    except ValueError:
+        counts = {}
+    if not isinstance(counts, dict):
+        counts = {}
+    return {
+        f"review_star_{star}_count": (
+            _sanitize_cell(counts[str(star)]) if counts.get(str(star)) is not None else ""
+        )
+        for star in range(1, 6)
+    }
+
+
 def _coordinate(value: object) -> float | None:
     """A coordinate as a float, or ``None`` when it is blank or not a finite number."""
     if not isinstance(value, (int, float, str)):
@@ -116,6 +125,21 @@ def _coordinate(value: object) -> float | None:
     except ValueError:
         return None
     return number if math.isfinite(number) else None
+
+
+def address_fields(row: LeadRow) -> dict[str, object]:
+    """The columns of an address record for a row, with blank values left out."""
+    parts: dict[str, object] = dict(
+        parse_address_json(row.get("complete_address", "")) or {}
+    )
+    fields: dict[str, object] = {
+        **parts,
+        "complete_address": row.get("address", ""),
+        "plus_code": row.get("plus_code", ""),
+        "latitude": row.get("latitude"),
+        "longitude": row.get("longitude"),
+    }
+    return {k: v for k, v in fields.items() if v not in (None, "")}
 
 
 def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
@@ -145,6 +169,7 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         review_count=_cell(source, "review_count"),
         review_rating=_cell(source, "review_rating"),
         reviews_per_rating=_cell(source, "reviews_per_rating"),
+        **review_start_columns(_cell(source, "reviews_per_rating")),
         latitude=latitude,
         longitude=longitude,
         cid=_cell(source, "cid"),
@@ -162,7 +187,7 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         order_online=_cell(source, "order_online"),
         menu=_cell(source, "menu"),
         owner=_cell(source, "owner"),
-        complete_address=_cell(source, "complete_address"),
+        complete_address=address_json(source.get("complete_address")),
         credit_cards_accepted=_cell(source, "credit_cards_accepted"),
         about=_cell(source, "about"),
         user_reviews=_cell(source, "user_reviews"),

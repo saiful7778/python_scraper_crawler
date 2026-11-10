@@ -1,4 +1,4 @@
-"""Where the job engine keeps its data and whether its browser shows a window.
+"""Where the scrape engine keeps its data and whether its browser shows a window.
 
 The values come from ``SCRAPER_*`` environment variables, so the CLI, the REST
 API and a script all read the same config without passing it around.

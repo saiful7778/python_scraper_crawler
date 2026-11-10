@@ -1,7 +1,7 @@
 import asyncio
 
 from app.repositories import GoogleMapProfileRepository
-from app.services.google_map_scraper.job.job_types import LeadRow
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 
 FINISHED = ("ok", "failed")
 

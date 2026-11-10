@@ -1,6 +1,6 @@
 """Pure rules that turn what happened during a run into a final status and note."""
 
-from .job_status import JobStatus
+from .scrape_status import ScrapeStatus
 
 
 def describe_rate_limit(retries: int) -> str:
@@ -21,10 +21,10 @@ def summarize_outcome(
     notes: list[str],
     retries: int,
 ) -> tuple[str, str]:
-    """Decide the final ``(status, note)`` of a finished job.
+    """Decide the final ``(status, note)`` of a finished scrape.
 
-    A job with rows (or one that had nothing to report) is ``ok`` and its note
-    lists what went wrong along the way.  A job without rows that hit errors or
+    A scrape with rows (or one that had nothing to report) is ``ok`` and its note
+    lists what went wrong along the way.  A scrape without rows that hit errors or
     a block is ``failed``.
     """
     rate_limit = describe_rate_limit(retries)
@@ -38,8 +38,8 @@ def summarize_outcome(
         if blocked:
             headlines = [f"{rate_limit}. The rows found before that are kept"]
             extra_notes = []
-        return JobStatus.OK, "; ".join(headlines + extra_notes)
-    return JobStatus.FAILED, rate_limit if blocked else errors[-1]
+        return ScrapeStatus.OK, "; ".join(headlines + extra_notes)
+    return ScrapeStatus.FAILED, rate_limit if blocked else errors[-1]
 
 
 def search_percent(
