@@ -4,13 +4,14 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Link, usePage } from "@inertiajs/react";
-import { SquaresFourIcon } from "@phosphor-icons/react";
+import { BuildingsIcon, SquaresFourIcon } from "@phosphor-icons/react";
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar>;
 
@@ -19,6 +20,29 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
 
   return (
     <Sidebar collapsible="icon" {...props}>
+      <SidebarHeader>
+        <SidebarMenu className="gap-2">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="lg"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              render={
+                <Link href="/">
+                  <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                    <BuildingsIcon size={32} />
+                  </span>
+                  <span className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-semibold">
+                      Python Scraper crawler
+                    </span>
+                    <span className="truncate text-xs">Platfrom</span>
+                  </span>
+                </Link>
+              }
+            />
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Overview</SidebarGroupLabel>
