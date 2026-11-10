@@ -123,7 +123,9 @@ def scrape_place(
         else:
             found_point = get_geocode(place, country=query.country)
             if not found_point:
-                print("✗ Could not resolve coordinates. Try a clearer --city or --state.")
+                print(
+                    "✗ Could not resolve coordinates. Try a clearer --city or --state."
+                )
                 return ScrapeResult([], columns, 0, 0, False)
             lat, lon = cast(LatLon, found_point)
             print(f"\t→ {lat}, {lon}")
