@@ -12,6 +12,8 @@ from config.tortoise import TortoiseConfig
 from config.vite import ViteConfig
 from providers.fastapi_provider import FastapiProvider
 from providers.tortoise_provider import TortoiseProvider
+from config.queue import QueueConfig
+from providers.queue_provider import QueueProvider
 
 app = Application(
     base_path=Path(__file__).resolve().parent.parent,
@@ -22,5 +24,6 @@ app = Application(
         (FastapiProvider, FastAPIConfig),
         (ViteProvider, ViteConfig),
         InertiaProvider,
+        (QueueProvider, QueueConfig),
     ],
 )

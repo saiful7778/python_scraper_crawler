@@ -3,7 +3,7 @@
     "eslint --max-warnings 0 --config ./eslint.config.js"
   ],
   "resources/**/*": ["prettier --write"],
-  "{app,bootstrap,cli,config,providers,routes,tests}/**/*.py": [
+  "{app,bootstrap,cli,commands,config,providers,routes,tasks,tests}/**/*.py": [
     "ruff check --fix",
     "ruff format"
   ],
