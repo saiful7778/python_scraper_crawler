@@ -8,20 +8,20 @@ request and reports the proxy as ``refused`` if the same request is
 challenged again.
 """
 
-import logging
 import queue
 import threading
 import urllib.parse
 from typing import TYPE_CHECKING
 
 from app.utils.errors import ProxyConfigError, describe
+from app.utils.logger import get_logger
 
 from .cdp_error import CDPError
 
 if TYPE_CHECKING:
     from .tab import BrowserTab
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProxyAuthenticator:
@@ -85,10 +85,9 @@ class ProxyAuthenticator:
                     return
                 logger.debug("proxy auth skipped request %s: %s", request_id, describe(error))
             except Exception:
-                logger.error(
+                logger.exception(
                     "proxy authentication stopped while answering request %s",
                     request_id,
-                    exc_info=True,
                 )
                 return
 

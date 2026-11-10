@@ -1,15 +1,15 @@
 import json
-import logging
 import queue
 import threading
 from typing import Any, TypedDict
 
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .cdp_error import CDPError
 from .ws_client import WebSocketClient, WebSocketClosed
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 CDP_DEAD = object()
 
@@ -116,7 +116,7 @@ class CDPClient:
             if isinstance(error, WebSocketClosed):
                 logger.info("CDP connection closed by the browser: %s", describe(error))
             else:
-                logger.error("CDP reader stopped: %s", describe(error), exc_info=True)
+                logger.exception("CDP reader stopped")
             self.closed = error
             error_reply: CDPMessage = {
                 "error": {"message": f"connection lost: {describe(error)}"}

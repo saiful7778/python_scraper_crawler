@@ -1,4 +1,4 @@
-"""Check that website rendering can run before any job depends on it."""
+"""Check that website rendering can run before any scrape depends on it."""
 
 from ..browser_error import BrowserError
 from ..locator import locate_chrome_binary

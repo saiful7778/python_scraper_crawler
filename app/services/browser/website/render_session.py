@@ -1,12 +1,13 @@
 """One headless Chrome that renders pages through a public-only proxy."""
 
 import asyncio
-import logging
 import threading
 import time
 import urllib.parse
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
+
+from app.utils.logger import get_logger
 
 from .availability import check_renderer_available
 from .constants import (
@@ -27,7 +28,7 @@ from .render_result import RenderAttempt, RenderResult
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Playwright
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BrowserSlots:

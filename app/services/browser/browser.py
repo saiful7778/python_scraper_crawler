@@ -6,7 +6,6 @@ Orchestrates :mod:`.locator` (find the binary),
 directory, and cleans both up on :meth:`close`.
 """
 
-import logging
 import os
 import shutil
 import subprocess
@@ -15,6 +14,7 @@ import time
 from typing import BinaryIO, Final, Self
 
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .browser_error import BrowserError
 from .cdp_client import CDPClient
@@ -27,7 +27,7 @@ from .locator import (
 )
 from .proxy import split_proxy_url
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: Seconds between attempts to delete a profile Windows still has open.
 _PROFILE_RETRY_COUNT: Final[int] = 10
@@ -77,7 +77,7 @@ class Browser:
         try:
             self.profile = profile or tempfile.mkdtemp(prefix=PROFILE_PREFIX)
             step = "opening the Chrome stderr log"
-            stderr = open(
+            stderr = open(  # noqa: SIM115  # closed by close() via self._stderr
                 os.path.join(self.profile, "chrome-stderr.log"), "w+b"
             )
             self._stderr = stderr

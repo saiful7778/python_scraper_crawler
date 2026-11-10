@@ -21,6 +21,7 @@ from contextlib import AbstractContextManager
 from typing import BinaryIO, Final
 
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .browser_error import BrowserError
 from .constants import CFT_SHA256, CFT_URL, CFT_VERSION
@@ -29,6 +30,8 @@ from .locator import (
     ensure_engine_home,
     headless_shell_path,
 )
+
+logger = get_logger(__name__)
 
 #: Chunk size for streaming the download (1 MiB).
 _CHUNK_SIZE: Final[int] = 1 << 20
@@ -46,13 +49,11 @@ def _unlink_quietly(path: str) -> None:
 
 
 def download_headless_shell(
-    log: Callable[[str], None] = print,
     plat: str | None = None,
     opener: Callable[..., AbstractContextManager[BinaryIO]] = urllib.request.urlopen,
 ) -> str:
     """Download, verify, and unpack Chrome for Testing's headless shell.
 
-    :param log: Called with progress lines.
     :param plat: Platform tag; defaults to the current platform.
     :param opener: URL opener; injectable for tests.
     :returns: The path of the installed headless shell binary.
@@ -78,7 +79,7 @@ def download_headless_shell(
             f"Could not create the Chrome install folder {install_root}: {error}"
         ) from error
     archive = os.path.join(install_root, f"{plat}.zip.part")
-    log(
+    logger.info(
         f"▶ No Chrome found, so downloading Chrome for Testing "
         f"{CFT_VERSION} (headless shell, {plat}, about 100 MB) once into "
         f".engine/ from {url}"
@@ -145,5 +146,5 @@ def download_headless_shell(
         shutil.rmtree(staging, ignore_errors=True)
         _unlink_quietly(archive)
 
-    log("  ✓ SHA-256 verified, unpacked")
+    logger.info("  ✓ SHA-256 verified, unpacked")
     return headless_shell_path(plat)

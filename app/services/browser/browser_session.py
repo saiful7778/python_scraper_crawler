@@ -1,4 +1,4 @@
-"""The Browser process a job run uses"""
+"""The Browser process a scrape run uses"""
 
 from .browser import Browser
 from .browser_error import BrowserError
@@ -6,7 +6,7 @@ from .tab import ProxyTab
 
 
 class BrowserSession:
-    """One Browser process for a job run; it can be started again after a crash."""
+    """One Browser process for a scrape run; it can be started again after a crash."""
 
     def __init__(self, locale: str, headless: bool):
         """Remember the browser language and headless mode; nothing is started yet."""

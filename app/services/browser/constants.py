@@ -32,7 +32,7 @@ PROFILE_PREFIX: Final[str] = "python_google_maps_scraper-chrome-"
 KIT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME_PATH = os.path.join(
     KIT_PATH, ".engine"
-)  # everything the engine keeps: jobs, results, logs, its Chrome
+)  # everything the engine keeps: scrapes, results, logs, its Chrome
 
 ARCH_ALIASES: Final[dict[str, str]] = {
     "x86_64": "x64",

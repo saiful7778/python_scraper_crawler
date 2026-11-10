@@ -1,6 +1,7 @@
 import hashlib
 import http.client
 import io
+import logging
 import os
 import zipfile
 
@@ -49,27 +50,25 @@ def _pin(monkeypatch, data: bytes, plat: str = PLAT) -> None:
     monkeypatch.setattr(downloader, "CFT_SHA256", {plat: digest})
 
 
-def test_successful_download_installs_the_shell(monkeypatch, engine_home):
+def test_successful_download_installs_the_shell(monkeypatch, engine_home, caplog):
     data = _shell_archive()
     _pin(monkeypatch, data)
     opener = FakeOpener(data)
-    logs: list[str] = []
 
-    path = downloader.download_headless_shell(log=logs.append, plat=PLAT, opener=opener)
+    with caplog.at_level(logging.INFO, logger=downloader.__name__):
+        path = downloader.download_headless_shell(plat=PLAT, opener=opener)
 
     assert path == locator.headless_shell_path(PLAT)
     assert os.path.isfile(path)
     assert opener.urls == [downloader.CFT_URL.format(v=CFT_VERSION, p=PLAT)]
-    assert any("SHA-256 verified" in line for line in logs)
+    assert "SHA-256 verified" in caplog.text
 
 
 def test_download_removes_the_partial_archive_after_success(monkeypatch, engine_home):
     data = _shell_archive()
     _pin(monkeypatch, data)
 
-    downloader.download_headless_shell(
-        log=lambda _: None, plat=PLAT, opener=FakeOpener(data)
-    )
+    downloader.download_headless_shell(plat=PLAT, opener=FakeOpener(data))
 
     install_root = os.path.dirname(os.path.dirname(locator.headless_shell_path(PLAT)))
     assert not os.path.exists(os.path.join(install_root, f"{PLAT}.zip.part"))
@@ -80,9 +79,7 @@ def test_hash_mismatch_is_rejected_and_archive_deleted(monkeypatch, engine_home)
     monkeypatch.setattr(downloader, "CFT_SHA256", {PLAT: "0" * 64})
 
     with pytest.raises(BrowserError, match="SHA-256"):
-        downloader.download_headless_shell(
-            log=lambda _: None, plat=PLAT, opener=FakeOpener(data)
-        )
+        downloader.download_headless_shell(plat=PLAT, opener=FakeOpener(data))
 
     assert not os.path.exists(locator.headless_shell_path(PLAT))
     install_root = os.path.dirname(os.path.dirname(locator.headless_shell_path(PLAT)))
@@ -100,9 +97,7 @@ def test_network_failures_are_wrapped(monkeypatch, engine_home, error):
     _pin(monkeypatch, _shell_archive())
 
     with pytest.raises(BrowserError, match="Could not download Chrome for Testing"):
-        downloader.download_headless_shell(
-            log=lambda _: None, plat=PLAT, opener=FakeOpener(error=error)
-        )
+        downloader.download_headless_shell(plat=PLAT, opener=FakeOpener(error=error))
 
 
 def test_corrupt_archive_is_reported_as_unpack_failure(monkeypatch, engine_home):
@@ -110,17 +105,13 @@ def test_corrupt_archive_is_reported_as_unpack_failure(monkeypatch, engine_home)
     _pin(monkeypatch, data)
 
     with pytest.raises(BrowserError, match="Could not unpack"):
-        downloader.download_headless_shell(
-            log=lambda _: None, plat=PLAT, opener=FakeOpener(data)
-        )
+        downloader.download_headless_shell(plat=PLAT, opener=FakeOpener(data))
 
 
 def test_unsupported_platform_is_rejected_before_any_download(engine_home):
     opener = FakeOpener(_shell_archive())
 
     with pytest.raises(BrowserError, match="No Chrome for Testing build"):
-        downloader.download_headless_shell(
-            log=lambda _: None, plat="freebsd", opener=opener
-        )
+        downloader.download_headless_shell(plat="freebsd", opener=opener)
 
     assert opener.urls == []
