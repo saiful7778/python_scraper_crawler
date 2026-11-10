@@ -29,11 +29,11 @@ uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austi
 | `--state` | Optional region, e.g. `TX`. |
 | `--lang XX` | Engine language, default `en`. Use the local language (`pt`, `es`, `de`) for non-English markets. |
 | `--depth N` | Batches of results per keyword, 1 to 10, default 5. |
-| `--max-time SECONDS` | Time limit per job, 1 to 1200, default 600. |
+| `--max-time SECONDS` | Time limit per scrape, 1 to 1200, default 600. |
 | `--grid N` | Split the city into N×N tiles, max 10. Use this to get past Google's ~120-result cap. |
 | `--deep-scan` | Runs the grid (3×3 unless `--grid` is set), then splits capped tiles further. Slow. Use only for whole-city runs. |
 | `--website-depth 1\|2` | 1 = homepage emails and socials. 2 = also renders JavaScript sites. `3` falls back to 2. |
-| `--proxy URL` | Repeatable. `http://`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. Jobs rotate through proxies. |
+| `--proxy URL` | Repeatable. `http://`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. Scrapes rotate through proxies. |
 | `--has-phone`, `--has-email`, `--has-website` | Keep only rows with that field. |
 | `--limit N` | Stop at N rows. |
 | `--format csv\|json` | Default `csv`. |
@@ -45,7 +45,7 @@ uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austi
 - Rows are saved to the database and written to the output file. A database failure happens after the scrape, and the CSV is still written.
 - Ctrl-C saves the leads found so far before exiting.
 - `⚠ Google rate-limited this IP`: rows found before the block are kept. Add `--proxy` and retry later.
-- `✗ No job finished`: check the `✗` line above it for the reason.
+- `✗ No scrape finished`: check the `✗` line above it for the reason.
 
 ## Common mistakes
 
