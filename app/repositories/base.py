@@ -1,12 +1,12 @@
-import logging
 from uuid import UUID
 
 from tortoise.exceptions import IntegrityError
 
 from app.utils.errors import describe
+from app.utils.logger import get_logger
 from app.utils.utils import utc_now
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BaseRepository:

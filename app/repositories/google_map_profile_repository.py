@@ -1,8 +1,10 @@
 import json
+from typing import cast
 
+from app.constant import SOCIALS
 from app.models import GoogleMapProfileModel, GoogleMapProfileToLeadModel
-from app.services.google_map_scraper.job.job_types import LeadRow
-from app.services.google_map_scraper.job.lead_rows import SOCIALS
+from app.services.google_map_scraper.scrape.lead_rows import address_fields
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 
 from .base import BaseRepository
 from .lead_repository import LeadRepository, website_domain
@@ -41,6 +43,10 @@ LEAD_FIELDS = (
     "timezone",
 )
 
+KEY_FIELDS = ("data_id", "place_id", "title")
+PROFILE_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in PROFILE_TEXT_FIELDS)
+LEAD_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in LEAD_FIELDS)
+
 
 def _number(text, kind):
     if not text:
@@ -73,17 +79,11 @@ def _profile_values(row: LeadRow) -> dict:
 
 
 def _children(row: LeadRow) -> dict:
-    address = {
-        "complete_address": row.get("complete_address", ""),
-        "plus_code": row.get("plus_code", ""),
-        "latitude": row.get("latitude"),
-        "longitude": row.get("longitude"),
-    }
     return {
         "emails": _split(row.get("emails", ""), ", "),
         "categories": _split(row.get("categories", ""), " | "),
         "socials": {k: row.get(k) for k in SOCIALS if row.get(k)},
-        "address": {k: v for k, v in address.items() if v not in (None, "")},
+        "address": address_fields(row),
     }
 
 
@@ -101,14 +101,29 @@ class GoogleMapProfileRepository(BaseRepository):
         self._counters[self._model] = value
         return value
 
+    async def key_rows(self) -> list[LeadRow]:
+        """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""
+        profiles = await self._model.all().values(*PROFILE_KEY_FIELDS)
+        leads = await GoogleMapProfileToLeadModel.all().values(
+            *(f"lead__{field}" for field in LEAD_KEY_FIELDS)
+        )
+        return [
+            *(cast(LeadRow, row) for row in profiles),
+            *(
+                cast(
+                    LeadRow, {field: row[f"lead__{field}"] for field in LEAD_KEY_FIELDS}
+                )
+                for row in leads
+            ),
+        ]
+
     async def save_row(self, row: LeadRow) -> None:
         profile = await self._save_profile(row)
         lead = await self._save_lead(row)
-        if lead is not None:
-            await self._leads.add_children(lead, _children(row))
-            await GoogleMapProfileToLeadModel.get_or_create(
-                map_profile_id=profile.id, lead_id=lead.id
-            )
+        await self._leads.add_children(lead, _children(row))
+        await GoogleMapProfileToLeadModel.get_or_create(
+            map_profile_id=profile.id, lead_id=lead.id
+        )
 
     async def _find_profile(self, row: LeadRow):
         place_id = row.get("place_id")
@@ -132,9 +147,9 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def _save_lead(self, row: LeadRow):
         domain = website_domain(row.get("website", ""))
-        if domain is None:
-            return None
         values = {name: row.get(name) or None for name in LEAD_FIELDS}
+        if domain is None:
+            return await self._leads.create({**values, "website_domain": None})
         lead = await self._leads.find_by_domain(domain)
         if lead is None:
             return await self._leads.create({**values, "website_domain": domain})
