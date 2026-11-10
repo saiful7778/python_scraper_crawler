@@ -65,7 +65,7 @@ include = [
     "config",
     "providers",
     "routes",
-    "tasks"
+    "tasks",
     "tests"
 ]
 exclude = [
