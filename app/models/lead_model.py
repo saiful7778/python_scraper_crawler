@@ -1,7 +1,11 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from tortoise import fields
 from tortoise.models import Model
+
+if TYPE_CHECKING:
+    from .crawl_models import CrawlWebsiteModel
 
 
 class LeadModel(Model):
@@ -22,6 +26,11 @@ class LeadModel(Model):
     timezone = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
+
+    emails: fields.ReverseRelation["LeadEmailModel"]
+    categories: fields.ReverseRelation["LeadCategoryModel"]
+    socials: fields.ReverseRelation["LeadSocialModel"]
+    crawl_websites: fields.ReverseRelation["CrawlWebsiteModel"]
 
     class Meta(Model.Meta):
         table = "leads"

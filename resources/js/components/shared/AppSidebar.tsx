@@ -11,7 +11,11 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Link, usePage } from "@inertiajs/react";
-import { BuildingsIcon, SquaresFourIcon } from "@phosphor-icons/react";
+import {
+  BuildingsIcon,
+  SquaresFourIcon,
+  UsersIcon,
+} from "@phosphor-icons/react";
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar>;
 
@@ -26,20 +30,18 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
             <SidebarMenuButton
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-              render={
-                <Link href="/">
-                  <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                    <BuildingsIcon size={32} />
-                  </span>
-                  <span className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">
-                      Python Scraper crawler
-                    </span>
-                    <span className="truncate text-xs">Platfrom</span>
-                  </span>
-                </Link>
-              }
-            />
+              render={<Link href="/" />}
+            >
+              <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                <BuildingsIcon size={32} />
+              </span>
+              <span className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-semibold">
+                  Python Scraper crawler
+                </span>
+                <span className="truncate text-xs">Platfrom</span>
+              </span>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
@@ -56,6 +58,16 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
                 >
                   <SquaresFourIcon size={32} />
                   <span className="truncate">Dashboard</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={/^\/leads\/?$/.test(url)}
+                  tooltip="Leads"
+                  render={<Link href="/leads" />}
+                >
+                  <UsersIcon size={32} />
+                  <span className="truncate">Leads</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

@@ -1,8 +1,14 @@
 from fastapi_startkit.fastapi import Router
 
 from app.http.controllers.home_controller import HomeController
+from app.http.controllers.lead_controller import LeadController
 
-controller = HomeController()
+homeController = HomeController()
+leadController = LeadController()
+
 router = Router()
-router.get("/", controller.index, response_model=None)
-router.get("/health", controller.health)
+router.get("/", homeController.index, response_model=None)
+router.get("/health", homeController.health)
+
+router.get("/leads", leadController.index)
+router.get("/leads/{lead_id}", leadController.show)
