@@ -1,17 +1,7 @@
-"""Pure helpers that find contact details in the text of a web page."""
-
-import html
 import re
-import urllib.parse
 
-from .url_utils import is_junk_domain
-
-MAX_EMAILS = 3
-JUNK_EMAIL_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js")
-
-_EMAIL_PATTERN = re.compile(
-    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
-)
+from ..document import Document
+from ..findings import Finding, doc_markup
 
 SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "instagram": re.compile(
@@ -50,28 +40,6 @@ NON_PROFILE_HANDLES = frozenset(
 )
 
 
-def find_emails(text: str, site: str = "") -> list[str]:
-    """Return up to three distinct email addresses found in ``text``.
-
-    Addresses on the business's own ``site`` domain come first. Image file
-    names, placeholder domains and percent-encoded junk are dropped.
-    """
-    found: list[str] = []
-    for match in _EMAIL_PATTERN.findall(html.unescape(text or "")):
-        email = urllib.parse.unquote(match).lower()
-        domain = email.rpartition("@")[2]
-        if (
-            not _EMAIL_PATTERN.fullmatch(email)
-            or email.endswith(JUNK_EMAIL_SUFFIXES)
-            or is_junk_domain(domain)
-            or email in found
-        ):
-            continue
-        found.append(email)
-    own = [e for e in found if site and e.endswith(("@" + site, "." + site))]
-    return (own + [e for e in found if e not in own])[:MAX_EMAILS]
-
-
 def find_socials(text: str) -> dict[str, str]:
     """Return the first profile URL found for each social network ("" if none)."""
     found = dict.fromkeys(SOCIAL_PATTERNS, "")
@@ -85,3 +53,8 @@ def find_socials(text: str) -> dict[str, str]:
             found[network] = match.group(0).rstrip("\"'/").replace("\\", "")
             break
     return found
+
+
+def find_social(doc: Document, page_url: str) -> list[Finding]:
+    profiles = find_socials(doc_markup(doc))
+    return [Finding("social", network, url) for network, url in profiles.items() if url]
