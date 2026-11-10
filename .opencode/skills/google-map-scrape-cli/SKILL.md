@@ -12,14 +12,34 @@ Runs `cli/google_map_scrape_cli.py` from the repo root. It scrapes Google Maps l
 1. Gather `--keyword`, `--city`, and `--country` (2 letters). Ask for anything else only if the user needs it.
 2. Always run `--dry-run` first with the same flags and show the plan.
 3. Confirm with the user before a real run. The CLI prints a heads-up for `--depth 10` or `--grid` 2 or more, because Google can rate-limit the IP. `--deep-scan` takes longer: the CLI prints its own estimate (about 25 s per tile; 3×3 by default gives roughly 3 to 18 min per city).
-4. Run the real scrape with the same flags minus `--dry-run`. Scrapes can take minutes, so use `timeout: 0` or `background: true` in the shell tool.
-5. Report the output path, the lead count, and any `⚠` or `✗` lines.
+4. Run the real scrape with the same flags minus `--dry-run`, as a background job (see below). Never run a real scrape as a foreground shell call: the call can be aborted mid-run, which kills the scrape.
+5. Check the log file until the run finishes, then report the output path, the lead count, and any `⚠` or `✗` lines.
 
 ```bash
 cd /home/saiful/programming/projects/python_scraper_crawler
 uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austin --state TX --country us --dry-run
 uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austin --state TX --country us --has-website --limit 100
 ```
+
+## Running in the background
+
+Run every real scrape as a background job, with output sent to a log file in `/tmp/opencode`:
+
+```bash
+cd /home/saiful/programming/projects/python_scraper_crawler
+mkdir -p /tmp/opencode
+nohup uv run python cli/google_map_scrape_cli.py --keyword "plumbers" --city Sydney --state NSW --country au --grid 3 > /tmp/opencode/plumbers_sydney.log 2>&1 &
+echo $!
+```
+
+Use a log name that matches the run. Save the printed PID.
+
+- Check progress: `tail -n 50 /tmp/opencode/plumbers_sydney.log`
+- Check whether it is still running: `pgrep -af google_map_scrape_cli`
+- Stop it and keep what was found so far (same as Ctrl-C): `kill -INT <pid>`. This writes the output file but does not save to the database. Do not use `kill -9`.
+- Detailed application logs also go to `storage/logs/<date>.log`. Timestamps there are UTC.
+
+When the process exits, read the log for the `✗`, `⚠`, and final lead count lines, then check that the output file exists.
 
 ## Flags
 
@@ -60,4 +80,5 @@ uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austi
 - Writing `--output` into a folder that does not exist.
 - Passing credentials in SOCKS5 proxy URLs. Use `http://user:pass@host:port` for auth.
 - Assuming Ctrl-C saved the leads to the database. It only saved the file.
-- Forgetting that a plain shell call times out after 2 minutes.
+- Running a real scrape as a foreground shell call. The call can be aborted with "Tool execution interrupted", which stops the scrape and can leave nothing saved. Use the background command above.
+- Using `kill -9` to stop a run. It skips the normal shutdown. Use `kill -INT` to match Ctrl-C.
