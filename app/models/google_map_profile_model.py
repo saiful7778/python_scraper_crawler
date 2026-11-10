@@ -108,7 +108,7 @@ class KeywordModel(Model):
 class GoogleMapKeyword(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
     counter = fields.IntField(default=0)
-    job_id = fields.CharField(max_length=64, default="", db_index=True)
+    scrape_id = fields.CharField(max_length=64, default="", db_index=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
     google_map = fields.ForeignKeyField(

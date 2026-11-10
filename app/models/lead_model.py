@@ -32,7 +32,6 @@ class LeadAddressModel(Model):
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
     complete_address = fields.TextField(default="")
-    plus_code = fields.TextField(default="")
     borough = fields.TextField(null=True)
     street = fields.TextField(null=True)
     city = fields.TextField(null=True)

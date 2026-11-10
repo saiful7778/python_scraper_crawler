@@ -29,10 +29,10 @@ from .ws_client import WebSocketClient, WebSocketError
 __all__ = [
     "Browser",
     "BrowserError",
+    "BrowserSession",
     "BrowserTab",
     "CDPClient",
     "CDPError",
-    "BrowserSession",
     "ProxyAuthenticator",
     "ProxyTab",
     "RenderResult",
