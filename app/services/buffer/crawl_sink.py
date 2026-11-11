@@ -74,7 +74,6 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
         first_per_platform.setdefault(platform, url)
     website = {
         **snapshot.website,
-        "scrape_id": UUID(str(snapshot.website["scrape_id"])),
         "lead_id": lead.id,
         **{name: columns[name] for name in WEBSITE_TECH_FIELDS if name in columns},
     }

@@ -92,9 +92,7 @@ class LeadDetailResource(LeadListItemResource):
             else LeadAddressResource(self.address).to_dict(),
             "crawl_websites": [
                 CrawlWebsiteResource(website).to_dict()
-                for website in sorted(
-                    lead.crawl_websites, key=lambda w: w.lead_position
-                )
+                for website in sorted(lead.crawl_websites, key=lambda w: w.created_at)
             ],
         }
 

@@ -17,7 +17,6 @@ from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
 from app.services.crawler.findings import Finding
 from tests.models.conftest import db  # noqa: F401
 
-SCRAPE_ID = "6f1d4a9e-0c52-4f0e-9a43-3a0a4f3f3a11"
 HOME = "https://a.de/"
 ABOUT = "https://a.de/about"
 
@@ -98,6 +97,18 @@ async def test_a_crawl_whose_lead_is_not_saved_yet_is_refused(fake_redis):
     with pytest.raises(LeadNotSavedError):
         await store_crawl(finished_snapshot(fake_redis))
     assert await CrawlWebsiteModel.all().count() == 0
+
+
+@pytest.mark.usefixtures("db")
+async def test_a_crawl_stored_before_its_lead_links_once_the_lead_exists(fake_redis):
+    snapshot = finished_snapshot(fake_redis)
+    with pytest.raises(LeadNotSavedError):
+        await store_crawl(snapshot)
+
+    lead = await LeadModel.create(title="A", website="https://a.de", website_domain="a.de")
+    await store_crawl(snapshot)
+
+    assert (await CrawlWebsiteModel.get()).lead_id == lead.id
 
 
 def _crawl_with_pages(fake_redis):
