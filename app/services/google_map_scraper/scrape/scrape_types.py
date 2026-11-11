@@ -42,7 +42,6 @@ LeadKey = Literal[
     "credit_cards_accepted",
     "about",
     "user_reviews",
-    "user_reviews_extended",
     "categories",
 ]
 
@@ -95,7 +94,6 @@ class LeadRow(TypedDict):
     credit_cards_accepted: str
     about: str
     user_reviews: str
-    user_reviews_extended: str
     categories: str
 
 

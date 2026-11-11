@@ -58,7 +58,6 @@ COLUMNS: list[str] = [
     "credit_cards_accepted",
     "about",
     "user_reviews",
-    "user_reviews_extended",
 ]
 
 _MAPS_SEARCH_URL = "https://www.google.com/maps/search/?api=1&query="
@@ -203,6 +202,5 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         credit_cards_accepted=_cell(source, "credit_cards_accepted"),
         about=_cell(source, "about"),
         user_reviews=_cell(source, "user_reviews"),
-        user_reviews_extended=_cell(source, "user_reviews_extended"),
         categories=_list_cell(source, "categories"),
     )

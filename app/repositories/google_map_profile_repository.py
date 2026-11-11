@@ -1,8 +1,14 @@
+import hashlib
 import json
 from typing import cast
 
 from app.constant import SOCIALS
-from app.models import GoogleMapProfileModel, GoogleMapProfileToLeadModel
+from app.models import (
+    GoogleMapProfileImageModel,
+    GoogleMapProfileModel,
+    GoogleMapProfileReviewModel,
+    GoogleMapProfileToLeadModel,
+)
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 
@@ -19,14 +25,11 @@ PROFILE_TEXT_FIELDS = (
     "credit_cards_accepted",
     "reviews_link",
     "street_view_url",
-    "reviews_per_rating",
     "popular_times",
     "thumbnail",
     "menu",
-    "user_reviews",
-    "user_reviews_extended",
 )
-PROFILE_JSON_FIELDS = ("open_hours", "reservations", "order_online", "images")
+PROFILE_JSON_FIELDS = ("open_hours", "reservations", "order_online")
 
 LEAD_FIELDS = (
     "title",
@@ -81,7 +84,21 @@ def _profile_values(row: LeadRow) -> dict:
     values["about"] = _about(row.get("about", ""))
     values["review_count"] = _number(row.get("review_count", ""), int)
     values["review_rating"] = _number(row.get("review_rating", ""), float)
+    for star in range(1, 6):
+        key = f"review_star_{star}_count"
+        values[key] = _number(row.get(key, ""), int)
     return values
+
+
+def _list(text):
+    items = _json(text)
+    return items if isinstance(items, list) else []
+
+
+def review_hash(review: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(review, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
 
 
 def _children(row: LeadRow) -> dict:
@@ -124,6 +141,8 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def save_row(self, row: LeadRow, scrape_id: str) -> None:
         profile = await self._save_profile(row)
+        await self._save_images(profile, row)
+        await self._save_reviews(profile, row)
         lead = await self._save_lead(row, profile)
         await self._leads.add_children(lead, _children(row))
         await GoogleMapProfileToLeadModel.get_or_create(
@@ -169,6 +188,44 @@ class GoogleMapProfileRepository(BaseRepository):
         if self.fill_empty(profile, values):
             await profile.save()
         return profile
+
+    async def _save_images(self, profile, row: LeadRow) -> None:
+        images = [
+            image
+            for image in _list(row.get("images", ""))
+            if isinstance(image, dict) and image.get("image")
+        ]
+        base = await self.next_counter(GoogleMapProfileImageModel, google_map_id=profile.id)
+        await self.insert_ignoring_conflicts(
+            GoogleMapProfileImageModel,
+            [
+                GoogleMapProfileImageModel(
+                    google_map_id=profile.id,
+                    counter=base + i,
+                    url=image["image"],
+                    title=image.get("title") or None,
+                )
+                for i, image in enumerate(images)
+            ],
+        )
+
+    async def _save_reviews(self, profile, row: LeadRow) -> None:
+        reviews = [r for r in _list(row.get("user_reviews", "")) if isinstance(r, dict)]
+        base = await self.next_counter(GoogleMapProfileReviewModel, google_map_id=profile.id)
+        await self.insert_ignoring_conflicts(
+            GoogleMapProfileReviewModel,
+            [
+                GoogleMapProfileReviewModel(
+                    google_map_id=profile.id,
+                    counter=base + i,
+                    rating=review.get("Rating"),
+                    when_text=review.get("When") or None,
+                    description=review.get("Description") or None,
+                    content_hash=review_hash(review),
+                )
+                for i, review in enumerate(reviews)
+            ],
+        )
 
     async def _linked_lead(self, profile):
         link = (
