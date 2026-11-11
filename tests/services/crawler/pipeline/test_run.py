@@ -1,16 +1,11 @@
-import asyncio
-
-import fakeredis
 import pytest
-from tortoise.context import TortoiseContext
 
 from app.helpers.http_fetcher import FetchResult
 from app.models import CrawlWebsiteModel
-from app.services.buffer.flusher import context_config
 from app.services.buffer.crawl_queue import CrawlQueue
 from app.services.crawler.pipeline.run import CrawlSummary, crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
-from config.tortoise import TortoiseConfig
+from tests.services.crawler.pipeline.conftest import in_database
 
 HTML = b"<html><head><title>Home</title></head><body>Bakery</body></html>"
 OPTS = CRAWL_OPTIONS
@@ -36,49 +31,10 @@ def not_found_fetch(url):
     return page(url, status=404)
 
 
-@pytest.fixture
-def fake_redis():
-    return fakeredis.FakeRedis(decode_responses=True)
-
-
-@pytest.fixture
-def postgres(tmp_path):
-    config = TortoiseConfig(
-        connections={
-            "default": {
-                "engine": "tortoise.backends.sqlite",
-                "credentials": {"file_path": str(tmp_path / "crawl.sqlite")},
-            }
-        },
-        apps={
-            "models": {
-                "models": ["app.models"],
-                "default_connection": "default",
-                "migrations": "app.migrations",
-            }
-        },
-    )
-    asyncio.run(_generate_schemas(config))
-    return config
-
-
-async def _generate_schemas(config):
-    with TortoiseContext() as context:
-        await context.init(config=context_config(config))
-        await context.generate_schemas(safe=True)
-        await context.close_connections()
-
-
 def stored_origins(config):
-    async def read():
-        with TortoiseContext() as context:
-            await context.init(config=context_config(config))
-            try:
-                return await CrawlWebsiteModel.all().values_list("origin", flat=True)
-            finally:
-                await context.close_connections()
-
-    return asyncio.run(read())
+    return in_database(
+        config, lambda: CrawlWebsiteModel.all().values_list("origin", flat=True)
+    )
 
 
 def test_crawl_one_without_finish_leaves_other_queued_jobs(fake_redis, postgres):
