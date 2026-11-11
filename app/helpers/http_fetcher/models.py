@@ -28,7 +28,7 @@ class FetchPolicy:
     respect_retry_after: bool = True
     retry_statuses: frozenset[int] = RETRY_STATUSES
     retry_network_errors: bool = False  # also retry timeouts and resets
-    max_page_bytes: int = 400_000
+    max_page_bytes: int = 2_000_000
     allowed_content_types: tuple[str, ...] = DEFAULT_CONTENT_TYPES
     max_redirects: int = 5
     min_host_delay: float = 0.0  # seconds between two requests to the same host
