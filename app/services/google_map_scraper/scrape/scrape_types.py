@@ -1,5 +1,6 @@
 """Typed shapes of the dicts that pass between the scrape modules."""
 
+from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict, TypeGuard, get_args
 
 LeadKey = Literal[
@@ -155,5 +156,27 @@ class ScrapeRecord(TypedDict):
     Data: SettingsData
     Error: str
     Progress: ProgressData
+
+
+@dataclass(frozen=True)
+class RunResult:
+    """The outcome of one scrape run to its end."""
+
+    scrape_id: str
+    status: str
+    note: str
+    rows: list[LeadRow]
+    blocked: bool
+
+
+@dataclass
+class ScrapeResult:
+    """Rows that passed the filters, plus what happened while finding them."""
+
+    rows: list[LeadRow]
+    columns: list[str]
+    finished: int
+    skipped: int
+    blocked: bool
 
 

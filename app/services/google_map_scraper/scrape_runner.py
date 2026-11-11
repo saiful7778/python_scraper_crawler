@@ -1,5 +1,4 @@
 import time
-from dataclasses import dataclass
 from typing import cast
 
 from redis import Redis
@@ -28,7 +27,7 @@ from .scrape.scrape_database import ScrapeDatabase
 from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
 from .scrape.scrape_run import RunOutcome, origin_key
 from .scrape.scrape_settings import ScrapeSettings
-from .scrape.scrape_types import LeadRow, SettingsData
+from .scrape.scrape_types import LeadRow, RunResult, SettingsData
 from .scrape.scrape_worker import ScrapeWorker
 
 logger = get_logger(__name__)
@@ -54,17 +53,6 @@ class ScrapeInFlightError(ScraperError):
 
 class ScrapeFlushError(ScraperError):
     """PostgreSQL did not take every buffered lead or crawl, so the scrape stays resumable."""
-
-
-@dataclass(frozen=True)
-class ScrapeResult:
-    """The outcome of one scrape run to its end."""
-
-    scrape_id: str
-    status: str
-    note: str
-    rows: list[LeadRow]
-    blocked: bool
 
 
 class _Session:
@@ -112,7 +100,7 @@ class _Session:
             options_of=state_options(self._state),
         )
 
-    def run(self, name: str, settings: ScrapeSettings) -> ScrapeResult:
+    def run(self, name: str, settings: ScrapeSettings) -> RunResult:
         carried = self._resume_interrupted()
         scrape_id = self._database.create(
             name, cast(SettingsData, settings.model_dump(by_alias=True, mode="json"))
@@ -209,7 +197,7 @@ class _Session:
         discard_scrape(self._redis, scrape_id)
         self._finished.pop(scrape_id, None)
 
-    def _finish(self, carried: list[str], scrape_id: str) -> ScrapeResult:
+    def _finish(self, carried: list[str], scrape_id: str) -> RunResult:
         ids = [i for i in (*carried, scrape_id) if i in self._finished]
         self._worker.shutdown(wait=1)
         self._pool.shutdown(wait=_POOL_STOP_SECONDS)
@@ -242,7 +230,7 @@ class _Session:
                     f"PostgreSQL did not take {crawls} crawled website(s) of scrape "
                     f"{finished_id}; they stay in Redis and the scrape resumes on the next start"
                 )
-        result: ScrapeResult | None = None
+        result: RunResult | None = None
         for finished_id in ids:
             outcome, rows = self._finished[finished_id]
             self._add_crawl_results(finished_id, rows)
@@ -257,7 +245,7 @@ class _Session:
                     )
                 continue
             if finished_id == scrape_id:
-                result = ScrapeResult(
+                result = RunResult(
                     scrape_id=scrape_id,
                     status=outcome.status,
                     note=outcome.note,
@@ -315,7 +303,7 @@ def run_scrape(
     known_keys: frozenset[str] = frozenset(),
     redis: Redis | None = None,
     postgres: TortoiseConfig | None = None,
-) -> ScrapeResult:
+) -> RunResult:
     """Store the scrape, run it on Redis and PostgreSQL and wait until it has an outcome.
 
     Scrapes an earlier run left unfinished resume first. Then the scrape worker

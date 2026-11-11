@@ -1,6 +1,5 @@
 """Place-level scraping: one keyword in one city, as a single scrape or a grid of scrapes."""
 
-from dataclasses import dataclass
 from typing import cast
 
 from app.services.browser import CDPError
@@ -20,23 +19,12 @@ from .scrape.dedupe import dedupe_rows
 from .scrape.lead_rows import result_columns
 from .scrape_runner import run_scrape
 from .scrape.scrape_status import ScrapeStatus
-from .scrape.scrape_types import LeadRow
+from .scrape.scrape_types import LeadRow, ScrapeResult
 
 logger = get_logger(__name__)
 
 SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
 SALVAGE: dict[str, list[LeadRow]] = {"rows": []}  # kept for Ctrl-C salvage
-
-
-@dataclass
-class ScrapeResult:
-    """Rows that passed the filters, plus what happened while finding them."""
-
-    rows: list[LeadRow]
-    columns: list[str]
-    finished: int
-    skipped: int
-    blocked: bool
 
 
 def columns_for(query: PlaceQuery) -> list[str]:
