@@ -13,13 +13,16 @@ from tortoise import Tortoise
 
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.repositories import GoogleMapProfileRepository, LeadRepository
+from app.services.buffer.client import connect
+from app.services.crawl_pipeline.run import run_crawl_stage
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.services.google_map_scraper.scraper import PlaceScraper, columns_for
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
-from config.tortoise import TORTOISE_ORM
+from config.redis import RedisConfig
+from config.tortoise import TORTOISE_ORM, TortoiseConfig
 
 logger = get_logger(__name__)
 
@@ -56,6 +59,11 @@ class CliQuery(PlaceQuery):
     output: str | None = Field(default=None, description="CSV file to write.")
     dry_run: bool = Field(
         default=False, strict=True, description="Show the plan and exit."
+    )
+    no_crawl: bool = Field(
+        default=False,
+        strict=True,
+        description="Skip the crawl of the lead websites after the scrape.",
     )
 
 
@@ -147,6 +155,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="check the arguments and show the plan, without scraping or writing a CSV",
+    )
+    ap.add_argument(
+        "--no-crawl",
+        action="store_true",
+        help="skip the crawl of the lead websites that runs after the scrape",
     )
 
     f = ap.add_argument_group("filters", "keep only the rows that have the field")
@@ -271,6 +284,7 @@ def print_plan(query: CliQuery, output: str) -> None:
         if on
     ]
     print(f"Filters: {', '.join(filters) or 'none'}")
+    print(f"Crawl: {'off (--no-crawl)' if query.no_crawl else 'on, after the scrape'}")
     print(f"Output: {output}\n")
 
 
@@ -358,6 +372,27 @@ def main() -> None:
     except OSError as error:
         sys.exit(f"✗ {describe(error)}")
     print(f"✓ {len(result.rows)} leads → {output}")
+
+    with_website = [row for row in result.rows if row.get("website")]
+    if query.no_crawl or not with_website:
+        return
+
+    print(f"\n▶ Crawling the websites of {len(with_website)} lead(s)")
+    try:
+        summary = run_crawl_stage(
+            result.rows, redis=connect(RedisConfig()), postgres=TortoiseConfig()
+        )
+    except KeyboardInterrupt:
+        print(f"\n⚠ Crawl stopped; the leads stay in {output}.")
+        raise
+    except Exception as exc:  # the CSV is saved; report the crawl failure
+        logger.exception("the crawl stage failed")
+        print(f"⚠ The crawl stage failed: {describe(exc)} (the CSV is kept)")
+        return
+    print(
+        f"✓ Crawl: {summary.queued} queued, {summary.rejected} not crawlable, "
+        f"{summary.skipped} skipped"
+    )
 
 
 def interrupted() -> str:
