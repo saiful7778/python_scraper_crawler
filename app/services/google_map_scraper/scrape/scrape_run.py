@@ -18,7 +18,7 @@ from .keyword_search import KeywordSearch
 from .review_pass import ReviewPass
 from .run_state import RunState
 from .scrape_database import ScrapeDatabase
-from .scrape_limits import BUFFER_TTL_SECONDS, WATCHDOG_GRACE_SECONDS
+from .scrape_limits import BUFFER_TTL_SECONDS, REVIEWS_SECONDS, WATCHDOG_GRACE_SECONDS
 from .scrape_outcome import summarize_outcome
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
@@ -153,7 +153,7 @@ class ScrapeRun:
         wants_browser = (
             stage == ScrapeStage.SEARCH and first_keyword < len(keywords)
         ) or reviews
-        watchdog = self._start_watchdog(budget)
+        watchdog = self._start_watchdog(budget + REVIEWS_SECONDS)
         try:
             if wants_browser and budget > 0 and not self._stop.is_set():
                 self._browser.start()
@@ -251,7 +251,7 @@ class ScrapeRun:
         reviewed = ReviewPass(
             browser=self._browser,
             settings=self.settings,
-            deadline=self._deadline,
+            deadline=time.monotonic() + REVIEWS_SECONDS,
             stop=self._stop,
             proxies=self._rotation.healthy_proxies(),
             progress=self._progress,

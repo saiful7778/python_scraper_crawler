@@ -10,6 +10,8 @@ ROTATE_WAIT_SECONDS: Final[int] = 5
 MAX_BROWSER_RELAUNCHES: Final[int] = 2
 #: Extra time after ``max_time`` before the watchdog kills browser.
 WATCHDOG_GRACE_SECONDS: Final[float] = 30
+#: Time the reviews pass gets after the search, separate from ``max_time``.
+REVIEWS_SECONDS: Final[float] = 240
 #: Time that must be left before a keyword with no result list is searched again.
 NO_FEED_RETRY_MARGIN_SECONDS: Final[float] = 30
 #: The website pass always gets at least this long, even after max_time ran out.
