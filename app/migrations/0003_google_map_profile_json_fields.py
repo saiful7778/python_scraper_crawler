@@ -30,6 +30,14 @@ def _to_text() -> str:
     return f"ALTER TABLE {TABLE} " + ", ".join(parts)
 
 
+class AlterFieldStateOnly(ops.AlterField):
+    async def database_forward(self, app_label, old_state, new_state, state_editor=None):
+        return None
+
+    async def database_backward(self, app_label, old_state, new_state, state_editor=None):
+        return None
+
+
 class Migration(migrations.Migration):
     dependencies = [('models', '0002_remove_lead_category')]
 
@@ -37,22 +45,22 @@ class Migration(migrations.Migration):
 
     operations = [
         ops.RunSQL(sql=_to_json(), reverse_sql=_to_text()),
-        ops.AlterField(
+        AlterFieldStateOnly(
             model_name='GoogleMapProfileModel',
             name='images',
             field=fields.JSONField(null=True, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads),
         ),
-        ops.AlterField(
+        AlterFieldStateOnly(
             model_name='GoogleMapProfileModel',
             name='open_hours',
             field=fields.JSONField(null=True, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads),
         ),
-        ops.AlterField(
+        AlterFieldStateOnly(
             model_name='GoogleMapProfileModel',
             name='order_online',
             field=fields.JSONField(null=True, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads),
         ),
-        ops.AlterField(
+        AlterFieldStateOnly(
             model_name='GoogleMapProfileModel',
             name='reservations',
             field=fields.JSONField(null=True, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads),
