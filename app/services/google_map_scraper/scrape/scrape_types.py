@@ -7,7 +7,6 @@ LeadKey = Literal[
     "input_id",
     "link",
     "title",
-    "category",
     "address",
     "open_hours",
     "popular_times",
@@ -61,7 +60,6 @@ class LeadRow(TypedDict):
     input_id: str
     link: str
     title: str
-    category: str
     address: str
     open_hours: str
     popular_times: str

@@ -63,7 +63,7 @@ export interface LeadDetail {
   id: string;
   counter: number | null;
   title: string | null;
-  category: string | null;
+  categories: string[];
   address: string | null;
   phone: string | null;
   website: string | null;
@@ -75,7 +75,6 @@ export interface LeadDetail {
   created_at: string;
   updated_at: string;
   emails: string[];
-  categories: string[];
   socials: { platform: string; url: string }[];
   detailed_address: {
     complete_address: string;
@@ -261,7 +260,6 @@ export default function LeadDetails({ lead }: LeadDetailsProps) {
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="#" value={lead.counter} />
               <Field label="Status" value={lead.status} />
-              <Field label="Category" value={lead.category} />
               <Field label="Owner" value={lead.owner} />
               <Field label="Phone" value={lead.phone} />
               <Field label="Timezone" value={lead.timezone} />

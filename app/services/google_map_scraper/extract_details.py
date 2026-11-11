@@ -32,11 +32,36 @@ class AddressRecord(TypedDict):
     country: str
 
 
+class OpenHoursRecord(TypedDict):
+    """The time ranges of each day of the week. A day with no range is ["Closed"]."""
+
+    Monday: list[str]
+    Tuesday: list[str]
+    Wednesday: list[str]
+    Thursday: list[str]
+    Friday: list[str]
+    Saturday: list[str]
+    Sunday: list[str]
+
+
+class ImageRecord(TypedDict):
+    """One photo of a place. title is "" when the source has none."""
+
+    title: str
+    image: str
+
+
+class SourcedLinkRecord(TypedDict):
+    """A link and the name of the site it leads to."""
+
+    link: str
+    source: str
+
+
 class PlaceRecord(TypedDict, total=False):
     """One place from a search result. A key is present only when the source has a value."""
 
     title: str
-    category: str
     address: str
     website: str
     phone: str
@@ -52,15 +77,15 @@ class PlaceRecord(TypedDict, total=False):
     timezone: str
     price_range: str
     description: str
-    categories: str
-    address_lines: str
-    open_hours: str
-    images: str
+    categories: list[str]
+    address_lines: list[str]
+    open_hours: OpenHoursRecord
+    images: list[ImageRecord]
     complete_address: AddressRecord
     about: str
     credit_cards_accepted: str
-    reservations: str
-    order_online: str
+    reservations: list[SourcedLinkRecord]
+    order_online: list[SourcedLinkRecord]
     menu: str
     cid: str
 
@@ -70,12 +95,12 @@ class PanelRecord(TypedDict, total=False):
 
     review_count: int
     reviews_link: str
-    open_hours: str
+    open_hours: OpenHoursRecord
     complete_address: AddressRecord
     about: str
     credit_cards_accepted: str
-    reservations: str
-    order_online: str
+    reservations: list[SourcedLinkRecord]
+    order_online: list[SourcedLinkRecord]
     menu: str
     reviews_per_rating: str
     user_reviews: str
@@ -95,7 +120,6 @@ IMAGES_MAX, IMAGE_URL_MAX = (
 # (2026-10-31): count on 20/20 entities, 7 days of hours on 19/20. (37, 1) is the photo count.
 FIELD_PATHS = {
     "title": (11,),
-    "category": (13, 0),
     "address": (18,),
     "website": (7, 0),
     "phone": (178, 0, 0),
@@ -131,7 +155,9 @@ ADDRESS_PARTS = {
     "country": 6,
 }
 REVIEWS_PATH = (175, 9, 0, 0)  # place panel: the reviews it shows first (about 5)
-LISTS = {"categories": (13,), "address_lines": (2,)}
+CATEGORY_PATH = (13, 0)  # main category
+CATEGORIES_PATH = (13,)  # list of categories
+LISTS = {"address_lines": (2,)}
 OLC = "23456789CFGHJMPQRVWX"  # Open Location Code (Plus Code) digits
 # What the reviews pass takes from a place's panel for a row that lacks it (a DOM-fallback row).
 PANEL_FIELDS = (
@@ -231,36 +257,61 @@ def is_safe_public_url(url: Any, schemes: tuple[str, ...] = ("https",)) -> bool:
         return False
 
 
-def format_weekly_hours(days: Any) -> str:
-    """Return the opening hours as JSON keyed by day name, Monday to Sunday, or "" unless all seven days are present."""
+WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def format_weekly_hours(days: Any) -> OpenHoursRecord | None:
+    """Return the time ranges of each day, or None unless all seven days are present."""
     if not isinstance(days, list):
-        return ""
-    week: dict[int, tuple[str, list[str]]] = {}
+        return None
+    week: dict[int, list[str]] = {}
     for d in days:
         if not (
             isinstance(d, list)
             and len(d) > 3
             and isinstance(d[0], str)
             and isinstance(d[1], int)
+            and 1 <= d[1] <= len(WEEKDAYS)
         ):
             continue
-        spans = [
+        week[d[1]] = [
             normalize_unicode_text(x[0])
             for x in get_list_at_path(d, DAY_SPANS_PATH)
             if isinstance(x, list) and x and normalize_unicode_text(x[0])
         ]
-        week[d[1]] = (d[0], spans)
-    if len(week) < 7:
-        return ""
-    return json.dumps(
-        {name: spans for _, (name, spans) in sorted(week.items())},
-        ensure_ascii=False,
+    if len(week) < len(WEEKDAYS):
+        return None
+    return cast(
+        OpenHoursRecord,
+        {name: week[i] for i, name in enumerate(WEEKDAYS, 1)},
     )
 
 
-def format_gallery(entity: Any) -> str:
-    """Return up to IMAGES_MAX unique, safe photos as JSON, or "" if there are none."""
-    found: list[dict[str, str]] = []
+def format_categories(entity: Any) -> list[str]:
+    """Return the main category and the other categories, lowercased and without repeats."""
+    names = [
+        get_at_path(entity, CATEGORY_PATH),
+        *get_list_at_path(entity, CATEGORIES_PATH),
+    ]
+    out: list[str] = []
+    for name in names:
+        text = normalize_unicode_text(name).lower()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def format_gallery(entity: Any) -> list[ImageRecord]:
+    """Return up to IMAGES_MAX unique, safe photos, or an empty list if there are none."""
+    found: list[ImageRecord] = []
     seen: set[str] = set()
     # Search cards and panels use different gallery layouts. Never include reviewer profiles.
     groups: list[tuple[Any, Path, Path]] = [
@@ -295,10 +346,10 @@ def format_gallery(entity: Any) -> str:
                 if title_path
                 else ""
             )
-            found.append({"title": title, "image": url})
+            found.append(ImageRecord(title=title, image=url))
             if len(found) == IMAGES_MAX:
-                return json.dumps(found, ensure_ascii=False)
-    return json.dumps(found, ensure_ascii=False) if found else ""
+                return found
+    return found
 
 
 def format_address(entity: Any) -> AddressRecord | None:
@@ -379,9 +430,11 @@ def extract_attributes_and_cards(entity: Any) -> tuple[str, str]:
     return (json.dumps(groups, ensure_ascii=False) if groups else ""), ", ".join(cards)
 
 
-def format_sourced_links(nodes: Any, link: Path, source: Path) -> str:
-    """Return the unique, safe links with their source names as JSON, or "" if there are none."""
-    out: list[dict[str, str]] = []
+def format_sourced_links(
+    nodes: Any, link: Path, source: Path
+) -> list[SourcedLinkRecord]:
+    """Return the unique, safe links with their source names, or an empty list if there are none."""
+    out: list[SourcedLinkRecord] = []
     for it in nodes if isinstance(nodes, list) else []:
         url, src = (
             get_at_path(it, link),
@@ -392,8 +445,8 @@ def format_sourced_links(nodes: Any, link: Path, source: Path) -> str:
             and is_safe_public_url(url, ("https", "http"))
             and all(x["link"] != url for x in out)
         ):
-            out.append({"link": url, "source": src})
-    return json.dumps(out, ensure_ascii=False) if out else ""
+            out.append(SourcedLinkRecord(link=url, source=src))
+    return out
 
 
 def format_menu_link(entity: Any) -> str:
@@ -483,7 +536,10 @@ def build_place_record(entity: Any) -> PlaceRecord:
         if isinstance(v, list):
             items = [x for x in v if isinstance(x, str) and x]
             if items:
-                out[name] = " | ".join(items)
+                out[name] = items
+    categories = format_categories(entity)
+    if categories:
+        out["categories"] = categories
     hours = format_weekly_hours(get_at_path(entity, HOURS_PATH))
     if hours:
         out["open_hours"] = hours

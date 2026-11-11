@@ -21,7 +21,7 @@ export interface Lead {
   id: string;
   counter: number | null;
   title: string | null;
-  category: string | null;
+  categories: string[];
   address: string | null;
   phone: string | null;
   email: string | null;
@@ -90,7 +90,9 @@ export default function Leads({ leads }: LeadsProps) {
                   )}
                 </div>
               </TableCell>
-              <TableCell>{lead.category ?? "—"}</TableCell>
+              <TableCell>
+                {lead.categories.length > 0 ? lead.categories.join(", ") : "—"}
+              </TableCell>
               <TableCell>
                 {lead.website ? (
                   <a

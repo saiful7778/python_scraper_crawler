@@ -22,7 +22,7 @@ COLUMNS: list[str] = [
     "input_id",
     "link",
     "title",
-    "category",
+    "categories",
     "address",
     "open_hours",
     "popular_times",
@@ -61,8 +61,6 @@ COLUMNS: list[str] = [
     "user_reviews_extended",
 ]
 
-EXTRA: list[str] = ["categories"]
-
 _MAPS_SEARCH_URL = "https://www.google.com/maps/search/?api=1&query="
 
 
@@ -70,7 +68,6 @@ def result_columns(settings: ScrapeSettings) -> list[str]:
     """Return the ordered output column names for a scrape's settings."""
     return (
         COLUMNS
-        + EXTRA
         + (list(SOCIALS) if settings.collect_socials else [])
         + TECH_FIELDS
     )
@@ -95,8 +92,25 @@ def maps_place_url(title: str, place_id: str) -> str:
     )
 
 
+def cell_text(value: object) -> str:
+    """The text of a row cell: a list or dict as JSON, anything else as text."""
+    if isinstance(value, (list, dict)):
+        value = json.dumps(value, ensure_ascii=False)
+    return _sanitize_cell(value)
+
+
 def _cell(source: Mapping[str, object], key: str) -> str:
-    return _sanitize_cell(source[key]) if key in source else ""
+    return cell_text(source[key]) if key in source else ""
+
+
+def _list_cell(source: Mapping[str, object], key: str) -> str:
+    """A list cell as its items joined by " | ", or "" when the source has no list."""
+    items = source.get(key)
+    return (
+        " | ".join(_sanitize_cell(item) for item in items)
+        if isinstance(items, list)
+        else ""
+    )
 
 
 def review_start_columns(histogram: str) -> dict[str, str]:
@@ -158,7 +172,6 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         input_id=keyword,
         link=link,
         title=title,
-        category=_cell(source, "category"),
         address=_cell(source, "address"),
         open_hours=_cell(source, "open_hours"),
         popular_times=_cell(source, "popular_times"),
@@ -191,5 +204,5 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         about=_cell(source, "about"),
         user_reviews=_cell(source, "user_reviews"),
         user_reviews_extended=_cell(source, "user_reviews_extended"),
-        categories=_cell(source, "categories"),
+        categories=_list_cell(source, "categories"),
     )

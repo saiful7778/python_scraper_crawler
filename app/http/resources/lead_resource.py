@@ -52,7 +52,9 @@ class LeadListItemResource(Resource):
             "id": str(lead.id),
             "counter": lead.counter,
             "title": lead.title,
-            "category": lead.category,
+            "categories": [
+                c.name for c in sorted(lead.categories, key=lambda c: c.counter)
+            ],
             "address": lead.address,
             "phone": lead.phone,
             "email": next(
@@ -80,9 +82,6 @@ class LeadDetailResource(LeadListItemResource):
             "created_at": self.iso(lead.created_at),
             "updated_at": self.iso(lead.updated_at),
             "emails": [e.email for e in sorted(lead.emails, key=lambda e: e.counter)],
-            "categories": [
-                c.name for c in sorted(lead.categories, key=lambda c: c.counter)
-            ],
             "socials": [
                 {"platform": s.platform, "url": s.url}
                 for s in sorted(lead.socials, key=lambda s: s.counter)

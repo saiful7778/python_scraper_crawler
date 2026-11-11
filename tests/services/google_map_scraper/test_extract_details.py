@@ -196,21 +196,22 @@ class TestFormatWeeklyHours:
         ]
         return [day(name, i + 1, ["9 AM–5 PM"]) for i, name in enumerate(names)]
 
-    def test_returns_empty_for_non_list(self) -> None:
-        assert format_weekly_hours(None) == ""
-        assert format_weekly_hours("Monday") == ""
+    def test_returns_none_for_non_list(self) -> None:
+        assert format_weekly_hours(None) is None
+        assert format_weekly_hours("Monday") is None
 
-    def test_returns_empty_when_fewer_than_seven_days(self) -> None:
+    def test_returns_none_when_fewer_than_seven_days(self) -> None:
         days: list[list[Any]] = self.full_week()[:6]
-        assert format_weekly_hours(days) == ""
+        assert format_weekly_hours(days) is None
 
-    def test_returns_empty_when_days_repeat(self) -> None:
+    def test_returns_none_when_days_repeat(self) -> None:
         days: list[list[Any]] = self.full_week()
         days[6] = day("Sunday", 1, [])
-        assert format_weekly_hours(days) == ""
+        assert format_weekly_hours(days) is None
 
-    def test_formats_week_as_json_keyed_by_day_name(self) -> None:
-        result: dict[str, list[str]] = json.loads(format_weekly_hours(self.full_week()))
+    def test_keys_week_by_day_name(self) -> None:
+        result = format_weekly_hours(self.full_week())
+        assert result is not None
         assert list(result) == [
             "Monday",
             "Tuesday",
@@ -223,9 +224,8 @@ class TestFormatWeeklyHours:
         assert result["Monday"] == ["9 AM–5 PM"]
 
     def test_orders_days_by_number(self) -> None:
-        result: dict[str, list[str]] = json.loads(
-            format_weekly_hours(list(reversed(self.full_week())))
-        )
+        result = format_weekly_hours(list(reversed(self.full_week())))
+        assert result is not None
         assert list(result) == [
             "Monday",
             "Tuesday",
@@ -239,23 +239,24 @@ class TestFormatWeeklyHours:
     def test_keeps_non_ascii_and_normalizes_spans(self) -> None:
         days: list[list[Any]] = self.full_week()
         days[0] = day("Lundi", 1, ["9\u202f:00\u00a0–\u00a017:00", "\u200b", ""])
-        result: dict[str, list[str]] = json.loads(format_weekly_hours(days))
-        assert result["Lundi"] == ["9 :00 – 17:00"]
+        result = format_weekly_hours(days)
+        assert result is not None
+        assert result["Monday"] == ["9 :00 – 17:00"]
 
     def test_skips_malformed_day_entries(self) -> None:
         days: list[Any] = self.full_week()
         days.append("not a day")
-        days.append(["Short", 9, None])
+        days.append(["Short", 9, None, []])
         days.append(["Bad number", "1", None, []])
         days.append(["Bool number", True, None, []])
-        result: dict[str, list[str]] = json.loads(format_weekly_hours(days))
+        result = format_weekly_hours(days)
+        assert result is not None
         assert len(result) == 7
-        assert "Short" not in result
 
 
 class TestFormatGallery:
     def test_returns_empty_for_no_photos(self) -> None:
-        assert format_gallery({}) == ""
+        assert format_gallery({}) == []
 
     def test_collects_photos_from_all_layouts(self) -> None:
         entity: Any = merge(
@@ -270,7 +271,7 @@ class TestFormatGallery:
             at((37, 0), [at((6, 0), "https://b.example/2.jpg")]),
             at((72, 0), [at((6, 0), "https://c.example/3.jpg")]),
         )
-        result: list[dict[str, str]] = json.loads(format_gallery(entity))
+        result = format_gallery(entity)
         assert result == [
             {"title": "Front", "image": "https://a.example/1.jpg"},
             {"title": "", "image": "https://b.example/2.jpg"},
@@ -290,19 +291,19 @@ class TestFormatGallery:
                 ],
             ),
         )
-        result: list[dict[str, str]] = json.loads(format_gallery(entity))
+        result = format_gallery(entity)
         assert result == [{"title": "", "image": "https://a.example/1.jpg"}]
 
     def test_caps_results_at_images_max(self) -> None:
         items: list[list[Any]] = [
             at((6, 0), f"https://img.example/{i}.jpg") for i in range(IMAGES_MAX + 5)
         ]
-        result: list[dict[str, str]] = json.loads(format_gallery(at((37, 0), items)))
+        result = format_gallery(at((37, 0), items))
         assert len(result) == IMAGES_MAX
         assert result[-1]["image"] == f"https://img.example/{IMAGES_MAX - 1}.jpg"
 
     def test_ignores_items_that_are_not_lists(self) -> None:
-        assert format_gallery(at((37, 0), "not a list")) == ""
+        assert format_gallery(at((37, 0), "not a list")) == []
 
 
 class TestFormatAddress:
@@ -441,16 +442,14 @@ class TestExtractAttributesAndCards:
 
 class TestFormatSourcedLinks:
     def test_returns_empty_for_non_list(self) -> None:
-        assert format_sourced_links(None, (0,), (1,)) == ""
+        assert format_sourced_links(None, (0,), (1,)) == []
 
     def test_builds_link_and_source_pairs(self) -> None:
         nodes: list[list[str]] = [
             ["https://a.example", "Site A"],
             ["http://b.example", "Site B"],
         ]
-        result: list[dict[str, str]] = json.loads(
-            format_sourced_links(nodes, (0,), (1,))
-        )
+        result = format_sourced_links(nodes, (0,), (1,))
         assert result == [
             {"link": "https://a.example", "source": "Site A"},
             {"link": "http://b.example", "source": "Site B"},
@@ -463,14 +462,12 @@ class TestFormatSourcedLinks:
             ["https://a.example", "Site A again"],
             ["javascript:alert(1)", "Bad"],
         ]
-        result: list[dict[str, str]] = json.loads(
-            format_sourced_links(nodes, (0,), (1,))
-        )
+        result = format_sourced_links(nodes, (0,), (1,))
         assert result == [{"link": "https://a.example", "source": "Site A"}]
 
     def test_returns_empty_when_nothing_valid(self) -> None:
         nodes: list[list[str]] = [["ftp://x.example", "S"]]
-        assert format_sourced_links(nodes, (0,), (1,)) == ""
+        assert format_sourced_links(nodes, (0,), (1,)) == []
 
 
 class TestFormatMenuLink:
@@ -625,7 +622,6 @@ class TestBuildPlaceRecord:
     def test_maps_scalar_fields(self) -> None:
         entity: Any = place(
             title="Cafe Nero",
-            category="Coffee shop",
             address="1 Main St",
             website="https://cafe.example",
             phone="+1 555 0100",
@@ -640,7 +636,6 @@ class TestBuildPlaceRecord:
         )
         record: PlaceRecord = build_place_record(entity)
         assert record.get("title") == "Cafe Nero"
-        assert record.get("category") == "Coffee shop"
         assert record.get("address") == "1 Main St"
         assert record.get("website") == "https://cafe.example"
         assert record.get("phone") == "+1 555 0100"
@@ -663,15 +658,18 @@ class TestBuildPlaceRecord:
         assert "phone" not in record
         assert "address" not in record
 
-    def test_joins_categories_and_address_lines(self) -> None:
+    def test_lowercases_and_dedupes_categories(self) -> None:
         entity: Any = merge(
             at(FIELD_PATHS["title"], "Shop"),
-            at((13,), ["Bakery", "", "Cafe", None]),
-            at((2,), ["Line 1", "Line 2"]),
+            at((13,), ["Coffee Shop", "", "Cafe", None, "coffee shop", "CAFE"]),
         )
         record: PlaceRecord = build_place_record(entity)
-        assert record.get("categories") == "Bakery | Cafe"
-        assert record.get("address_lines") == "Line 1 | Line 2"
+        assert record.get("categories") == ["coffee shop", "cafe"]
+
+    def test_keeps_address_lines_as_list(self) -> None:
+        entity: Any = at((2,), ["Line 1", "Line 2"])
+        record: PlaceRecord = build_place_record(entity)
+        assert record.get("address_lines") == ["Line 1", "Line 2"]
 
     def test_formats_opening_hours_when_full_week(self) -> None:
         names: list[str] = [
@@ -688,9 +686,8 @@ class TestBuildPlaceRecord:
         ]
         record: PlaceRecord = build_place_record(at(HOURS_PATH, days))
         assert "open_hours" in record
-        open_hours = record.get("open_hours")
-        assert open_hours is not None
-        hours: dict[str, list[str]] = json.loads(open_hours)
+        hours = record.get("open_hours")
+        assert hours is not None
         assert hours["Sunday"] == ["8 AM–6 PM"]
 
     def test_builds_cid_from_data_id(self) -> None:
@@ -734,9 +731,9 @@ class TestBuildPlaceRecord:
         )
         record: PlaceRecord = build_place_record(entity)
         assert "reservations" in record
-        reservations: list[dict[str, str]] = json.loads(record["reservations"])
+        reservations = record["reservations"]
         assert "order_online" in record
-        order_online: list[dict[str, str]] = json.loads(record["order_online"])
+        order_online = record["order_online"]
         assert reservations == [{"link": "https://book.example", "source": "Booker"}]
         assert order_online == [
             {"link": "https://order.example", "source": "Delivery Co"}
@@ -755,9 +752,8 @@ class TestBuildPlaceRecord:
             ),
         )
         record: PlaceRecord = build_place_record(entity)
-        images_json = record.get("images")
-        assert images_json is not None
-        images: list[dict[str, str]] = json.loads(images_json)
+        images = record.get("images")
+        assert images is not None
         about_json = record.get("about")
         assert about_json is not None
         about: list[dict[str, Any]] = json.loads(about_json)
@@ -790,16 +786,16 @@ class TestParsePlaceList:
 
     def test_parses_each_entry_with_a_title(self) -> None:
         entries: list[list[Any]] = [
-            self.entry(place(title="First", category="Cafe")),
-            self.entry(place(title="Second", category="Bar")),
+            self.entry(merge(place(title="First"), at((13,), ["Cafe"]))),
+            self.entry(merge(place(title="Second"), at((13,), ["Bar"]))),
         ]
         rows: list[PlaceRecord] = parse_place_list(self.body(entries))
         assert [r.get("title") for r in rows] == ["First", "Second"]
-        assert rows[0].get("category") == "Cafe"
+        assert rows[0].get("categories") == ["cafe"]
 
     def test_skips_entries_without_title_or_entity(self) -> None:
         entries: list[list[Any]] = [
-            self.entry(place(category="No title")),
+            self.entry(place(website="https://no-title.example")),
             self.entry(place(title="")),
             [None, "not an entity"],
             self.entry(place(title="Kept")),

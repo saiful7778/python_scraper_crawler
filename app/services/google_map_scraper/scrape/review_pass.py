@@ -14,7 +14,7 @@ from app.services.google_map_scraper.google_map import (
 )
 from app.utils.logger import get_logger
 
-from .lead_rows import review_start_columns
+from .lead_rows import cell_text, review_start_columns
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_types import LeadRow, is_lead_key
@@ -117,4 +117,4 @@ class ReviewPass:
                 and key not in _COORDINATE_FIELDS
                 and not row.get(key)
             ):
-                row[key] = str(value)
+                row[key] = cell_text(value)

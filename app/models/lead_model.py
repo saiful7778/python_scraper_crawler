@@ -15,7 +15,6 @@ class LeadModel(Model):
     counter = fields.IntField(null=True, db_index=True)
 
     title = fields.CharField(max_length=500, null=True, db_index=True)
-    category = fields.TextField(null=True)
     address = fields.TextField(null=True)
     phone = fields.TextField(null=True)
     website = fields.TextField(null=True)

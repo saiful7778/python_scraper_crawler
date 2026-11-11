@@ -20,20 +20,16 @@ PROFILE_TEXT_FIELDS = (
     "reviews_link",
     "street_view_url",
     "reviews_per_rating",
-    "open_hours",
     "popular_times",
     "thumbnail",
-    "reservations",
-    "order_online",
     "menu",
-    "images",
     "user_reviews",
     "user_reviews_extended",
 )
+PROFILE_JSON_FIELDS = ("open_hours", "reservations", "order_online", "images")
 
 LEAD_FIELDS = (
     "title",
-    "category",
     "address",
     "phone",
     "website",
@@ -70,8 +66,18 @@ def _split(text: str, separator: str) -> list[str]:
     return [part.strip() for part in text.split(separator) if part.strip()]
 
 
+def _json(text):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
 def _profile_values(row: LeadRow) -> dict:
     values = {name: row.get(name, "") for name in PROFILE_TEXT_FIELDS}
+    values.update({name: _json(row.get(name, "")) for name in PROFILE_JSON_FIELDS})
     values["about"] = _about(row.get("about", ""))
     values["review_count"] = _number(row.get("review_count", ""), int)
     values["review_rating"] = _number(row.get("review_rating", ""), float)

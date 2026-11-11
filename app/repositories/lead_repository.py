@@ -55,7 +55,11 @@ class LeadRepository(BaseRepository):
 
     async def all(self, descending: bool = False) -> list[LeadModel]:
         order = "-counter" if descending else "counter"
-        return await self._model.all().order_by(order).prefetch_related("emails")
+        return (
+            await self._model.all()
+            .order_by(order)
+            .prefetch_related("emails", "categories")
+        )
 
     async def find_details(self, lead_id: UUID) -> LeadModel | None:
         return await self._model.get_or_none(id=lead_id).prefetch_related(
