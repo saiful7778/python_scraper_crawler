@@ -84,7 +84,7 @@ def _profile_values(row: LeadRow) -> dict:
     values["about"] = _about(row.get("about", ""))
     values["review_count"] = _number(row.get("review_count", ""), int)
     values["review_rating"] = _number(row.get("review_rating", ""), float)
-    for star in range(1, 6):
+    for star in range(1, 5):
         key = f"review_star_{star}_count"
         values[key] = _number(row.get(key, ""), int)
     return values
@@ -195,7 +195,9 @@ class GoogleMapProfileRepository(BaseRepository):
             for image in _list(row.get("images", ""))
             if isinstance(image, dict) and image.get("image")
         ]
-        base = await self.next_counter(GoogleMapProfileImageModel, google_map_id=profile.id)
+        base = await self.next_counter(
+            GoogleMapProfileImageModel, google_map_id=profile.id
+        )
         await self.insert_ignoring_conflicts(
             GoogleMapProfileImageModel,
             [
@@ -211,7 +213,9 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def _save_reviews(self, profile, row: LeadRow) -> None:
         reviews = [r for r in _list(row.get("user_reviews", "")) if isinstance(r, dict)]
-        base = await self.next_counter(GoogleMapProfileReviewModel, google_map_id=profile.id)
+        base = await self.next_counter(
+            GoogleMapProfileReviewModel, google_map_id=profile.id
+        )
         await self.insert_ignoring_conflicts(
             GoogleMapProfileReviewModel,
             [
