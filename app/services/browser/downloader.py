@@ -146,5 +146,5 @@ def download_headless_shell(
         shutil.rmtree(staging, ignore_errors=True)
         _unlink_quietly(archive)
 
-    logger.info("  ✓ SHA-256 verified, unpacked")
+    logger.info("✓ SHA-256 verified, unpacked")
     return headless_shell_path(plat)

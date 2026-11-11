@@ -162,7 +162,7 @@ def collect_leads(
             ):
                 take()
                 time.sleep(FEED_GROWTH_POLL_SECONDS)
-            logger.info("  batch %s: %s leads", reader.count, len(seen))
+            logger.info("batch %s: %s leads", reader.count, len(seen))
 
             while (
                 reader.count < depth
@@ -219,7 +219,7 @@ def collect_leads(
                         break
                 else:
                     stale = 0
-                    logger.info("  batch %s: %s leads", reader.count, len(seen))
+                    logger.info("batch %s: %s leads", reader.count, len(seen))
             else:
                 if stop():
                     reason = "stopped"
