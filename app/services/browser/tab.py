@@ -1,6 +1,8 @@
 import queue
 import time
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Final, Self
+
+from app.utils.logger import get_logger
 
 from .cdp_client import CDPClient, JSONValue, Params, Result
 from .cdp_error import CDPError
@@ -8,6 +10,11 @@ from .proxy import ProxyAuthenticator, split_proxy_url
 
 if TYPE_CHECKING:
     from .browser import Browser
+
+logger = get_logger(__name__)
+
+#: CDP calls that take at least this long are logged.
+SLOW_CALL_SECONDS: Final[float] = 2.0
 
 
 class BrowserTab:
@@ -75,7 +82,22 @@ class BrowserTab:
         :returns: The reply's ``result`` dict.
         :raises CDPError: On protocol error, timeout, or lost connection.
         """
-        return self.client.call(method, params, self.session_id, timeout)
+        started = time.monotonic()
+        try:
+            return self.client.call(method, params, self.session_id, timeout)
+        except CDPError as error:
+            logger.info(
+                "CDP %s failed after %.1f s (timeout %s): %s",
+                method,
+                time.monotonic() - started,
+                timeout,
+                error,
+            )
+            raise
+        finally:
+            elapsed = time.monotonic() - started
+            if elapsed >= SLOW_CALL_SECONDS:
+                logger.info("CDP %s took %.1f s (timeout %s)", method, elapsed, timeout)
 
     def set_secure_cookie(self, name: str, value: str, domain: str) -> None:
         """Set a ``Secure``, path-``/`` cookie on ``domain`` for this tab.

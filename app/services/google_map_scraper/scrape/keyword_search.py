@@ -295,7 +295,14 @@ class KeywordSearch:
     def _collect(
         self, proxy: str | None, url: str, seconds_left: float
     ) -> tuple[list[PlaceLink | PlaceRecord], str, BatchStats]:
+        started = time.monotonic()
         with self._browser.open_tab(proxy) as proxy_tab:
+            logger.info(
+                "scrape %s: tab open in %.1f s, %.0f s left",
+                self._scrape_id,
+                time.monotonic() - started,
+                seconds_left,
+            )
             try:
                 if proxy_tab.tab is None:
                     raise CDPError("Browser tab is unavailable")
@@ -313,6 +320,13 @@ class KeywordSearch:
                 raise
             if proxy_tab.refused and not leads:
                 raise CDPError(LOGIN_REFUSED)
+            logger.info(
+                "scrape %s: collection ended (%s) after %.1f s, %d lead(s)",
+                self._scrape_id,
+                reason,
+                time.monotonic() - started,
+                len(leads),
+            )
             return leads, reason, stats
 
     def _record_batch(

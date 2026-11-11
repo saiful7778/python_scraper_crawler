@@ -105,8 +105,10 @@ def collect_leads(
     started = time.monotonic()
     reason = "depth"
     stale = 0
+    scrolls = 0
     try:
         tab.navigate(url)
+        logger.info("collector: navigated in %.1f s", time.monotonic() - started)
         if "/sorry/" in tab.get_url():
             return [], "blocked", {"batches": 0, "dom_links": 0}
         if "consent.google" in tab.get_url():
@@ -134,6 +136,7 @@ def collect_leads(
                 tab.get_url(),
             )
             return [], "no-feed", {"batches": 0, "dom_links": 0}
+        logger.info("collector: feed rendered at +%.1f s", time.monotonic() - started)
 
         def take() -> int:
             """Read any newly available batches into ``seen``; return count."""
@@ -163,6 +166,12 @@ def collect_leads(
                 take()
                 time.sleep(FEED_GROWTH_POLL_SECONDS)
             logger.info("batch %s: %s leads", reader.count, len(seen))
+            logger.info(
+                "collector: first batch wait ended at +%.1f s, batches %d, leads %d",
+                time.monotonic() - started,
+                reader.count,
+                len(seen),
+            )
 
             while (
                 reader.count < depth
@@ -180,6 +189,7 @@ def collect_leads(
                 asked_before = reader.asked
                 height_before = tab.evaluate(JS_SCROLL_FEED_TO_BOTTOM)
                 scrolled_at = time.monotonic()
+                scrolls += 1
                 settle_deadline = scrolled_at + SETTLE_SECONDS
                 while (
                     time.monotonic() < settle_deadline
@@ -200,6 +210,16 @@ def collect_leads(
                             scrolled_at = time.monotonic()
                             settle_deadline = scrolled_at + SETTLE_SECONDS
 
+                logger.info(
+                    "scroll %d: waited %.1f s, batches %d -> %d, in flight %s, asked %d, stop %s",
+                    scrolls,
+                    time.monotonic() - scrolled_at,
+                    count_before,
+                    reader.count,
+                    reader.inflight,
+                    reader.asked,
+                    stop(),
+                )
                 if reader.count == count_before:
                     if reader.limited:
                         # Google refused the next batch: stop asking.
@@ -252,6 +272,13 @@ def collect_leads(
                 seen.setdefault(place["data_id"] or place["link"], place)
             reason = f"{reason}+dom-fallback"
 
+        logger.info(
+            "collector: done, reason %s after %.1f s, batches %d, leads %d",
+            reason,
+            time.monotonic() - started,
+            reader.count,
+            len(seen),
+        )
         return (
             list(seen.values()),
             reason,

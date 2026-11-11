@@ -278,5 +278,9 @@ def test_logs_progress_for_each_batch(run, caplog):
     with caplog.at_level(logging.INFO, logger=collector.__name__):
         run(tab, [batch(ROW_A), batch(ROW_B)], depth=2)
 
-    messages = [r.getMessage() for r in caplog.records if r.name == collector.__name__]
-    assert messages == ["  batch 1: 1 leads", "  batch 2: 2 leads"]
+    messages = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == collector.__name__ and r.getMessage().startswith("batch ")
+    ]
+    assert messages == ["batch 1: 1 leads", "batch 2: 2 leads"]
