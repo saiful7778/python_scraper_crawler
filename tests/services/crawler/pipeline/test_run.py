@@ -4,7 +4,7 @@ from app.helpers.http_fetcher import FetchResult
 from app.models import CrawlWebsiteModel
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_queue import CrawlQueue
-from app.services.crawler.pipeline.run import CrawlSummary, crawl_one
+from app.services.crawler.run import CrawlSummary, crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
 from app.utils.errors import ScraperError
 from config.tortoise import TortoiseConfig

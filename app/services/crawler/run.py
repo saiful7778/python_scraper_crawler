@@ -21,9 +21,9 @@ from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.utils.errors import ScraperError
 from config.tortoise import TortoiseConfig
 
-from .crawlability import check_origin
-from .intake import CrawlIntake
-from .stage import CRAWL_OPTIONS, CrawlStage, site_fetch
+from .pipeline.crawlability import check_origin
+from .pipeline.intake import CrawlIntake
+from .pipeline.stage import CRAWL_OPTIONS, CrawlStage, site_fetch
 
 CRAWL_THREADS = 4
 #: Seconds the threads get to stop after their current website.
@@ -150,7 +150,9 @@ def _check_directly(
     return CrawlSummary(queued=0, rejected=0, skipped=0, checked=1)
 
 
-def _flusher(redis: Redis, buffer: RedisCrawlBuffer, postgres: TortoiseConfig) -> Flusher:
+def _flusher(
+    redis: Redis, buffer: RedisCrawlBuffer, postgres: TortoiseConfig
+) -> Flusher:
     return Flusher(
         RowBuffer(redis, BUFFER_TTL_SECONDS),
         ScrapeState(redis, BUFFER_TTL_SECONDS),

@@ -4,7 +4,7 @@ import sys
 
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.services.buffer.client import connect
-from app.services.crawler.pipeline.run import crawl_one
+from app.services.crawler.run import crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
 from app.utils.errors import describe
 from app.utils.logger import get_logger
@@ -63,7 +63,9 @@ def main() -> None:
         )
     except KeyboardInterrupt:
         if args.finish_incomplete:
-            print("\n⚠ Crawl stopped; unfinished crawls stay in Redis for the next run.")
+            print(
+                "\n⚠ Crawl stopped; unfinished crawls stay in Redis for the next run."
+            )
         else:
             print("\n⚠ Crawl stopped; run the command again to crawl this website.")
         raise

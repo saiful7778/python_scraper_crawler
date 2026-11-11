@@ -1,6 +1,6 @@
 from app.helpers.http_fetcher import FetchResult
 from app.models import CrawlWebsiteModel, LeadEmailModel, LeadModel, LeadSocialModel
-from app.services.crawler.pipeline.run import crawl_one
+from app.services.crawler.run import crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
 from tests.services.crawler.pipeline.conftest import in_database
 
@@ -51,9 +51,7 @@ def test_crawl_links_the_lead_and_saves_its_contacts(fake_redis, postgres):
     )
     socials = in_database(
         postgres,
-        lambda: LeadSocialModel.filter(lead_id=lead_id).values_list(
-            "platform", "url"
-        ),
+        lambda: LeadSocialModel.filter(lead_id=lead_id).values_list("platform", "url"),
     )
     assert website_leads == [lead_id]
     assert emails == ["hi@a.de"]
