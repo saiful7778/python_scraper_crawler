@@ -12,11 +12,11 @@ from app.services.buffer.client import BufferError
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteQueue
-from app.services.google_map_scraper.scrape import scrape_runner
+from app.services.google_map_scraper import scrape_runner
 from app.services.google_map_scraper.scrape.engine_config import EngineConfig
 from app.services.google_map_scraper.scrape.scrape_database import ScrapeDatabase
 from app.services.google_map_scraper.scrape.scrape_run import _latest_copies
-from app.services.google_map_scraper.scrape.scrape_runner import (
+from app.services.google_map_scraper.scrape_runner import (
     ScrapeDeletedError,
     ScrapeFlushError,
     ScrapeInFlightError,

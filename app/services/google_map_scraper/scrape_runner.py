@@ -23,13 +23,13 @@ from app.utils.logger import get_logger
 from config.redis import RedisConfig
 from config.tortoise import TortoiseConfig
 
-from .engine_config import EngineConfig
-from .scrape_database import ScrapeDatabase
-from .scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
-from .scrape_run import RunOutcome, origin_key
-from .scrape_settings import ScrapeSettings
-from .scrape_types import LeadRow, SettingsData
-from .scrape_worker import ScrapeWorker
+from .scrape.engine_config import EngineConfig
+from .scrape.scrape_database import ScrapeDatabase
+from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
+from .scrape.scrape_run import RunOutcome, origin_key
+from .scrape.scrape_settings import ScrapeSettings
+from .scrape.scrape_types import LeadRow, SettingsData
+from .scrape.scrape_worker import ScrapeWorker
 
 logger = get_logger(__name__)
 

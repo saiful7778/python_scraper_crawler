@@ -18,7 +18,7 @@ from .google_map.geo import (
 from .place_query import PlaceQuery
 from .scrape.dedupe import dedupe_rows
 from .scrape.lead_rows import result_columns
-from .scrape.scrape_runner import run_scrape
+from .scrape_runner import run_scrape
 from .scrape.scrape_status import ScrapeStatus
 from .scrape.scrape_types import LeadRow
 
