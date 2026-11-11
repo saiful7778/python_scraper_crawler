@@ -83,7 +83,7 @@ class LeadRepository(BaseRepository):
             LeadEmailModel,
             [
                 LeadEmailModel(lead_id=pid, email=e, counter=base_email + i)
-                for i, e in enumerate(parts["emails"])
+                for i, e in enumerate(parts.get("emails", []))
             ],
         )
         base_category = await self.next_counter(LeadCategoryModel, lead_id=pid)

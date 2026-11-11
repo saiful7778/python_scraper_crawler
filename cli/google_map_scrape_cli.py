@@ -167,11 +167,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--has-phone", action="store_true", help="keep only rows with a phone number"
     )
     f.add_argument(
-        "--has-email",
-        action="store_true",
-        help="keep only rows where an email was found",
-    )
-    f.add_argument(
         "--has-website",
         action="store_true",
         help="keep only rows where a website was found",
@@ -278,7 +273,6 @@ def print_plan(query: CliQuery, output: str) -> None:
         name
         for name, on in (
             ("phone", query.has_phone),
-            ("email", query.has_email),
             ("website", query.has_website),
         )
         if on

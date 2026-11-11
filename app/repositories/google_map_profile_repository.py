@@ -80,7 +80,6 @@ def _profile_values(row: LeadRow) -> dict:
 
 def _children(row: LeadRow) -> dict:
     return {
-        "emails": _split(row.get("emails", ""), ", "),
         "categories": _split(row.get("categories", ""), " | "),
         "socials": {k: row.get(k) for k in SOCIALS if row.get(k)},
         "address": address_fields(row),

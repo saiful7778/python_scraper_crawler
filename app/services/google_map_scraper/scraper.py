@@ -73,7 +73,6 @@ def keep_row(row: LeadRow, query: PlaceQuery) -> bool:
     return (
         (not query.has_phone or bool(row.get("phone")))
         and (not query.has_website or bool(row.get("website")))
-        and (not query.has_email or bool(row.get("emails")))
     )
 
 

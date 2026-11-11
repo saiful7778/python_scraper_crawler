@@ -37,7 +37,6 @@ class PlaceQuery(ScrapeSettings):
         description="Split tiles that reach Google's result cap; needs a grid, 3 by default.",
     )
     has_phone: bool = Field(default=False, strict=True)
-    has_email: bool = Field(default=False, strict=True)
     has_website: bool = Field(default=False, strict=True)
 
     @model_validator(mode="before")
@@ -61,6 +60,6 @@ class PlaceQuery(ScrapeSettings):
         search (filters, grid bounding box), so the engine never stops too early.
         """
         data = self.model_dump(include=set(ScrapeSettings.model_fields))
-        if self.has_phone or self.has_email or self.has_website or self.grid:
+        if self.has_phone or self.has_website or self.grid:
             data["limit"] = None
         return ScrapeSettings.model_validate(data)

@@ -21,7 +21,6 @@ def _row(**overrides) -> dict:
         "longitude": -97.74,
         "phone": "",
         "website": "",
-        "emails": "",
         **overrides,
     }
 
@@ -45,12 +44,6 @@ def test_keep_row_applies_the_website_filter():
     query = _query(has_website=True)
     assert keep_row(_row(website="https://cafe.example"), query)
     assert not keep_row(_row(website=""), query)
-
-
-def test_keep_row_applies_the_email_filter():
-    query = _query(has_email=True)
-    assert keep_row(_row(emails="hi@cafe.example"), query)
-    assert not keep_row(_row(emails=""), query)
 
 
 def test_keep_row_keeps_everything_without_filters():

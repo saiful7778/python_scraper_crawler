@@ -54,7 +54,7 @@ When the process exits, read the log for the `✗`, `⚠`, and final lead count 
 | `--deep-scan` | Runs the grid (3×3 unless `--grid` is set), then splits every tile that hits Google's cap (about 20 rows) into 4 smaller tiles. Up to 5× the tiles. Slow. Use only for whole-city runs. |
 | `--website-depth 1` | The only accepted value. Crawls the website for emails, socials, and tech. Any other value is rejected. |
 | `--proxy URL` | Repeatable. `http://[user:pass@]host:port`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. Scrapes take turns through the proxies. |
-| `--has-phone`, `--has-email`, `--has-website` | Keep only rows that have that field. `--has-email` means an email was found on the website. |
+| `--has-phone`, `--has-website` | Keep only rows that have that field. |
 | `--limit N` | Stop at N rows. |
 | `--format csv\|json` | Default `csv`. CSV is UTF-8 with a BOM, so Excel opens it cleanly. |
 | `--fields a,b,c` | Columns to write, in that order, default all. A name the scrape does not produce prints a `⚠` line and is written empty. |

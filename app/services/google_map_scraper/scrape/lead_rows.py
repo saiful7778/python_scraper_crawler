@@ -59,7 +59,6 @@ COLUMNS: list[str] = [
     "about",
     "user_reviews",
     "user_reviews_extended",
-    "emails",
 ]
 
 EXTRA: list[str] = ["categories"]
@@ -192,6 +191,5 @@ def build_lead_row(lead: PlaceRecord | PlaceLink, keyword: str) -> LeadRow:
         about=_cell(source, "about"),
         user_reviews=_cell(source, "user_reviews"),
         user_reviews_extended=_cell(source, "user_reviews_extended"),
-        emails=_cell(source, "emails"),
         categories=_cell(source, "categories"),
     )
