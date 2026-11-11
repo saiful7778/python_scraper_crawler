@@ -113,3 +113,28 @@ def test_crawl_one_twice_keeps_one_row(fake_redis, postgres):
         )
 
     assert stored_origins(postgres) == ["https://a.de"]
+
+
+def test_crawl_one_records_a_non_html_page_as_rejected(fake_redis, postgres):
+    def pdf_fetch(url):
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status=200,
+            headers={"Content-Type": "application/pdf"},
+            body=b"%PDF",
+            redirect_chain=(),
+            error=None,
+        )
+
+    summary = crawl_one(
+        "docs.de",
+        redis=fake_redis,
+        postgres=postgres,
+        options=OPTS,
+        fetch=pdf_fetch,
+    )
+
+    assert summary == CrawlSummary(queued=0, rejected=1, skipped=0, checked=1)
+    assert CrawlQueue(fake_redis).queued_jobs() == []
+    assert stored_origins(postgres) == ["https://docs.de"]
