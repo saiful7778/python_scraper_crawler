@@ -16,11 +16,12 @@ def test_crawl_models_are_registered_with_their_tables():
     assert CrawlEventModel._meta.db_table == "crawl_events"
 
 
-def test_website_is_unique_per_scrape_and_lead():
+def test_crawl_website_is_unique_by_origin():
     from app.models import CrawlWebsiteModel
 
-    unique = CrawlWebsiteModel._meta.unique_together
-    assert ("scrape_id", "lead_position") in unique
+    assert "scrape_id" not in CrawlWebsiteModel._meta.fields_map
+    assert "lead_position" not in CrawlWebsiteModel._meta.fields_map
+    assert CrawlWebsiteModel._meta.fields_map["origin"].unique is True
 
 
 def test_every_crawl_model_has_updated_at():
@@ -49,4 +50,3 @@ def test_website_stores_scrape_and_lead_as_plain_values():
 
     fields_map = CrawlWebsiteModel._meta.fields_map
     assert "scrape_lead" not in fields_map
-    assert fields_map["scrape_id"].index is True

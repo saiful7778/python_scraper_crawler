@@ -6,17 +6,15 @@ from tortoise.models import Model
 
 class CrawlWebsiteModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    scrape_id = fields.UUIDField(db_index=True)
     lead = fields.ForeignKeyField(
         "models.LeadModel",
         related_name="crawl_websites",
         null=True,
         on_delete=fields.CASCADE,
     )
-    lead_position = fields.IntField()
     host = fields.CharField(max_length=255)
     registrable_domain = fields.CharField(max_length=255, db_index=True)
-    origin = fields.CharField(max_length=2048)
+    origin = fields.CharField(max_length=2048, unique=True)
     status = fields.CharField(max_length=24)
     error_code = fields.CharField(max_length=64, null=True)
     error_message = fields.TextField(null=True)
@@ -37,7 +35,6 @@ class CrawlWebsiteModel(Model):
 
     class Meta(Model.Meta):
         table = "crawl_websites"
-        unique_together = (("scrape_id", "lead_position"),)
 
 
 class CrawlRunModel(Model):
