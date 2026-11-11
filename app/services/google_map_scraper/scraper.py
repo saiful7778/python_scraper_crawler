@@ -70,9 +70,8 @@ def columns_for(query: PlaceQuery) -> list[str]:
 
 
 def keep_row(row: LeadRow, query: PlaceQuery) -> bool:
-    return (
-        (not query.has_phone or bool(row.get("phone")))
-        and (not query.has_website or bool(row.get("website")))
+    return (not query.has_phone or bool(row.get("phone"))) and (
+        not query.has_website or bool(row.get("website"))
     )
 
 
@@ -325,7 +324,9 @@ class PlaceScraper:
         self._salvage = []
 
         place = ", ".join(part for part in (query.city, query.state) if part)
-        name = f"{query.keyword} @ {place}"[:80]  # the scrape name is what the web UI lists
+        name = f"{query.keyword} @ {place}"[
+            :80
+        ]  # the scrape name is what the web UI lists
 
         logger.info(
             "scraping %r in %r: grid=%s depth=%s",
@@ -375,7 +376,9 @@ class PlaceScraper:
         )
 
         if not cells:
-            print(f"▶ Creating scrape: 1 keyword @ {lat},{lon} depth={query.scroll_depth}")
+            print(
+                f"▶ Creating scrape: 1 keyword @ {lat},{lon} depth={query.scroll_depth}"
+            )
             logger.info("single scrape at %s,%s", lat, lon)
             result = run_scrape(name, anchored, known_keys=known_keys)
             if result.status == ScrapeStatus.FAILED:
@@ -384,7 +387,7 @@ class PlaceScraper:
                 return ScrapeResult([], columns, 0, 1, result.blocked)
             if result.note:
                 logger.info("single scrape note: %s", result.note)
-                print(f"  ⚠ {result.note}")
+                print(f"⚠ {result.note}")
             rows = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
             logger.info(
                 "single scrape: %d rows, %d kept after dedupe and filters",
@@ -399,8 +402,7 @@ class PlaceScraper:
             else ""
         )
         print(
-            f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, "
-            f"depth={query.scroll_depth}{deep_scan_note}"
+            f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, depth={query.scroll_depth}{deep_scan_note}"
         )
 
         rows: list[LeadRow] = []
@@ -414,8 +416,7 @@ class PlaceScraper:
             index += 1
             sub_tag = " (sub-tile)" if cell.get("_sub") else ""
             print(
-                f"▶ Cell {index}/{len(cells)} @ {cell['lat']},{cell['lon']} "
-                f"radius={cell['radius']}m{sub_tag}"
+                f"▶ Cell {index}/{len(cells)} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
             )
             cell_settings = anchored.model_copy(
                 update={
@@ -439,14 +440,13 @@ class PlaceScraper:
             except CDPError as exc:
                 # The browser connection is gone; every later cell would fail the same way.
                 print(
-                    f"\n  ✗ Stopped at cell {index}/{len(cells)}: Chrome connection lost "
-                    f"({describe(exc)})"
+                    f"\n✗ Stopped at cell {index}/{len(cells)}: Chrome connection lost ({describe(exc)})"
                 )
                 logger.exception("cell %d stopped on a lost Chrome connection", index)
                 skipped += 1
                 break
             except Exception as exc:
-                print(f"\n  ⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
+                print(f"\n⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
                 logger.exception("cell %d skipped", index)
                 skipped += 1
                 continue
@@ -454,10 +454,12 @@ class PlaceScraper:
             rows = dedupe_rows(rows + result.rows, known_keys)
             if result.blocked:
                 blocked = True
-                logger.warning("rate-limited at cell %d; the cells after it are not searched", index)
+                logger.warning(
+                    "rate-limited at cell %d; the cells after it are not searched",
+                    index,
+                )
                 print(
-                    f"\n  ⚠ Stopped at cell {index}/{len(cells)}: Google rate-limited "
-                    "this IP; the cells after it were not searched."
+                    f"\n⚠ Stopped at cell {index}/{len(cells)}: Google rate-limited this IP; the cells after it were not searched."
                 )
                 break
             if result.status == ScrapeStatus.FAILED:
@@ -467,21 +469,25 @@ class PlaceScraper:
 
             finished += 1
             if result.note:
-                print(f"  ⚠ cell {index}/{len(cells)}: {result.note}")
+                print(f"⚠ cell {index}/{len(cells)}: {result.note}")
             kept = finalize_rows(rows, query, bounding_box)
             self._salvage = kept
             print(
-                f"  cell {index}/{len(cells)}: {len(result.rows)} rows, "
-                f"{len(kept)} kept so far"
+                f"cell {index}/{len(cells)}: {len(result.rows)} rows, {len(kept)} kept so far"
             )
             if query.limit and len(kept) >= query.limit:
                 logger.info("reached the row limit of %s; stopping", query.limit)
-                print(f"  ✓ reached --limit {query.limit}; stopping")
+                print(f"✓ reached --limit {query.limit}; stopping")
                 break
 
-            if query.deep_scan and not cell.get("_sub") and len(result.rows) >= SATURATED:
+            if (
+                query.deep_scan
+                and not cell.get("_sub")
+                and len(result.rows) >= SATURATED
+            ):
                 sub_cells: list[GridCell] = [
-                    {**cell, "_sub": True} for cell in build_grid_cells(cell["_bbox"], 2)
+                    {**cell, "_sub": True}
+                    for cell in build_grid_cells(cell["_bbox"], 2)
                 ]
                 logger.info(
                     "cell %d is at Google's cap (%d rows): %d sub-tiles added",
@@ -491,8 +497,7 @@ class PlaceScraper:
                 )
                 cells.extend(sub_cells)  # one level only: sub-tiles never split again
                 print(
-                    f"  ! cell {index} is at Google's cap: "
-                    f"{len(sub_cells)} sub-tiles added, {len(cells)} cells now"
+                    f"! cell {index} is at Google's cap: {len(sub_cells)} sub-tiles added, {len(cells)} cells now"
                 )
 
         kept = finalize_rows(rows, query, bounding_box)
@@ -504,6 +509,6 @@ class PlaceScraper:
             len(rows),
             len(kept),
         )
-        print(f"  {len(rows)} unique rows, {len(kept)} after the city box and filters")
+        print(f"{len(rows)} unique rows, {len(kept)} after the city box and filters")
 
         return ScrapeResult(kept, columns, finished, skipped, blocked)
