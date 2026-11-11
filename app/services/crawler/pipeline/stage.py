@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 _ORIGIN_POLL_SECONDS = 0.2
 
 CRAWL_OPTIONS = CrawlOptions(
-    max_pages=100, max_depth=3, collect_emails=False, collect_socials=False
+    max_pages=100, max_depth=3, collect_emails=True, collect_socials=True
 )
 
 

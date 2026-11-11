@@ -150,3 +150,9 @@ def test_site_fetch_passes_the_site_timeout():
     site_fetch(fetcher)("https://a.example")
 
     assert fetcher.timeouts == [SITE_TIMEOUT]
+
+
+def test_crawl_options_collect_emails_and_socials():
+    assert CRAWL_OPTIONS.collect_emails is True
+    assert CRAWL_OPTIONS.collect_socials is True
+    assert CRAWL_OPTIONS.max_pages == 100
