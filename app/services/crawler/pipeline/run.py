@@ -7,7 +7,7 @@ from redis import Redis
 from app.helpers.http_fetcher import WebPageFetcher
 from app.helpers.http_fetcher.urls import hostname_of
 from app.repositories import GoogleMapProfileRepository, LeadRepository
-from app.services.buffer.crawl_buffer import RedisCrawlBuffer
+from app.services.buffer.crawl_buffer import RedisCrawlBuffer, _website_id_of
 from app.services.buffer.crawl_queue import CrawlQueue
 from app.services.buffer.crawl_sink import store_crawl
 from app.services.buffer.flusher import Flusher
@@ -18,6 +18,7 @@ from app.services.crawler.site.scope import origin_of, registrable_domain
 from app.services.crawler.worker import check_website
 from app.services.google_map_scraper.scrape.scrape_limits import BUFFER_TTL_SECONDS
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.utils.errors import ScraperError
 from config.tortoise import TortoiseConfig
 
 from .crawlability import check_origin
@@ -109,22 +110,44 @@ def crawl_one(
         return CrawlSummary(queued=0, rejected=0, skipped=1, checked=0)
 
     buffer = RedisCrawlBuffer(redis, BUFFER_TTL_SECONDS)
+    website_id = _website_id_of(origin)
     flusher = _flusher(redis, buffer, postgres)
     flusher.start()
+    completed = False
     try:
-        check = check_origin(origin, fetch)
-        if not check.crawlable:
-            website_id = buffer.create_website(
-                host=host,
-                registrable_domain=registrable_domain(host),
-                origin=origin,
-            )
-            buffer.fail_website(website_id, "not_crawlable", check.reason)
-            return CrawlSummary(queued=0, rejected=1, skipped=0, checked=1)
-        check_website(buffer, fetch, {"website": website, "origin": origin}, options)
-        return CrawlSummary(queued=0, rejected=0, skipped=0, checked=1)
+        summary = _check_directly(buffer, fetch, website, origin, host, options)
+        completed = True
     finally:
         flusher.shutdown(wait=_FINAL_FLUSH_SECONDS)
+        if not completed and website_id not in buffer.finished_website_ids():
+            buffer.release_website(website_id)
+    if website_id in buffer.finished_website_ids():
+        raise ScraperError(
+            f"the crawl of {website} is not saved in PostgreSQL; it stays in Redis "
+            "and the next run saves it"
+        )
+    return summary
+
+
+def _check_directly(
+    buffer: RedisCrawlBuffer,
+    fetch: FetchFn,
+    website: str,
+    origin: str,
+    host: str,
+    options: CrawlOptions,
+) -> CrawlSummary:
+    check = check_origin(origin, fetch)
+    if not check.crawlable:
+        website_id = buffer.create_website(
+            host=host,
+            registrable_domain=registrable_domain(host),
+            origin=origin,
+        )
+        buffer.fail_website(website_id, "not_crawlable", check.reason)
+        return CrawlSummary(queued=0, rejected=1, skipped=0, checked=1)
+    check_website(buffer, fetch, {"website": website, "origin": origin}, options)
+    return CrawlSummary(queued=0, rejected=0, skipped=0, checked=1)
 
 
 def _flusher(redis: Redis, buffer: RedisCrawlBuffer, postgres: TortoiseConfig) -> Flusher:

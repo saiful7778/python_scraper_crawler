@@ -62,7 +62,10 @@ def main() -> None:
             finish_incomplete=args.finish_incomplete,
         )
     except KeyboardInterrupt:
-        print("\n⚠ Crawl stopped; unfinished crawls stay in Redis for the next run.")
+        if args.finish_incomplete:
+            print("\n⚠ Crawl stopped; unfinished crawls stay in Redis for the next run.")
+        else:
+            print("\n⚠ Crawl stopped; run the command again to crawl this website.")
         raise
     except Exception as exc:
         logger.exception("the crawl failed")
