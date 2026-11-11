@@ -78,6 +78,45 @@ def test_complete_removes_job_from_processing_and_origin_set(fake_redis):
     assert queue.pending() == 0
 
 
+def test_complete_accepts_job_rebuilt_with_different_key_order(fake_redis):
+    queue = CrawlQueue(fake_redis, ttl_seconds=TTL)
+    queue.enqueue({"website": "https://a.com", "origin": "https://a.com"})
+    queue.claim()
+    queue.complete({"origin": "https://a.com", "website": "https://a.com"})
+    assert fake_redis.llen(crawl_processing_key()) == 0
+    assert fake_redis.scard(crawl_queued_key()) == 0
+
+
+def test_complete_of_job_not_in_processing_keeps_origin_blocked(fake_redis):
+    queue = CrawlQueue(fake_redis, ttl_seconds=TTL)
+    queue.enqueue(make_job("https://a.com/page", origin="https://a.com"))
+    queue.complete(make_job("https://a.com/other", origin="https://a.com"))
+    assert (
+        queue.enqueue(make_job("https://a.com/again", origin="https://a.com")) is False
+    )
+    assert queue.pending() == 1
+
+
+def test_claim_gives_origin_set_a_ttl(fake_redis):
+    queue = CrawlQueue(fake_redis, ttl_seconds=TTL)
+    queue.enqueue(make_job())
+    fake_redis.persist(crawl_queued_key())
+    queue.claim()
+    assert 0 < fake_redis.ttl(crawl_queued_key()) <= TTL
+
+
+def test_requeue_restores_two_claimed_jobs_in_original_order(fake_redis):
+    queue = CrawlQueue(fake_redis, ttl_seconds=TTL)
+    jobs = [make_job(f"https://site{i}.com") for i in range(3)]
+    for job in jobs:
+        queue.enqueue(job)
+    queue.claim()
+    queue.claim()
+
+    assert queue.requeue_processing() == 2
+    assert [queue.claim() for _ in range(3)] == jobs
+
+
 def test_requeue_returns_claimed_job_to_head(fake_redis):
     queue = CrawlQueue(fake_redis, ttl_seconds=TTL)
     first = make_job("https://a.com")

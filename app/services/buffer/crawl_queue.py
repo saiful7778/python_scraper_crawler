@@ -26,10 +26,13 @@ return 1
 """
 
 _COMPLETE = """
-redis.call('LREM', KEYS[1], 1, ARGV[2])
-redis.call('SREM', KEYS[2], ARGV[3])
+local removed = redis.call('LREM', KEYS[1], 1, ARGV[2])
+if removed > 0 then
+    redis.call('SREM', KEYS[2], ARGV[3])
+end
 redis.call('EXPIRE', KEYS[1], ARGV[1])
-return 1
+redis.call('EXPIRE', KEYS[2], ARGV[1])
+return removed
 """
 
 _REQUEUE_PROCESSING = """
@@ -44,6 +47,10 @@ return moved
 """
 
 
+def _encode(job: CrawlJob) -> str:
+    return json.dumps(job, sort_keys=True)
+
+
 class CrawlQueue:
     def __init__(self, redis: Redis, ttl_seconds: int):
         self._redis = redis
@@ -55,7 +62,7 @@ class CrawlQueue:
     def enqueue(self, job: CrawlJob) -> bool:
         added = self._enqueue(
             keys=[crawl_queued_key(), crawl_queue_key()],
-            args=[self._ttl_seconds, job["origin"], json.dumps(job)],
+            args=[self._ttl_seconds, job["origin"], _encode(job)],
         )
         return bool(added)
 
@@ -64,13 +71,14 @@ class CrawlQueue:
         pipe.lmove(crawl_queue_key(), crawl_processing_key(), "LEFT", "RIGHT")
         pipe.expire(crawl_processing_key(), self._ttl_seconds)
         pipe.expire(crawl_queue_key(), self._ttl_seconds)
+        pipe.expire(crawl_queued_key(), self._ttl_seconds)
         raw = pipe.execute()[0]
         return None if raw is None else json.loads(raw)
 
     def complete(self, job: CrawlJob) -> None:
         self._complete(
             keys=[crawl_processing_key(), crawl_queued_key()],
-            args=[self._ttl_seconds, json.dumps(job), job["origin"]],
+            args=[self._ttl_seconds, _encode(job), job["origin"]],
         )
 
     def requeue_processing(self) -> int:
