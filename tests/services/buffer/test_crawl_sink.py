@@ -14,7 +14,7 @@ from app.models import (
     LeadSocialModel,
 )
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
-from app.services.buffer.crawl_sink import LeadNotSavedError, _event_id, store_crawl
+from app.services.buffer.crawl_sink import _event_id, store_crawl
 from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
 from app.services.crawler.findings import Finding
 from tests.models.conftest import db  # noqa: F401
@@ -95,22 +95,21 @@ async def test_storing_a_crawl_twice_changes_nothing(fake_redis):
 
 
 @pytest.mark.usefixtures("db")
-async def test_a_crawl_whose_lead_is_not_saved_yet_is_refused(fake_redis):
-    with pytest.raises(LeadNotSavedError):
-        await store_crawl(finished_snapshot(fake_redis))
-    assert await CrawlWebsiteModel.all().count() == 0
+async def test_crawl_without_a_lead_is_stored_with_no_lead(fake_redis):
+    await store_crawl(finished_snapshot(fake_redis))
+    website = await CrawlWebsiteModel.get()
+    assert website.lead_id is None
+    assert await LeadEmailModel.all().count() == 0
 
 
 @pytest.mark.usefixtures("db")
-async def test_a_crawl_stored_before_its_lead_links_once_the_lead_exists(fake_redis):
+async def test_crawl_stored_before_its_lead_links_on_the_next_store(fake_redis):
     snapshot = finished_snapshot(fake_redis)
-    with pytest.raises(LeadNotSavedError):
-        await store_crawl(snapshot)
-
+    await store_crawl(snapshot)
     lead = await LeadModel.create(title="A", website="https://a.de", website_domain="a.de")
     await store_crawl(snapshot)
-
     assert (await CrawlWebsiteModel.get()).lead_id == lead.id
+    assert await LeadEmailModel.filter(lead_id=lead.id).count() == 2
 
 
 def _crawl_with_pages(fake_redis):

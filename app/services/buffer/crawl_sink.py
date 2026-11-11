@@ -1,4 +1,4 @@
-"""Stores a finished crawl in PostgreSQL and gives its lead the emails and socials found."""
+"""Stores a finished crawl in PostgreSQL and, when a lead matches, gives it the emails and socials found."""
 
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -11,18 +11,12 @@ from app.models import (
     CrawlPageModel,
     CrawlRunModel,
     CrawlWebsiteModel,
-    LeadModel,
 )
 from app.repositories.lead_repository import LeadRepository
 from app.services.buffer.crawl_types import WEBSITE_TECH_FIELDS, WebsiteSnapshot
 from app.services.buffer.flusher import upsert
 from app.services.crawler.findings import Finding
 from app.services.crawler.lead_fields import lead_columns, social_links
-from app.utils.errors import ScraperError
-
-
-class LeadNotSavedError(ScraperError):
-    """The lead of a crawled website is not in PostgreSQL yet; the flusher retries."""
 
 
 def _event_id(run_id: object, event_number: object) -> UUID:
@@ -52,14 +46,6 @@ def crawl_socials(snapshot: WebsiteSnapshot) -> list[tuple[str, str]]:
     return social_links(_findings_of(snapshot), collect_socials=True)
 
 
-async def _lead_of(snapshot: WebsiteSnapshot) -> LeadModel:
-    domain = snapshot.website["host"].removeprefix("www.")
-    lead = await LeadModel.get_or_none(website_domain=domain)
-    if lead is None:
-        raise LeadNotSavedError(f"the lead of {domain} is not in PostgreSQL yet")
-    return lead
-
-
 async def _stored_website_id(snapshot: WebsiteSnapshot) -> str:
     """The id of the origin's row in PostgreSQL, which may predate the origin-derived id."""
     existing = await CrawlWebsiteModel.get_or_none(origin=snapshot.website["origin"])
@@ -67,13 +53,13 @@ async def _stored_website_id(snapshot: WebsiteSnapshot) -> str:
 
 
 async def store_crawl(snapshot: WebsiteSnapshot) -> None:
-    """Upsert a finished website, link it to its lead and add the lead's emails and socials.
+    """Upsert a finished website and link it to its lead when one matches.
 
-    Repeating it is harmless.
-
-    :raises LeadNotSavedError: The lead is not saved yet; nothing is written.
+    A matching lead also gets the emails and socials the crawl found. Without
+    a match the website is stored with no lead. Repeating it is harmless.
     """
-    lead = await _lead_of(snapshot)
+    domain = snapshot.website["host"].removeprefix("www.")
+    lead = await LeadRepository().find_by_host(domain)
     columns = crawl_columns(snapshot)
     first_per_platform: dict[str, str] = {}
     for platform, url in crawl_socials(snapshot):
@@ -88,7 +74,7 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
         website = {
             **snapshot.website,
             "id": website_id,
-            "lead_id": lead.id,
+            "lead_id": lead.id if lead is not None else None,
             **{name: columns[name] for name in WEBSITE_TECH_FIELDS if name in columns},
         }
         runs = [{**run, "website_id": website_id} for run in snapshot.runs]
@@ -99,12 +85,13 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
         await upsert(CrawlLinkModel, snapshot.links)
         await upsert(CrawlFindingModel, findings)
         await upsert(CrawlEventModel, events)
-        await LeadRepository().add_children(
-            lead,
-            {
-                "emails": emails,
-                "categories": [],
-                "socials": first_per_platform,
-                "address": {},
-            },
-        )
+        if lead is not None:
+            await LeadRepository().add_children(
+                lead,
+                {
+                    "emails": emails,
+                    "categories": [],
+                    "socials": first_per_platform,
+                    "address": {},
+                },
+            )
