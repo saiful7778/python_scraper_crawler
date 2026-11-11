@@ -145,12 +145,10 @@ class Migration(migrations.Migration):
             name='CrawlWebsiteModel',
             fields=[
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('scrape_id', fields.UUIDField(db_index=True)),
                 ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', null=True, db_constraint=True, to_field='id', related_name='crawl_websites', on_delete=OnDelete.CASCADE)),
-                ('lead_position', fields.IntField()),
                 ('host', fields.CharField(max_length=255)),
                 ('registrable_domain', fields.CharField(db_index=True, max_length=255)),
-                ('origin', fields.CharField(max_length=2048)),
+                ('origin', fields.CharField(unique=True, max_length=2048)),
                 ('status', fields.CharField(max_length=24)),
                 ('error_code', fields.CharField(null=True, max_length=64)),
                 ('error_message', fields.TextField(null=True, unique=False)),
@@ -166,7 +164,7 @@ class Migration(migrations.Migration):
                 ('cms', fields.TextField(null=True, unique=False)),
                 ('mobile_friendly', fields.TextField(null=True, unique=False)),
             ],
-            options={'table': 'crawl_websites', 'app': 'models', 'unique_together': (('scrape_id', 'lead_position'),), 'pk_attr': 'id'},
+            options={'table': 'crawl_websites', 'app': 'models', 'pk_attr': 'id'},
             bases=['Model'],
         ),
         ops.CreateModel(
@@ -264,18 +262,6 @@ class Migration(migrations.Migration):
             bases=['Model'],
         ),
         ops.CreateModel(
-            name='CrawlRawHTMLModel',
-            fields=[
-                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('page', fields.OneToOneField('models.CrawlPageModel', source_field='page_id', db_constraint=True, to_field='id', related_name='raw_html', on_delete=OnDelete.CASCADE)),
-                ('html', fields.TextField(unique=False)),
-                ('stored_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
-                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
-            ],
-            options={'table': 'crawl_raw_html', 'app': 'models', 'pk_attr': 'id'},
-            bases=['Model'],
-        ),
-        ops.CreateModel(
             name='GoogleMapProfileToLeadModel',
             fields=[
                 ('id', fields.IntField(generated=True, primary_key=True, unique=True, db_index=True)),
@@ -344,6 +330,24 @@ class Migration(migrations.Migration):
                 ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', db_constraint=True, to_field='id', related_name='socials', on_delete=OnDelete.CASCADE)),
             ],
             options={'table': 'lead_socials', 'app': 'models', 'unique_together': (('lead', 'platform'),), 'pk_attr': 'id', 'table_description': 'Lead social model'},
+            bases=['Model'],
+        ),
+        ops.CreateModel(
+            name='ScrapeModel',
+            fields=[
+                ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
+                ('name', fields.CharField(max_length=200)),
+                ('status', fields.CharField(db_index=True, max_length=16)),
+                ('error', fields.TextField(default='', unique=False)),
+                ('created_order', fields.IntField(db_index=True)),
+                ('settings', fields.JSONField(encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads)),
+                ('keywords', fields.JSONField(encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads)),
+                ('progress', fields.JSONField(default=dict, encoder=functools.partial(dumps, separators=(',', ':')), decoder=loads)),
+                ('resumes', fields.IntField(default=0)),
+                ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
+                ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
+            ],
+            options={'table': 'scrapes', 'app': 'models', 'pk_attr': 'id'},
             bases=['Model'],
         ),
     ]
