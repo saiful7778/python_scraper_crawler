@@ -44,6 +44,15 @@ class LeadRepository(BaseRepository):
     async def find_by_domain(self, domain: str):
         return await self._model.get_or_none(website_domain=domain)
 
+    async def find_by_host(self, host: str) -> LeadModel | None:
+        lead = await self._model.get_or_none(website_domain=host)
+        if lead is not None:
+            return lead
+        for candidate in await self._model.filter(website__icontains=host):
+            if website_domain(candidate.website) == host:
+                return candidate
+        return None
+
     async def all(self, descending: bool = False) -> list[LeadModel]:
         order = "-counter" if descending else "counter"
         return await self._model.all().order_by(order).prefetch_related("emails")
