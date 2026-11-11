@@ -10,7 +10,6 @@ from app.services.buffer.client import BufferError, BufferFullError
 from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
-from app.services.buffer.website_queue import WebsiteQueue
 from app.services.google_map_scraper.scrape.scrape_database import ScrapeDatabase
 from app.services.google_map_scraper.scrape.scrape_run import ScrapeRun
 from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSettings
@@ -67,11 +66,10 @@ def fake_scrape_run(database, redis, known_keys=frozenset()) -> ScrapeRun:
     return ScrapeRun(database, scrape, True, redis, known_keys)
 
 
-def test_lead_with_website_is_buffered_and_queued(fake_redis, database):
+def test_lead_with_website_is_buffered(fake_redis, database):
     run = fake_scrape_run(database, fake_redis)
     run.accept([lead("Cafe", "https://cafe.example")])
     assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
-    assert WebsiteQueue(fake_redis, TTL_SECONDS).pending(SCRAPE_ID) == 1
 
 
 def test_duplicate_lead_is_neither_buffered_nor_queued(fake_redis, database):
@@ -80,14 +78,12 @@ def test_duplicate_lead_is_neither_buffered_nor_queued(fake_redis, database):
     accepted = run.accept([lead("Cafe", "https://cafe.example")])
     assert accepted == []
     assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
-    assert WebsiteQueue(fake_redis, TTL_SECONDS).pending(SCRAPE_ID) == 1
 
 
-def test_lead_without_website_is_buffered_but_not_queued(fake_redis, database):
+def test_lead_without_website_is_buffered(fake_redis, database):
     run = fake_scrape_run(database, fake_redis)
     run.accept([lead("Cafe", "")])
     assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
-    assert WebsiteQueue(fake_redis, TTL_SECONDS).pending(SCRAPE_ID) == 0
 
 
 def test_known_key_lead_is_skipped(fake_redis, database):

@@ -43,7 +43,7 @@ def run_crawl_stage(
     A stop (Ctrl-C) leaves unfinished crawls in Redis for the next run.
     """
     websites = list(dict.fromkeys(row["website"] for row in rows if row.get("website")))
-    queue = CrawlQueue(redis, BUFFER_TTL_SECONDS)
+    queue = CrawlQueue(redis)
     buffer = RedisCrawlBuffer(redis, BUFFER_TTL_SECONDS)
     fetch = site_fetch(WebPageFetcher())
 

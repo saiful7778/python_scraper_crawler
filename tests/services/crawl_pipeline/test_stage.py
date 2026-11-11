@@ -48,7 +48,7 @@ def fake_redis():
 
 @pytest.fixture
 def queue(fake_redis):
-    return CrawlQueue(fake_redis, ttl_seconds=TTL)
+    return CrawlQueue(fake_redis)
 
 
 @pytest.fixture

@@ -15,7 +15,8 @@ def is_crawlable(http_status: int | None, content_type: str | None) -> bool:
         return False
     if content_type is None:
         return False
-    return content_type.strip().lower().startswith("text/html")
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type == "text/html"
 
 
 def check_origin(origin: str, fetch: FetchFn) -> CrawlCheck:

@@ -10,8 +10,6 @@ from app.services.browser import BrowserError, BrowserSession, CDPError
 from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
-from app.services.buffer.website_queue import WebsiteJob, WebsiteQueue
-from app.services.crawler.site.scope import origin_of
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
@@ -37,14 +35,6 @@ class RunOutcome:
 
     status: str
     note: str
-
-
-def origin_key(website: str) -> str:
-    """The origin that identifies a website in the queue; the text itself when it has none."""
-    try:
-        return origin_of(website)
-    except ValueError:
-        return website
 
 
 def _latest_copies(rows: list[LeadRow]) -> list[LeadRow]:
@@ -85,7 +75,6 @@ class ScrapeRun:
         self._database = database
         self._rows = RowBuffer(redis, BUFFER_TTL_SECONDS)
         self._known = KnownKeys(redis, BUFFER_TTL_SECONDS)
-        self._websites = WebsiteQueue(redis, BUFFER_TTL_SECONDS)
         self._scrape_state = ScrapeState(redis, BUFFER_TTL_SECONDS)
         self._known_keys = known_keys
         self.outcome: RunOutcome | None = None
@@ -136,7 +125,6 @@ class ScrapeRun:
         rows = _latest_copies(self._rows.read_all(self.scrape_id))
         if resumed:
             self._position_base = max(saved.get("leads", 0) - len(rows), 0)
-            self._queue_buffered_websites(rows)
         last_error = saved.get("last_error", "")
         self._state = RunState(
             rows=rows,
@@ -207,7 +195,7 @@ class ScrapeRun:
         return self._state.rows
 
     def accept(self, rows: list[LeadRow]) -> list[LeadRow]:
-        """Buffer the leads not seen before, queue their websites, and return them.
+        """Buffer the leads not seen before and return them.
 
         A lead is seen before when its key is already known for this scrape, so
         leads are checked against the known keys in Redis, not against the rows.
@@ -227,32 +215,9 @@ class ScrapeRun:
             raise
         if not accepted:
             return accepted
-        start = self._position_base + len(self._state.rows)
         self._state.rows.extend(accepted)
-        for position, row in enumerate(accepted, start):
-            if row["website"]:
-                self._queue_website(position, row)
         self._scrape_state.refresh_ttl(self.scrape_id)
         return accepted
-
-    def _queue_buffered_websites(self, rows: list[LeadRow]) -> None:
-        """Queue the websites of buffered leads again; a website already queued is skipped."""
-        for position, row in enumerate(rows, self._position_base):
-            if row["website"]:
-                self._queue_website(position, row)
-
-    def _queue_website(self, position: int, row: LeadRow) -> None:
-        website = row["website"]
-        self._websites.enqueue(
-            self.scrape_id,
-            WebsiteJob(
-                scrape_id=self.scrape_id,
-                position=position,
-                row_id=row["link"],
-                website=website,
-                origin=origin_key(website),
-            ),
-        )
 
     def _search(self, first_keyword: int) -> None:
         assert self._progress is not None

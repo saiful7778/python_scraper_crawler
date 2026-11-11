@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 
 from app.models import (
@@ -177,3 +179,29 @@ def test_event_ids_are_stable_per_run_and_differ_across_runs():
     assert _event_id("run-a", 1) == _event_id("run-a", 1)
     assert _event_id("run-a", 1) != _event_id("run-b", 1)
     assert _event_id("run-a", 1) != _event_id("run-a", 2)
+
+
+@pytest.mark.usefixtures("db")
+async def test_a_pre_migration_website_row_is_reused_for_its_origin(fake_redis):
+    lead = await LeadModel.create(title="A", website="https://a.de", website_domain="a.de")
+    old_id = uuid4()
+    await CrawlWebsiteModel.create(
+        id=old_id,
+        lead=lead,
+        host="www.a.de",
+        registrable_domain="a.de",
+        origin="https://www.a.de",
+        status="done",
+    )
+    snapshot = finished_snapshot(fake_redis)
+    assert snapshot.website["id"] != str(old_id)
+
+    await store_crawl(snapshot)
+
+    website = await CrawlWebsiteModel.get(origin="https://www.a.de")
+    assert await CrawlWebsiteModel.all().count() == 1
+    assert str(website.id) == str(old_id)
+    assert website.status == snapshot.website["status"]
+    assert await CrawlRunModel.filter(website_id=old_id).count() == 1
+    assert await CrawlFindingModel.filter(website_id=old_id).count() == 6
+    assert await CrawlRunModel.filter(website_id=snapshot.website["id"]).count() == 0

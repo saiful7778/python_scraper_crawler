@@ -60,6 +60,12 @@ async def _lead_of(snapshot: WebsiteSnapshot) -> LeadModel:
     return lead
 
 
+async def _stored_website_id(snapshot: WebsiteSnapshot) -> str:
+    """The id of the origin's row in PostgreSQL, which may predate the origin-derived id."""
+    existing = await CrawlWebsiteModel.get_or_none(origin=snapshot.website["origin"])
+    return str(existing.id) if existing else snapshot.website["id"]
+
+
 async def store_crawl(snapshot: WebsiteSnapshot) -> None:
     """Upsert a finished website, link it to its lead and add the lead's emails and socials.
 
@@ -72,22 +78,26 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
     first_per_platform: dict[str, str] = {}
     for platform, url in crawl_socials(snapshot):
         first_per_platform.setdefault(platform, url)
-    website = {
-        **snapshot.website,
-        "lead_id": lead.id,
-        **{name: columns[name] for name in WEBSITE_TECH_FIELDS if name in columns},
-    }
     events = [
         {**event, "id": _event_id(event["run_id"], event["id"])}
         for event in snapshot.events
     ]
     emails = [email for email in columns.get("emails", "").split(", ") if email]
     async with in_transaction():
+        website_id = await _stored_website_id(snapshot)
+        website = {
+            **snapshot.website,
+            "id": website_id,
+            "lead_id": lead.id,
+            **{name: columns[name] for name in WEBSITE_TECH_FIELDS if name in columns},
+        }
+        runs = [{**run, "website_id": website_id} for run in snapshot.runs]
+        findings = [{**row, "website_id": website_id} for row in snapshot.findings]
         await upsert(CrawlWebsiteModel, [website])
-        await upsert(CrawlRunModel, snapshot.runs)
+        await upsert(CrawlRunModel, runs)
         await upsert(CrawlPageModel, snapshot.pages)
         await upsert(CrawlLinkModel, snapshot.links)
-        await upsert(CrawlFindingModel, snapshot.findings)
+        await upsert(CrawlFindingModel, findings)
         await upsert(CrawlEventModel, events)
         await LeadRepository().add_children(
             lead,

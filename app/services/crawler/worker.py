@@ -12,18 +12,6 @@ from .site.scope import origin_of, registrable_domain
 logger = get_logger(__name__)
 
 
-def skip_website(buffer: RedisCrawlBuffer, job: CrawlJob) -> None:
-    """Record a queued website that was never checked as skipped."""
-    origin = origin_of(job["website"])
-    host = hostname_of(origin)
-    website_id = buffer.create_website(
-        host=host,
-        registrable_domain=registrable_domain(host),
-        origin=origin,
-    )
-    buffer.skip_website(website_id)
-
-
 def check_website(
     buffer: RedisCrawlBuffer,
     fetch: FetchFn,

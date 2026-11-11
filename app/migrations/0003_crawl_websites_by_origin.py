@@ -6,11 +6,13 @@ from tortoise import fields
 async def delete_duplicate_origins(apps, state_editor):
     """Keep the oldest crawl website per origin and delete the rest.
 
-    Duplicates are ordered by created_at, then id. Their runs, pages, findings
-    and events are removed by the database cascade. Leads are not touched, and
-    they still link to their domain's remaining crawl website.
+    The kept row is the oldest per origin, by created_at, then id. Deleted
+    duplicates and their lead links are removed: each crawl row has one lead
+    (crawl_websites.lead_id), so a lead attached only to a deleted duplicate
+    loses its crawl row link. Their runs, pages, findings and events are
+    removed by the database cascade.
 
-    This delete is irreversible: rolling back past this migration raises
+    This operation is irreversible: rolling back past this migration raises
     NotImplementedError, because the deleted rows are not restored.
     """
     CrawlWebsiteModel = apps.get_model("models", "CrawlWebsiteModel")

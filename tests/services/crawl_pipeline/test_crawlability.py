@@ -29,6 +29,8 @@ def make_result(
         (200, "text/html", True),
         (200, "text/html; charset=utf-8", True),
         (200, "TEXT/HTML; charset=utf-8", True),
+        (200, "text/htmlfoo", False),
+        (200, "text/html-fragment", False),
         (404, "text/html", False),
         (200, "application/pdf", False),
         (200, None, False),
