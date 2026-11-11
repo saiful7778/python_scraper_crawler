@@ -2,7 +2,7 @@
 
 from app.helpers.http_fetcher.urls import hostname_of
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
-from app.services.buffer.website_queue import WebsiteJob
+from app.services.buffer.crawl_queue import CrawlJob
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
@@ -12,14 +12,11 @@ from .site.scope import origin_of, registrable_domain
 logger = get_logger(__name__)
 
 
-def skip_website(buffer: RedisCrawlBuffer, job: WebsiteJob) -> None:
-    """Record a queued website that the scrape ended before checking as skipped."""
+def skip_website(buffer: RedisCrawlBuffer, job: CrawlJob) -> None:
+    """Record a queued website that was never checked as skipped."""
     origin = origin_of(job["website"])
     host = hostname_of(origin)
     website_id = buffer.create_website(
-        scrape_id=job["scrape_id"],
-        lead_position=job["position"],
-        scrape_lead_id=job["position"],
         host=host,
         registrable_domain=registrable_domain(host),
         origin=origin,
@@ -30,7 +27,7 @@ def skip_website(buffer: RedisCrawlBuffer, job: WebsiteJob) -> None:
 def check_website(
     buffer: RedisCrawlBuffer,
     fetch: FetchFn,
-    job: WebsiteJob,
+    job: CrawlJob,
     options: CrawlOptions,
 ) -> None:
     """Crawl one website into the buffer; a failure is recorded on its website."""
@@ -40,9 +37,6 @@ def check_website(
         origin = origin_of(job["website"])
         host = hostname_of(origin)
         website_id = buffer.create_website(
-            scrape_id=job["scrape_id"],
-            lead_position=job["position"],
-            scrape_lead_id=job["position"],
             host=host,
             registrable_domain=registrable_domain(host),
             origin=origin,
@@ -51,8 +45,6 @@ def check_website(
             buffer=buffer,
             fetch=fetch,
             website_id=website_id,
-            scrape_id=job["scrape_id"],
-            lead_position=job["position"],
             website=job["website"],
             options=options,
         )

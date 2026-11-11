@@ -86,16 +86,12 @@ class WebsiteCrawl:
         buffer: RedisCrawlBuffer,
         fetch: FetchFn,
         website_id: str,
-        scrape_id: str,
-        lead_position: int,
         website: str,
         options: CrawlOptions,
     ):
         self._buffer = buffer
         self._fetch = fetch
         self._website_id = website_id
-        self._scrape_id = scrape_id
-        self._lead_position = lead_position
         self._website = website
         self._options = options
         self._run_id: str | None = None
@@ -135,7 +131,7 @@ class WebsiteCrawl:
             self._run_id = self._buffer.create_run(
                 website_id=self._website_id,
                 requested_url=self._website,
-                config={"scrape_id": self._scrape_id, **asdict(self._options)},
+                config=asdict(self._options),
             )
         except Exception as exc:
             logger.error(

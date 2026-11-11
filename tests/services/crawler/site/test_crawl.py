@@ -32,9 +32,6 @@ def buffer(fake_redis):
 @pytest.fixture
 def website_id(buffer):
     return buffer.create_website(
-        scrape_id="scrape-1",
-        lead_position=0,
-        scrape_lead_id=0,
         host="bakery.de",
         registrable_domain="bakery.de",
         origin=ORIGIN,
@@ -42,8 +39,6 @@ def website_id(buffer):
 
 
 class Site:
-    scrape_id = "scrape-1"
-
     def __init__(self):
         self.results = {}
         self.fetched_urls = []
@@ -90,8 +85,6 @@ def make_crawl(buffer, website_id, site, options=OPTS):
         buffer=buffer,
         fetch=site.fetch,
         website_id=website_id,
-        scrape_id=site.scrape_id,
-        lead_position=0,
         website="https://bakery.de",
         options=options,
     )

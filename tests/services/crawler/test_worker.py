@@ -2,7 +2,7 @@ import fakeredis
 import pytest
 
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
-from app.services.buffer.website_queue import WebsiteJob
+from app.services.buffer.crawl_queue import CrawlJob
 from app.services.crawler.worker import skip_website
 
 TTL = 3600
@@ -15,10 +15,7 @@ def fake_redis():
 
 def test_skip_website_records_the_queued_website_as_skipped(fake_redis):
     buffer = RedisCrawlBuffer(fake_redis, TTL)
-    job: WebsiteJob = {
-        "scrape_id": "s1",
-        "position": 3,
-        "row_id": "4",
+    job: CrawlJob = {
         "website": "https://bakery.example/about",
         "origin": "https://bakery.example",
     }
@@ -28,4 +25,4 @@ def test_skip_website_records_the_queued_website_as_skipped(fake_redis):
     snapshot = buffer.read_website(website_id)
     assert snapshot.website["status"] == "skipped"
     assert snapshot.website["origin"] == "https://bakery.example"
-    assert snapshot.website["lead_position"] == 3
+    assert snapshot.website["host"] == "bakery.example"

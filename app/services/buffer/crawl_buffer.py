@@ -49,6 +49,10 @@ def _restore(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _website_id_of(origin: str) -> str:
+    return str(uuid5(NAMESPACE_URL, origin))
+
+
 def _find(rows: list[dict[str, Any]], row_id: str, what: str) -> dict[str, Any]:
     for row in rows:
         if row["id"] == row_id:
@@ -76,7 +80,7 @@ class RedisCrawlBuffer:
         origin: str,
     ) -> str:
         """Add a running website for an origin and return its id; a repeat resets it."""
-        website_id = str(uuid5(NAMESPACE_URL, origin))
+        website_id = _website_id_of(origin)
         document: Document = {
             "website": {
                 "id": website_id,
@@ -103,6 +107,10 @@ class RedisCrawlBuffer:
             unfinish=True,
         )
         return website_id
+
+    def has_website(self, origin: str) -> bool:
+        """Whether a website of this origin is in the buffer, finished or not."""
+        return bool(self._redis.exists(crawl_key(_website_id_of(origin))))
 
     def create_run(self, *, website_id: str, requested_url: str, config: dict) -> str:
         """Add a running crawl of a website and return its id."""
