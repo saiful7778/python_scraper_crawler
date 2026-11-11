@@ -55,16 +55,16 @@ async def _no_rows(row, scrape_id):
     raise AssertionError("no rows were buffered")
 
 
-def finish_website(crawl, scrape_id="s1", position=0):
+def finish_website(crawl, position=0):
+    host = f"site{position}.de"
     website_id = crawl.create_website(
-        scrape_id=scrape_id,
-        lead_position=position,
-        scrape_lead_id=position,
-        host="a.de",
-        registrable_domain="a.de",
-        origin="https://a.de",
+        host=host,
+        registrable_domain=host,
+        origin=f"https://{host}",
     )
-    run_id = crawl.create_run(website_id=website_id, requested_url="https://a.de", config={})
+    run_id = crawl.create_run(
+        website_id=website_id, requested_url=f"https://{host}", config={}
+    )
     crawl.add_findings(
         website_id=website_id,
         run_id=run_id,
@@ -89,7 +89,7 @@ def test_finished_websites_are_stored_then_released(
     assert [s.website["id"] for s in sink.snapshots] == [website_id]
     assert [f["value"] for f in sink.snapshots[0].findings] == ["hi@a.de"]
     assert crawl.finished_website_ids() == []
-    assert fake_redis.get(crawl_key("s1", website_id)) is None
+    assert fake_redis.get(crawl_key(website_id)) is None
 
 
 def test_a_failed_store_keeps_the_website_for_the_next_tick(
@@ -115,7 +115,7 @@ def test_an_expired_document_is_skipped_and_the_rest_are_stored(
     state.create("s1", {})
     expired = finish_website(crawl, position=0)
     kept = finish_website(crawl, position=1)
-    fake_redis.delete(crawl_key("s1", expired))
+    fake_redis.delete(crawl_key(expired))
     sink = Sink()
 
     make_flusher(sink).flush_once()

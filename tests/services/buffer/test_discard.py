@@ -11,7 +11,7 @@ from app.services.buffer.website_queue import WebsiteJob, WebsiteQueue
 TTL = 3600
 
 
-def seed(redis, scrape_id):
+def seed(redis, scrape_id, host="a.de"):
     ScrapeState(redis, TTL).create(scrape_id, {"email": True})
     ScrapeState(redis, TTL).save_progress(scrape_id, {"done": 1})
     RowBuffer(redis, TTL).append(scrape_id, [{"title": "A"}])
@@ -29,12 +29,9 @@ def seed(redis, scrape_id):
     queue.enqueue(scrape_id, {**job, "origin": "https://b.de"})
     crawl = RedisCrawlBuffer(redis, TTL)
     website_id = crawl.create_website(
-        scrape_id=scrape_id,
-        lead_position=0,
-        scrape_lead_id=0,
-        host="a.de",
-        registrable_domain="a.de",
-        origin="https://a.de",
+        host=host,
+        registrable_domain=host,
+        origin=f"https://{host}",
     )
     run_id = crawl.create_run(website_id=website_id, requested_url="https://a.de", config={})
     crawl.finish_run(run_id, status="done", progress={}, error_code=None, error_message=None)
@@ -48,28 +45,48 @@ def test_discard_leaves_no_keys_for_the_scrape(fake_redis):
 
     assert fake_redis.keys("scrape:s1:*") == []
     assert fake_redis.sismember(active_key(), "s1") == 0
-    assert fake_redis.hlen(crawl_owners_key()) == 0
 
 
-def test_discard_keeps_the_data_of_other_scrapes(fake_redis):
-    seed(fake_redis, "s1")
-    website_id, run_id = seed(fake_redis, "s2")
+def test_discard_keeps_the_crawl_data_of_the_scrape(fake_redis):
+    website_id, run_id = seed(fake_redis, "s1")
 
     discard_scrape(fake_redis, "s1")
 
-    assert fake_redis.keys("scrape:s1:*") == []
-    assert len(fake_redis.keys("scrape:s2:*")) == 8
+    buffer = RedisCrawlBuffer(fake_redis, TTL)
+    assert buffer.finished_website_ids() == [website_id]
+    assert buffer.read_website(website_id).runs[0]["id"] == run_id
     assert set(fake_redis.hkeys(crawl_owners_key())) == {website_id, run_id}
-    assert RedisCrawlBuffer(fake_redis, TTL).finished_website_ids() == [website_id]
+
+
+def test_discard_keeps_the_data_of_other_scrapes(fake_redis):
+    first, first_run = seed(fake_redis, "s1", host="a.de")
+    second, second_run = seed(fake_redis, "s2", host="b.de")
+
+    discard_scrape(fake_redis, "s1")
+
+    assert len(fake_redis.keys("scrape:s2:*")) == 6
+    assert set(fake_redis.hkeys(crawl_owners_key())) == {
+        first,
+        first_run,
+        second,
+        second_run,
+    }
+    assert sorted(RedisCrawlBuffer(fake_redis, TTL).finished_website_ids()) == sorted(
+        [first, second]
+    )
 
 
 def test_discarding_an_unknown_scrape_is_harmless(fake_redis):
     discard_scrape(fake_redis, "never-existed")
 
 
+def test_crawl_buffer_has_no_discard():
+    assert not hasattr(RedisCrawlBuffer, "discard")
+
+
 @pytest.mark.parametrize(
     "buffer_class",
-    [ScrapeState, KnownKeys, RowBuffer, WebsiteQueue, RedisCrawlBuffer],
+    [ScrapeState, KnownKeys, RowBuffer, WebsiteQueue],
 )
 def test_discard_scrape_calls_every_buffer_discard(
     fake_redis, monkeypatch, buffer_class

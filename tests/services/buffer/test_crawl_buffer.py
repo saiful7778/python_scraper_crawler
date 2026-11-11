@@ -5,12 +5,7 @@ import pytest
 from app.services.buffer.client import BufferFullError
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
-from app.services.buffer.keys import (
-    active_key,
-    crawl_finished_key,
-    crawl_key,
-    crawl_owners_key,
-)
+from app.services.buffer.keys import crawl_finished_key, crawl_key, crawl_owners_key
 from app.services.crawler.findings import Finding
 
 HOME = "https://a.de/"
@@ -26,9 +21,6 @@ def buffer(fake_redis):
 @pytest.fixture
 def website_id(buffer):
     return buffer.create_website(
-        scrape_id="s1",
-        lead_position=0,
-        scrape_lead_id=1,
         host="a.de",
         registrable_domain="a.de",
         origin="https://a.de",
@@ -51,9 +43,6 @@ def _finish(buffer, run_id, status="done"):
 def test_finished_website_is_readable_then_released(fake_redis):
     buffer = RedisCrawlBuffer(fake_redis, 3600)
     website_id = buffer.create_website(
-        scrape_id="s1",
-        lead_position=0,
-        scrape_lead_id=1,
         host="a.com",
         registrable_domain="a.com",
         origin="https://a.com",
@@ -68,23 +57,46 @@ def test_finished_website_is_readable_then_released(fake_redis):
 def test_create_website_stores_a_running_snapshot(buffer, website_id, fake_redis):
     website = buffer.read_website(website_id).website
     assert website["id"] == website_id
-    assert website["scrape_id"] == "s1"
-    assert website["lead_position"] == 0
     assert website["host"] == "a.de"
     assert website["status"] == "running"
     assert website["error_code"] is None
     assert website["finished_at"] is None
     assert isinstance(website["created_at"], datetime)
+    assert "scrape_id" not in website
+    assert "lead_position" not in website
     assert "scrape_lead_id" not in website
-    assert fake_redis.sismember(active_key(), "s1")
 
 
-def test_create_website_again_for_the_same_lead_resets_it(buffer, website_id):
+def test_create_website_takes_no_scrape_or_lead_arguments(buffer):
+    with pytest.raises(TypeError):
+        buffer.create_website(
+            scrape_id="s1",
+            lead_position=0,
+            scrape_lead_id=1,
+            host="a.de",
+            registrable_domain="a.de",
+            origin="https://a.de",
+        )
+
+
+def test_create_website_id_is_derived_from_the_origin(buffer, website_id):
+    again = buffer.create_website(
+        host="a.de",
+        registrable_domain="a.de",
+        origin="https://a.de",
+    )
+    other = buffer.create_website(
+        host="b.de",
+        registrable_domain="b.de",
+        origin="https://b.de",
+    )
+    assert again == website_id
+    assert other != website_id
+
+
+def test_create_website_again_for_the_same_origin_resets_it(buffer, website_id):
     buffer.fail_website(website_id, "dns", "no such host")
     again = buffer.create_website(
-        scrape_id="s1",
-        lead_position=0,
-        scrape_lead_id=1,
         host="a.de",
         registrable_domain="a.de",
         origin="https://a.de",
@@ -216,11 +228,8 @@ def test_add_findings_and_events_are_in_the_snapshot(buffer, website_id, run_id)
     assert (second["page_id"], second["data"]) == (page, {"k": 1})
 
 
-def test_only_finished_websites_are_listed_across_scrapes(buffer, website_id):
+def test_finished_websites_are_listed_across_former_scrapes(buffer, website_id):
     other = buffer.create_website(
-        scrape_id="s2",
-        lead_position=0,
-        scrape_lead_id=2,
         host="b.de",
         registrable_domain="b.de",
         origin="https://b.de",
@@ -238,8 +247,8 @@ def test_release_website_deletes_the_document_and_its_index(
     page = buffer.add_pages(run_id, [PageSeed(HOME, HOME, 0, "start")])[HOME]
     _finish(buffer, run_id)
     buffer.release_website(website_id)
-    assert fake_redis.exists(crawl_key("s1", website_id)) == 0
-    assert fake_redis.smembers(crawl_finished_key("s1")) == set()
+    assert fake_redis.exists(crawl_key(website_id)) == 0
+    assert fake_redis.smembers(crawl_finished_key()) == set()
     assert fake_redis.hlen(crawl_owners_key()) == 0
     with pytest.raises(LookupError):
         buffer.read_website(website_id)
@@ -249,9 +258,6 @@ def test_release_website_deletes_the_document_and_its_index(
 
 def test_mark_interrupted_fails_running_websites_and_runs(buffer, website_id, run_id):
     done = buffer.create_website(
-        scrape_id="s1",
-        lead_position=1,
-        scrape_lead_id=2,
         host="b.de",
         registrable_domain="b.de",
         origin="https://b.de",
@@ -270,14 +276,10 @@ def test_mark_interrupted_fails_running_websites_and_runs(buffer, website_id, ru
     assert buffer.read_website(done).website["status"] == "done"
 
 
-def test_create_website_expires_the_active_set(buffer, website_id, fake_redis):
-    assert 0 < fake_redis.ttl(active_key()) <= TTL
-
-
 def test_writes_refresh_the_ttl_of_every_key_they_touch(buffer, website_id, fake_redis):
     keys = [
-        crawl_key("s1", website_id),
-        crawl_finished_key("s1"),
+        crawl_key(website_id),
+        crawl_finished_key(),
         crawl_owners_key(),
     ]
     run_id = buffer.create_run(
@@ -297,9 +299,6 @@ def test_full_redis_raises_buffer_full_error(fake_redis_full):
     buffer = RedisCrawlBuffer(fake_redis_full, TTL)
     with pytest.raises(BufferFullError):
         buffer.create_website(
-            scrape_id="s1",
-            lead_position=0,
-            scrape_lead_id=1,
             host="a.de",
             registrable_domain="a.de",
             origin="https://a.de",

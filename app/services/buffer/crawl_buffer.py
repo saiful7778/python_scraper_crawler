@@ -16,12 +16,7 @@ from app.services.buffer.crawl_types import (
     PageSeed,
     WebsiteSnapshot,
 )
-from app.services.buffer.keys import (
-    active_key,
-    crawl_finished_key,
-    crawl_key,
-    crawl_owners_key,
-)
+from app.services.buffer.keys import crawl_finished_key, crawl_key, crawl_owners_key
 from app.services.crawler.findings import Finding
 from app.utils.logger import get_logger
 
@@ -66,7 +61,7 @@ class RedisCrawlBuffer:
 
     A document is only written by the crawl of its own website, so reading and
     rewriting it needs no lock. Run and page ids are looked up in one hash that
-    points to the scrape and website that hold them.
+    points to the website that holds them.
     """
 
     def __init__(self, redis: Redis, ttl_seconds: int):
@@ -76,21 +71,15 @@ class RedisCrawlBuffer:
     def create_website(
         self,
         *,
-        scrape_id: str,
-        lead_position: int,
-        scrape_lead_id: int,
         host: str,
         registrable_domain: str,
         origin: str,
     ) -> str:
-        """Add a running website for a lead and return its id; a repeat resets it."""
-        website_id = str(uuid5(NAMESPACE_URL, f"{scrape_id}:{lead_position}"))
+        """Add a running website for an origin and return its id; a repeat resets it."""
+        website_id = str(uuid5(NAMESPACE_URL, origin))
         document: Document = {
-            "scrape_lead_id": scrape_lead_id,
             "website": {
                 "id": website_id,
-                "scrape_id": scrape_id,
-                "lead_position": lead_position,
                 "host": host,
                 "registrable_domain": registrable_domain,
                 "origin": origin,
@@ -108,18 +97,16 @@ class RedisCrawlBuffer:
             "events": [],
         }
         self._save(
-            scrape_id,
             website_id,
             document,
             owners=[website_id],
             unfinish=True,
-            activate=True,
         )
         return website_id
 
     def create_run(self, *, website_id: str, requested_url: str, config: dict) -> str:
         """Add a running crawl of a website and return its id."""
-        scrape_id, document = self._open(website_id)
+        document = self._read(website_id)
         run_id = _new_id()
         now = _now()
         document["runs"].append(
@@ -137,12 +124,12 @@ class RedisCrawlBuffer:
                 "created_at": now,
             }
         )
-        self._save(scrape_id, website_id, document, owners=[run_id])
+        self._save(website_id, document, owners=[run_id])
         return run_id
 
     def add_pages(self, run_id: str, pages: list[PageSeed]) -> dict[str, str]:
         """Queue pages; return normalized URL to page id, reusing existing pages."""
-        scrape_id, website_id, document = self._open_for(run_id)
+        website_id, document = self._open_for(run_id)
         existing = {
             page["normalized_url"]: page
             for page in document["pages"]
@@ -162,14 +149,14 @@ class RedisCrawlBuffer:
                 document["pages"].append(page)
                 existing[seed.normalized_url] = page
                 created.append(page["id"])
-        self._save(scrape_id, website_id, document, owners=created)
+        self._save(website_id, document, owners=created)
         return {
             seed.normalized_url: existing[seed.normalized_url]["id"] for seed in pages
         }
 
     def save_page(self, page_id: str, result: PageResult) -> None:
         """Store the outcome of fetching a page."""
-        scrape_id, website_id, document = self._open_for(page_id)
+        website_id, document = self._open_for(page_id)
         page = _find(document["pages"], page_id, "page")
         page.update(
             status=result.status,
@@ -185,11 +172,11 @@ class RedisCrawlBuffer:
             error_message=result.error_message,
             fetched_at=_now() if result.status == "fetched" else None,
         )
-        self._save(scrape_id, website_id, document)
+        self._save(website_id, document)
 
     def add_links(self, source_page_id: str, links: list[LinkSeed]) -> None:
         """Record links found on a page; unknown targets become skipped pages."""
-        scrape_id, website_id, document = self._open_for(source_page_id)
+        website_id, document = self._open_for(source_page_id)
         source = _find(document["pages"], source_page_id, "page")
         targets = {
             page["normalized_url"]: page
@@ -231,7 +218,7 @@ class RedisCrawlBuffer:
                     "created_at": _now(),
                 }
             )
-        self._save(scrape_id, website_id, document, owners=created)
+        self._save(website_id, document, owners=created)
 
     def add_findings(
         self,
@@ -242,7 +229,7 @@ class RedisCrawlBuffer:
         findings: list[Finding],
     ) -> None:
         """Store extracted values for a page, or for the whole site when ``page_id`` is None."""
-        scrape_id, document = self._open(website_id)
+        document = self._read(website_id)
         document["findings"].extend(
             {
                 "id": _new_id(),
@@ -257,7 +244,7 @@ class RedisCrawlBuffer:
             }
             for finding in findings
         )
-        self._save(scrape_id, website_id, document)
+        self._save(website_id, document)
 
     def add_event(
         self,
@@ -270,7 +257,7 @@ class RedisCrawlBuffer:
         data: dict | None = None,
     ) -> None:
         """Log a step of the crawl."""
-        scrape_id, website_id, document = self._open_for(run_id)
+        website_id, document = self._open_for(run_id)
         document["events"].append(
             {
                 "id": len(document["events"]) + 1,
@@ -283,7 +270,7 @@ class RedisCrawlBuffer:
                 "created_at": _now(),
             }
         )
-        self._save(scrape_id, website_id, document)
+        self._save(website_id, document)
 
     def finish_run(
         self,
@@ -295,7 +282,7 @@ class RedisCrawlBuffer:
         error_message: str | None,
     ) -> None:
         """End a run and give its website the same status."""
-        scrape_id, website_id, document = self._open_for(run_id)
+        website_id, document = self._open_for(run_id)
         finished = _now()
         run = _find(document["runs"], run_id, "run")
         run.update(
@@ -312,7 +299,6 @@ class RedisCrawlBuffer:
             finished_at=finished,
         )
         self._save(
-            scrape_id,
             website_id,
             document,
             finished=status in FINISHED_STATUSES,
@@ -322,49 +308,48 @@ class RedisCrawlBuffer:
         self, website_id: str, error_code: str, error_message: str
     ) -> None:
         """Mark a website failed when no run of it could record the outcome."""
-        scrape_id, document = self._open(website_id)
+        document = self._read(website_id)
         document["website"].update(
             status="failed",
             error_code=error_code,
             error_message=error_message,
             finished_at=_now(),
         )
-        self._save(scrape_id, website_id, document, finished=True)
+        self._save(website_id, document, finished=True)
 
     def skip_website(self, website_id: str) -> None:
         """Mark a website that was never checked as skipped."""
-        scrape_id, document = self._open(website_id)
+        document = self._read(website_id)
         document["website"].update(status=_SKIPPED, finished_at=_now())
-        self._save(scrape_id, website_id, document, finished=True)
+        self._save(website_id, document, finished=True)
 
     def mark_interrupted(self) -> None:
         """Fail every website and run left running by an earlier process."""
         websites = runs = 0
-        for scrape_id in self._redis.smembers(active_key()):
-            for key in self._redis.scan_iter(match=crawl_key(scrape_id, "*")):
-                raw = self._redis.get(key)
-                if raw is None:
-                    continue
-                document: Document = json.loads(raw)
-                website = document["website"]
-                finished = _now()
-                for run in document["runs"]:
-                    if run["status"] in (_RUNNING, _QUEUED):
-                        run.update(
-                            status="failed",
-                            error_code=_INTERRUPTED,
-                            finished_at=finished,
-                        )
-                        runs += 1
-                interrupted = website["status"] == _RUNNING
-                if interrupted:
-                    website.update(
+        for key in self._redis.scan_iter(match=crawl_key("*")):
+            raw = self._redis.get(key)
+            if raw is None:
+                continue
+            document: Document = json.loads(raw)
+            website = document["website"]
+            finished = _now()
+            for run in document["runs"]:
+                if run["status"] in (_RUNNING, _QUEUED):
+                    run.update(
                         status="failed",
                         error_code=_INTERRUPTED,
                         finished_at=finished,
                     )
-                    websites += 1
-                self._save(scrape_id, website["id"], document, finished=interrupted)
+                    runs += 1
+            interrupted = website["status"] == _RUNNING
+            if interrupted:
+                website.update(
+                    status="failed",
+                    error_code=_INTERRUPTED,
+                    finished_at=finished,
+                )
+                websites += 1
+            self._save(website["id"], document, finished=interrupted)
         if websites or runs:
             logger.warning(
                 "marked %s website(s) and %s run(s) left unfinished by an earlier process as interrupted",
@@ -374,14 +359,11 @@ class RedisCrawlBuffer:
 
     def finished_website_ids(self) -> list[str]:
         """Websites whose crawl has ended and that wait for the Postgres copy."""
-        ids: set[str] = set()
-        for scrape_id in self._redis.smembers(active_key()):
-            ids.update(self._redis.smembers(crawl_finished_key(scrape_id)))
-        return sorted(ids)
+        return sorted(self._redis.smembers(crawl_finished_key()))
 
-    def finished_count(self, scrape_id: str) -> int:
-        """How many websites of a scrape wait for the Postgres copy."""
-        return self._redis.scard(crawl_finished_key(scrape_id))
+    def finished_count(self) -> int:
+        """How many websites wait for the Postgres copy."""
+        return self._redis.scard(crawl_finished_key())
 
     def read_website(self, website_id: str) -> WebsiteSnapshot:
         """Read every buffered row of a website.
@@ -389,7 +371,7 @@ class RedisCrawlBuffer:
         Raises:
             LookupError: the website is not in the buffer.
         """
-        _, document = self._open(website_id)
+        document = self._read(website_id)
         return WebsiteSnapshot(
             website=_restore(document["website"]),
             runs=[_restore(row) for row in document["runs"]],
@@ -401,37 +383,15 @@ class RedisCrawlBuffer:
 
     def release_website(self, website_id: str) -> None:
         """Drop the crawl data of a copied website."""
-        raw_owner = self._redis.hget(crawl_owners_key(), website_id)
-        if raw_owner is None:
-            return
-        scrape_id, _ = raw_owner.split(":", 1)
-        raw = self._redis.get(crawl_key(scrape_id, website_id))
+        raw = self._redis.get(crawl_key(website_id))
         ids = [website_id]
         if raw is not None:
             document: Document = json.loads(raw)
             ids += [row["id"] for row in document["runs"] + document["pages"]]
         pipe = self._redis.pipeline()
-        pipe.delete(crawl_key(scrape_id, website_id))
-        pipe.srem(crawl_finished_key(scrape_id), website_id)
+        pipe.delete(crawl_key(website_id))
+        pipe.srem(crawl_finished_key(), website_id)
         pipe.hdel(crawl_owners_key(), *ids)
-        pipe.execute()
-
-    def discard(self, scrape_id: str) -> None:
-        """Drop every crawl document of a scrape, its finished set and its owner entries."""
-        prefix = f"{scrape_id}:"
-        owned = [
-            item
-            for item, owner in self._redis.hscan_iter(crawl_owners_key())
-            if owner.startswith(prefix)
-        ]
-        keys = [
-            *self._redis.scan_iter(match=crawl_key(scrape_id, "*")),
-            crawl_finished_key(scrape_id),
-        ]
-        pipe = self._redis.pipeline()
-        pipe.delete(*keys)
-        if owned:
-            pipe.hdel(crawl_owners_key(), *owned)
         pipe.execute()
 
     @staticmethod
@@ -454,50 +414,40 @@ class RedisCrawlBuffer:
             **fields,
         }
 
-    def _open_for(self, item_id: str) -> tuple[str, str, Document]:
-        raw_owner = self._redis.hget(crawl_owners_key(), item_id)
-        if raw_owner is None:
+    def _open_for(self, item_id: str) -> tuple[str, Document]:
+        website_id = self._redis.hget(crawl_owners_key(), item_id)
+        if website_id is None:
             raise LookupError(f"crawl item {item_id} is not in the buffer")
-        scrape_id, website_id = raw_owner.split(":", 1)
-        return scrape_id, website_id, self._read(scrape_id, website_id)
+        return website_id, self._read(website_id)
 
-    def _open(self, website_id: str) -> tuple[str, Document]:
-        scrape_id, _, document = self._open_for(website_id)
-        return scrape_id, document
-
-    def _read(self, scrape_id: str, website_id: str) -> Document:
-        raw = self._redis.get(crawl_key(scrape_id, website_id))
+    def _read(self, website_id: str) -> Document:
+        raw = self._redis.get(crawl_key(website_id))
         if raw is None:
             raise LookupError(f"crawl website {website_id} is not in the buffer")
         return json.loads(raw)
 
     def _save(
         self,
-        scrape_id: str,
         website_id: str,
         document: Document,
         *,
         owners: Iterable[str] = (),
         finished: bool = False,
         unfinish: bool = False,
-        activate: bool = False,
     ) -> None:
-        key = crawl_key(scrape_id, website_id)
-        finished_key = crawl_finished_key(scrape_id)
+        key = crawl_key(website_id)
+        finished_key = crawl_finished_key()
         pipe = self._redis.pipeline()
         pipe.set(key, json.dumps(document))
         pipe.expire(key, self._ttl_seconds)
         for owner in owners:
-            pipe.hset(crawl_owners_key(), owner, f"{scrape_id}:{website_id}")
+            pipe.hset(crawl_owners_key(), owner, website_id)
         pipe.expire(crawl_owners_key(), self._ttl_seconds)
         if finished:
             pipe.sadd(finished_key, website_id)
         if unfinish:
             pipe.srem(finished_key, website_id)
         pipe.expire(finished_key, self._ttl_seconds)
-        if activate:
-            pipe.sadd(active_key(), scrape_id)
-            pipe.expire(active_key(), self._ttl_seconds)
         try:
             pipe.execute()
         except OutOfMemoryError as exc:

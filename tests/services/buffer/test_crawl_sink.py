@@ -22,12 +22,9 @@ HOME = "https://a.de/"
 ABOUT = "https://a.de/about"
 
 
-def finished_snapshot(fake_redis, host="www.a.de", position=0):
+def finished_snapshot(fake_redis, host="www.a.de"):
     buffer = RedisCrawlBuffer(fake_redis, 3600)
     website_id = buffer.create_website(
-        scrape_id=SCRAPE_ID,
-        lead_position=position,
-        scrape_lead_id=position,
         host=host,
         registrable_domain="a.de",
         origin=f"https://{host}",
@@ -106,9 +103,6 @@ async def test_a_crawl_whose_lead_is_not_saved_yet_is_refused(fake_redis):
 def _crawl_with_pages(fake_redis):
     buffer = RedisCrawlBuffer(fake_redis, 3600)
     website_id = buffer.create_website(
-        scrape_id=SCRAPE_ID,
-        lead_position=0,
-        scrape_lead_id=0,
         host="www.a.de",
         registrable_domain="a.de",
         origin="https://www.a.de",

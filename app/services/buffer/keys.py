@@ -26,12 +26,12 @@ def active_key() -> str:
     return "buffer:active"
 
 
-def crawl_key(scrape_id: str, website_id: str) -> str:
-    return f"scrape:{scrape_id}:crawl:{website_id}"
+def crawl_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}"
 
 
-def crawl_finished_key(scrape_id: str) -> str:
-    return f"scrape:{scrape_id}:crawl_finished"
+def crawl_finished_key() -> str:
+    return "buffer:crawl_finished"
 
 
 def crawl_owners_key() -> str:

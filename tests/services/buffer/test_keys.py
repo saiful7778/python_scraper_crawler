@@ -20,6 +20,6 @@ def test_keys_are_namespaced_per_scrape():
     assert processing_key("abc") == "scrape:abc:processing"
     assert queued_key("abc") == "scrape:abc:queued"
     assert active_key() == "buffer:active"
-    assert crawl_key("abc", "w1") == "scrape:abc:crawl:w1"
-    assert crawl_finished_key("abc") == "scrape:abc:crawl_finished"
+    assert crawl_key("w1") == "buffer:crawl:w1"
+    assert crawl_finished_key() == "buffer:crawl_finished"
     assert crawl_owners_key() == "buffer:crawl_owners"
