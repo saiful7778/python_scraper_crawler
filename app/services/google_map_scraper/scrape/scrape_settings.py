@@ -126,11 +126,6 @@ class ScrapeSettings(BaseModel):
         strict=True,
         description="Link depth the website crawler follows from the first page.",
     )
-    crawl_store_html: bool = Field(
-        default=True,
-        strict=True,
-        description="Keep the HTML of each crawled page.",
-    )
 
     @model_validator(mode="before")
     @classmethod

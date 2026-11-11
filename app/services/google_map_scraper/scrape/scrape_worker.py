@@ -1,55 +1,79 @@
 """The background thread that claims pending scrapes and runs them one at a time."""
 
 import threading
+from collections.abc import Callable
 
+from redis import Redis
+
+from app.services.buffer.client import BufferError
+from app.utils.errors import describe
 from app.utils.logger import get_logger
 
-from .scrape_run import ScrapeRun
+from .scrape_database import ScrapeDatabase, ScrapeDatabaseError
+from .scrape_run import RunOutcome, ScrapeRun
 from .scrape_status import ScrapeStatus
-from .scrape_store import ScrapeStore
-from .scrape_types import ScrapeRecord
+from .scrape_types import LeadRow, ScrapeRecord
 
 logger = get_logger(__name__)
 
 _IDLE_POLL_SECONDS = 5
 _RETRY_PAUSE_SECONDS = 2
-_STATUS_WRITE_ATTEMPTS = 2
+
+
+def _reason(error: Exception) -> str:
+    return f"{type(error).__name__}: {error}"
 
 
 class ScrapeWorker(threading.Thread):
-    """Claims the oldest pending scrape, runs it, and repeats until shut down."""
+    """Claims the oldest pending scrape, runs it, and repeats until shut down.
+
+    A Redis or PostgreSQL failure stops the worker and is kept in :attr:`failure`
+    for the runner to raise; the scrape keeps its Redis data and resumes later.
+    """
 
     def __init__(
         self,
-        store: ScrapeStore,
+        database: ScrapeDatabase,
+        redis: Redis,
         headless: bool = True,
         known_keys: frozenset[str] = frozenset(),
+        on_finished: Callable[[str, RunOutcome, list[LeadRow]], None] | None = None,
     ):
-        """Create the worker thread; call :meth:`start` to begin."""
+        """Create the worker thread; call :meth:`start` to begin.
+
+        ``on_finished`` receives each scrape's outcome and accepted leads when
+        its run ends, whether it finished or failed. A paused run reports nothing.
+        """
         super().__init__(daemon=True, name="scrapes")
-        self._store = store
+        self._database = database
+        self._redis = redis
         self._headless = headless
         self._known_keys = known_keys
+        self._on_finished = on_finished
         self._wake = threading.Event()
         self._stopped = threading.Event()
         self._current: ScrapeRun | None = None
+        self.failure: BufferError | ScrapeDatabaseError | None = None
 
     def run(self) -> None:
         """Thread body: process scrapes until :meth:`shutdown` is called."""
         while not self._stopped.is_set():
-            scrape: ScrapeRecord | None = None
             stage = "claiming the next pending scrape"
             try:
-                scrape = self._store.claim_next_pending()
+                scrape = self._database.claim_next_pending()
                 if scrape is None:
                     self._wake.wait(_IDLE_POLL_SECONDS)
                     self._wake.clear()
                     continue
                 stage = f"running scrape {scrape['ID']}"
                 self._execute(scrape)
-            except Exception as error:
+            except (BufferError, ScrapeDatabaseError) as error:
+                logger.error("the scrape worker stopped: %s", describe(error))
+                self.failure = error
+                self._stopped.set()
+            except Exception:
                 logger.exception("worker failed while %s", stage)
-                self._record_failure(scrape, error)
+                self._stopped.wait(_RETRY_PAUSE_SECONDS)
 
     def cancel(self, scrape_id: str) -> None:
         """Stop the running scrape if it is ``scrape_id`` (used when it is deleted)."""
@@ -68,29 +92,25 @@ class ScrapeWorker(threading.Thread):
             self.join(wait)
 
     def _execute(self, scrape: ScrapeRecord) -> None:
-        run = ScrapeRun(self._store, scrape, self._headless, self._known_keys)
+        run = ScrapeRun(
+            self._database, scrape, self._headless, self._redis, self._known_keys
+        )
         self._current = run
         if self._stopped.is_set():
             run.pause()
         try:
             run.execute()
+        except (BufferError, ScrapeDatabaseError):
+            raise
+        except Exception as error:
+            logger.exception("scrape %s failed", scrape["ID"])
+            self._report(scrape, RunOutcome(ScrapeStatus.FAILED, _reason(error)), run)
+            return
         finally:
             self._current = None
+        if run.outcome is not None:
+            self._report(scrape, run.outcome, run)
 
-    def _record_failure(self, scrape: ScrapeRecord | None, error: Exception) -> None:
-        reason = f"{type(error).__name__}: {error}"
-        if scrape:
-            for attempt in range(1, _STATUS_WRITE_ATTEMPTS + 1):
-                try:
-                    self._store.update_status(scrape["ID"], ScrapeStatus.FAILED, reason)
-                    break
-                except Exception:
-                    logger.exception(
-                        "could not mark scrape %s as failed (attempt %d of %d)",
-                        scrape["ID"],
-                        attempt,
-                        _STATUS_WRITE_ATTEMPTS,
-                    )
-                    self._stopped.wait(_RETRY_PAUSE_SECONDS)
-        logger.error("scrape %s failed: %s", scrape["ID"] if scrape else "-", reason)
-        self._stopped.wait(_RETRY_PAUSE_SECONDS)
+    def _report(self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun) -> None:
+        if self._on_finished is not None:
+            self._on_finished(scrape["ID"], outcome, run.rows)

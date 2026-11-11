@@ -3,7 +3,6 @@ from .crawl_models import (
     CrawlFindingModel,
     CrawlLinkModel,
     CrawlPageModel,
-    CrawlRawHTMLModel,
     CrawlRunModel,
     CrawlWebsiteModel,
 )
@@ -23,13 +22,13 @@ from .lead_model import (
     LeadModel,
     LeadSocialModel,
 )
+from .scrape_model import ScrapeModel
 
 __all__ = [
     "CrawlEventModel",
     "CrawlFindingModel",
     "CrawlLinkModel",
     "CrawlPageModel",
-    "CrawlRawHTMLModel",
     "CrawlRunModel",
     "CrawlWebsiteModel",
     "GoogleMapKeyword",
@@ -44,4 +43,5 @@ __all__ = [
     "LeadEmailModel",
     "LeadModel",
     "LeadSocialModel",
+    "ScrapeModel",
 ]

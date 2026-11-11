@@ -4,7 +4,6 @@ def test_crawl_models_are_registered_with_their_tables():
         CrawlFindingModel,
         CrawlLinkModel,
         CrawlPageModel,
-        CrawlRawHTMLModel,
         CrawlRunModel,
         CrawlWebsiteModel,
     )
@@ -13,7 +12,6 @@ def test_crawl_models_are_registered_with_their_tables():
     assert CrawlRunModel._meta.db_table == "crawl_runs"
     assert CrawlPageModel._meta.db_table == "crawl_pages"
     assert CrawlLinkModel._meta.db_table == "crawl_links"
-    assert CrawlRawHTMLModel._meta.db_table == "crawl_raw_html"
     assert CrawlFindingModel._meta.db_table == "crawl_findings"
     assert CrawlEventModel._meta.db_table == "crawl_events"
 
@@ -31,7 +29,6 @@ def test_every_crawl_model_has_updated_at():
         CrawlFindingModel,
         CrawlLinkModel,
         CrawlPageModel,
-        CrawlRawHTMLModel,
         CrawlRunModel,
         CrawlWebsiteModel,
     )
@@ -41,7 +38,6 @@ def test_every_crawl_model_has_updated_at():
         CrawlRunModel,
         CrawlPageModel,
         CrawlLinkModel,
-        CrawlRawHTMLModel,
         CrawlFindingModel,
         CrawlEventModel,
     ):

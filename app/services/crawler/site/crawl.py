@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from app.helpers.http_fetcher.errors import FetchError
 from app.helpers.http_fetcher.models import FetchResult
 from app.helpers.http_fetcher.urls import hostname_of
+from app.services.buffer.crawl_buffer import RedisCrawlBuffer
+from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
@@ -23,12 +25,6 @@ from ..extractors.seo import find_seo
 from ..extractors.social import find_social
 from ..extractors.tech import find_tech
 from ..findings import Finding, parse_page
-from ..storage.buffer import (
-    CrawlBuffer,
-    LinkSeed,
-    PageResult,
-    PageSeed,
-)
 from .checks import find_site_checks
 from .robots import RobotTxtPolicy
 from .scope import (
@@ -54,7 +50,6 @@ FetchFn = Callable[[str], FetchResult]
 class CrawlOptions:
     max_pages: int
     max_depth: int
-    store_html: bool
     collect_emails: bool
     collect_socials: bool
 
@@ -88,7 +83,7 @@ class WebsiteCrawl:
     def __init__(
         self,
         *,
-        buffer: CrawlBuffer,
+        buffer: RedisCrawlBuffer,
         fetch: FetchFn,
         website_id: str,
         scrape_id: str,
@@ -490,7 +485,6 @@ class WebsiteCrawl:
                 title=title,
                 canonical_url=canonical,
                 content_hash=hashlib.sha256(result.body).hexdigest(),
-                html=result.text if self._options.store_html else None,
             ),
         )
         if doc is None:

@@ -117,9 +117,9 @@ class GoogleMapProfileRepository(BaseRepository):
             ),
         ]
 
-    async def save_row(self, row: LeadRow) -> None:
+    async def save_row(self, row: LeadRow, scrape_id: str) -> None:
         profile = await self._save_profile(row)
-        lead = await self._save_lead(row)
+        lead = await self._save_lead(row, profile)
         await self._leads.add_children(lead, _children(row))
         await GoogleMapProfileToLeadModel.get_or_create(
             map_profile_id=profile.id, lead_id=lead.id
@@ -128,11 +128,31 @@ class GoogleMapProfileRepository(BaseRepository):
     async def _find_profile(self, row: LeadRow):
         place_id = row.get("place_id")
         if not place_id:
-            return None
+            return await self._find_profile_by_lead(row)
         filters = {"place_id": place_id}
         if row.get("cid"):
             filters["cid"] = row["cid"]
         return await self._model.filter(**filters).first()
+
+    async def _find_profile_by_lead(self, row: LeadRow):
+        """The profile of a lead saved earlier with the same title and website."""
+        title = row.get("title")
+        if not title:
+            return None
+        domain = website_domain(row.get("website", ""))
+        link = (
+            await GoogleMapProfileToLeadModel.filter(
+                lead__title=title,
+                **(
+                    {"lead__website_domain": domain}
+                    if domain
+                    else {"lead__website_domain__isnull": True}
+                ),
+            )
+            .first()
+            .prefetch_related("map_profile")
+        )
+        return link.map_profile if link else None
 
     async def _save_profile(self, row: LeadRow):
         values = _profile_values(row)
@@ -145,14 +165,25 @@ class GoogleMapProfileRepository(BaseRepository):
             await profile.save()
         return profile
 
-    async def _save_lead(self, row: LeadRow):
+    async def _linked_lead(self, profile):
+        link = (
+            await GoogleMapProfileToLeadModel.filter(map_profile_id=profile.id)
+            .first()
+            .prefetch_related("lead")
+        )
+        return link.lead if link else None
+
+    async def _save_lead(self, row: LeadRow, profile):
         domain = website_domain(row.get("website", ""))
         values = {name: row.get(name) or None for name in LEAD_FIELDS}
         if domain is None:
-            return await self._leads.create({**values, "website_domain": None})
-        lead = await self._leads.find_by_domain(domain)
-        if lead is None:
-            return await self._leads.create({**values, "website_domain": domain})
+            lead = await self._linked_lead(profile)
+            if lead is None:
+                return await self._leads.create({**values, "website_domain": None})
+        else:
+            lead = await self._leads.find_by_domain(domain)
+            if lead is None:
+                return await self._leads.create({**values, "website_domain": domain})
         if self.fill_empty(lead, values):
             await lead.save()
         return lead

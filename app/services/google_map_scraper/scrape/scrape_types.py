@@ -1,6 +1,5 @@
 """Typed shapes of the dicts that pass between the scrape modules."""
 
-from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict, TypeGuard, get_args
 
 LeadKey = Literal[
@@ -125,29 +124,6 @@ class SettingsData(TypedDict):
     proxies: NotRequired[list[str]]
     crawl_max_pages: NotRequired[int]
     crawl_max_depth: NotRequired[int]
-    crawl_store_html: NotRequired[bool]
-
-
-@dataclass(frozen=True)
-class WebsiteTarget:
-    """One lead whose website the crawler checks."""
-
-    row_id: int
-    position: int
-    website: str
-
-
-@dataclass(frozen=True)
-class WebsiteBatch:
-    """Leads of one scrape whose websites the crawler checks next."""
-
-    scrape_id: str
-    collect_emails: bool
-    collect_socials: bool
-    crawl_max_pages: int
-    crawl_max_depth: int
-    crawl_store_html: bool
-    websites: list[WebsiteTarget]
 
 
 class ProgressData(TypedDict, total=False):
@@ -181,25 +157,3 @@ class ScrapeRecord(TypedDict):
     Progress: ProgressData
 
 
-class PublicProgress(TypedDict):
-    """The progress summary shown to API and UI clients."""
-
-    keywords_done: int
-    keywords_total: int
-    leads: int
-    percent: int
-    stage: str
-    reviews_done: NotRequired[int]
-    reviews_total: NotRequired[int]
-
-
-class PublicScrape(TypedDict):
-    """A scrape as shown to API and UI clients."""
-
-    ID: str
-    Name: str
-    Date: str
-    Status: str
-    Data: SettingsData
-    Error: str
-    Progress: PublicProgress

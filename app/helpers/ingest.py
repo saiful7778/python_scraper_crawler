@@ -13,11 +13,11 @@ class Ingester:
     ):
         self.google_map_profile_repository = google_map_profile_repository
 
-    async def run(self, rows: list[LeadRow]) -> tuple[int, int]:
+    async def run(self, rows: list[LeadRow], scrape_id: str) -> tuple[int, int]:
         saved = failed = 0
         for row in rows:
             try:
-                await self.google_map_profile_repository.save_row(row)
+                await self.google_map_profile_repository.save_row(row, scrape_id)
                 saved += 1
             except asyncio.CancelledError:
                 raise

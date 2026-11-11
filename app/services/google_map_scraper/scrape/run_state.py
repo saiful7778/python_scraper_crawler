@@ -10,7 +10,6 @@ class RunState:
     """Rows, errors and flags shared by the search, reviews and website passes."""
 
     rows: list[LeadRow] = field(default_factory=list[LeadRow])
-    seen_keys: set[str] = field(default_factory=set[str])
     errors: list[str] = field(default_factory=list[str])
     notes: list[str] = field(default_factory=list[str])
     refused_proxies: set[str | None] = field(default_factory=set[str | None])

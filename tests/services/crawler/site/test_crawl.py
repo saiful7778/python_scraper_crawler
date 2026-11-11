@@ -1,22 +1,17 @@
 from dataclasses import replace
 
+import fakeredis
 import pytest
 
 from app.helpers.http_fetcher.errors import FetchError
 from app.helpers.http_fetcher.models import build_result
+from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.crawler.site import crawl as website_crawl
 from app.services.crawler.site.crawl import CrawlOptions, WebsiteCrawl
-from app.services.crawler.storage.buffer import CrawlBuffer
-from app.services.crawler.storage.crawl_store import CrawlStore
-from app.services.google_map_scraper.scrape.scrape_models import ScrapeLeadModel
-from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSettings
-from app.services.google_map_scraper.scrape.scrape_store import ScrapeStore
-from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 
 OPTS = CrawlOptions(
     max_pages=100,
     max_depth=3,
-    store_html=True,
     collect_emails=True,
     collect_socials=True,
 )
@@ -24,45 +19,22 @@ ORIGIN = "https://bakery.de"
 HTML = {"content-type": "text/html; charset=utf-8"}
 
 
-def _lead() -> LeadRow:
-    row: dict[str, object] = {key: "" for key in LeadRow.__required_keys__}
-    row["latitude"] = None
-    row["longitude"] = None
-    row["title"] = "Bakery"
-    row["website"] = ORIGIN
-    return row  # type: ignore[return-value]
-
-
-async def _first_lead_id(scrape_id: str) -> int:
-    lead = await ScrapeLeadModel.filter(scrape_id=scrape_id).first()
-    assert lead is not None
-    return lead.id
+@pytest.fixture
+def fake_redis():
+    return fakeredis.FakeRedis(decode_responses=True)
 
 
 @pytest.fixture
-def store(tmp_path):
-    scrape_store = ScrapeStore(str(tmp_path))
-    yield scrape_store
-    scrape_store.close()
+def buffer(fake_redis):
+    return RedisCrawlBuffer(fake_redis, 3600)
 
 
 @pytest.fixture
-def buffer(store):
-    return CrawlBuffer(CrawlStore(store))
-
-
-@pytest.fixture
-def website_id(store, buffer):
-    settings = ScrapeSettings(keywords=("bakery",))
-    scrape_id = store.create_scrape(
-        "t", settings.model_dump(by_alias=True, mode="json")
-    )
-    store.append_rows(scrape_id, [_lead()])
-    lead_id = store.run_async(_first_lead_id(scrape_id))
+def website_id(buffer):
     return buffer.create_website(
-        scrape_id=scrape_id,
+        scrape_id="scrape-1",
         lead_position=0,
-        scrape_lead_id=lead_id,
+        scrape_lead_id=0,
         host="bakery.de",
         registrable_domain="bakery.de",
         origin=ORIGIN,
@@ -140,16 +112,21 @@ def test_happy_path_saves_pages_links_and_findings(buffer, website_id, site):
     assert snap.runs[0]["status"] == "done"
     assert snap.website["status"] == "done"
     assert crawl.run_id == str(snap.runs[0]["id"])
-    assert len(snap.raw_html) >= 3
     home = next(p for p in snap.pages if p["normalized_url"] == "https://bakery.de/")
     assert home["title"] == "Bakery"
     assert home["status"] == "fetched"
     assert len(snap.links) >= 3
 
 
-def test_html_is_not_stored_when_store_html_is_off(buffer, website_id, site):
-    make_crawl(buffer, website_id, site, replace(OPTS, store_html=False)).run()
-    assert buffer.read_website(website_id).raw_html == []
+def test_crawl_never_keeps_html(buffer, website_id, site):
+    options = CrawlOptions(
+        max_pages=100, max_depth=3, collect_emails=True, collect_socials=True
+    )
+    make_crawl(buffer, website_id, site, options).run()
+    snap = buffer.read_website(website_id)
+    assert not hasattr(snap, "raw_html")
+    assert all("html" not in page for page in snap.pages)
+    assert not any("<html" in str(row) for row in snap.pages + snap.findings)
 
 
 def test_failing_extractor_does_not_stop_the_others(

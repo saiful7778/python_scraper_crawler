@@ -14,16 +14,6 @@ class ScrapeStatus:
     FAILED = "failed"
 
 
-class CrawlStatus:
-    """Where a lead's website is in the contact search; empty when none was queued."""
-
-    NONE = ""
-    PENDING = "pending"
-    RUNNING = "running"
-    DONE = "done"
-    SKIPPED = "skipped"
-
-
 class ScrapeStage:
     """Pipeline stage a scrape is in; persisted so an interrupted scrape can resume."""
 

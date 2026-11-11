@@ -2,9 +2,12 @@
 
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+
+from redis.exceptions import RedisError
 
 from app.services.browser import BrowserSession, CDPError
+from app.services.buffer.client import BufferError
 from app.services.google_map_scraper.extract_details import PlaceRecord
 from app.services.google_map_scraper.google_map import (
     build_maps_search_url,
@@ -17,7 +20,6 @@ from app.utils.failure_messages import is_proxy_failure, is_timeout_failure
 from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
 
-from .dedupe import add_if_new
 from .run_state import RunState
 from .scrape_failures import LOGIN_REFUSED
 from .scrape_limits import (
@@ -30,9 +32,7 @@ from .scrape_outcome import search_percent
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_status import SearchEndReason
-from .scrape_store import ScrapeStore
 from .scrape_types import LeadRow
-from .website_resolver import resolve_website
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ class KeywordSearch:
         *,
         scrape_id: str,
         settings: ScrapeSettings,
-        store: ScrapeStore,
+        accept: Callable[[list[LeadRow]], list[LeadRow]],
         browser: BrowserSession,
         rotation: ProxyRotation,
         progress: ScrapeProgress,
@@ -53,10 +53,10 @@ class KeywordSearch:
         stop: threading.Event,
         deadline: float,
     ):
-        """Wire the search to the scrape's store, browser, progress and shared state."""
+        """Wire the search to the scrape's accept step, browser, progress and shared state."""
         self._scrape_id = scrape_id
         self._settings = settings
-        self._store = store
+        self._accept = accept
         self._browser = browser
         self._rotation = rotation
         self._progress = progress
@@ -93,6 +93,8 @@ class KeywordSearch:
             started = time.monotonic()
             try:
                 leads, reason, stats = self._collect(proxy, url, time_left)
+            except BufferError:
+                raise
             except (CDPError, OSError) as error:
                 message = str(error)
                 if message == LOGIN_REFUSED:
@@ -148,9 +150,7 @@ class KeywordSearch:
                     break
                 if self._stop.is_set():
                     break
-                size = self._store.append_rows(self._scrape_id, [])
-                if size is None:
-                    break
+                size = len(self._state.rows)
                 index += 1
                 self._state.retries, again = 0, False
                 self._progress.save(
@@ -169,9 +169,7 @@ class KeywordSearch:
                 self._state.errors.append(
                     f"keyword {self._position()}: {describe(error)}"
                 )
-                size = self._store.append_rows(self._scrape_id, [])
-                if size is None:
-                    break
+                size = len(self._state.rows)
                 index += 1
                 self._state.retries, again = 0, False
                 self._progress.save(
@@ -254,9 +252,7 @@ class KeywordSearch:
             if SearchEndReason.is_timeout(reason):
                 self._state.timed_out = True
 
-            size = self._store.append_rows(self._scrape_id, [])
-            if size is None:
-                break
+            size = len(self._state.rows)
             if SearchEndReason.is_error(reason):
                 self._state.errors.append(SearchEndReason.error_message(reason))
             self._progress.save(
@@ -309,18 +305,20 @@ class KeywordSearch:
     def _record_batch(
         self, leads: Sequence[PlaceLink | PlaceRecord], batches: int
     ) -> None:
-        """Store leads not yet seen, including those no streamed batch carried."""
-        fresh: list[LeadRow] = []
-        for lead in leads:
-            if not self._has_room(len(fresh)):
-                break
-            row = build_lead_row(lead, self._keyword)
-            if add_if_new(row, self._state.seen_keys):
-                row["website"] = resolve_website(row["website"])
-                fresh.append(row)
-        self._state.rows.extend(fresh)
-        if fresh and self._store.append_rows(self._scrape_id, fresh) is None:
+        """Accept leads not yet seen, including those no streamed batch carried."""
+        try:
+            for lead in leads:
+                if not self._has_room():
+                    break
+                self._accept([build_lead_row(lead, self._keyword)])
+        except RedisError as error:
             self._stop.set()
+            raise BufferError(
+                f"Redis failed while buffering leads: {describe(error)}"
+            ) from error
+        except BufferError:
+            self._stop.set()
+            raise
         self._progress.save(
             percent=search_percent(
                 self._index,

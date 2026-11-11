@@ -2,26 +2,61 @@
 
 import threading
 import time
+from dataclasses import dataclass
+
+from redis import Redis
 
 from app.services.browser import BrowserError, BrowserSession, CDPError
-from app.services.crawler.storage.crawl_store import CrawlStore
+from app.services.buffer.known_keys import KnownKeys
+from app.services.buffer.row_buffer import RowBuffer
+from app.services.buffer.scrape_state import ScrapeState
+from app.services.buffer.website_queue import WebsiteJob, WebsiteQueue
+from app.services.crawler.site.scope import origin_of
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
 
-from .dedupe import seen_keys_of
 from .keyword_search import KeywordSearch
 from .review_pass import ReviewPass
 from .run_state import RunState
-from .scrape_limits import WATCHDOG_GRACE_SECONDS
+from .scrape_database import ScrapeDatabase
+from .scrape_limits import BUFFER_TTL_SECONDS, WATCHDOG_GRACE_SECONDS
 from .scrape_outcome import summarize_outcome
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_status import ScrapeStage, ScrapeStatus
-from .scrape_store import ScrapeStore
-from .scrape_types import ProgressData, ScrapeRecord
+from .scrape_types import LeadRow, ScrapeRecord
+from .website_resolver import resolve_website
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """How a run ended; the runner writes it to PostgreSQL once the crawl is done."""
+
+    status: str
+    note: str
+
+
+def origin_key(website: str) -> str:
+    """The origin that identifies a website in the queue; the text itself when it has none."""
+    try:
+        return origin_of(website)
+    except ValueError:
+        return website
+
+
+def _latest_copies(rows: list[LeadRow]) -> list[LeadRow]:
+    """One row per lead, in first-seen order, keeping the last copy.
+
+    The review pass buffers a lead again with its reviews, so a resumed run
+    reads both copies and keeps the reviewed one.
+    """
+    latest: dict[str, LeadRow] = {}
+    for row in rows:
+        latest[row.get("link") or row.get("title", "")] = row
+    return list(latest.values())
 
 
 class ScrapeRun:
@@ -30,22 +65,31 @@ class ScrapeRun:
     The run ends in one of three ways: it finishes and stores its status, it is
     paused because the engine is shutting down (it resumes on the next start),
     or it is cancelled because the scrape was deleted.
+
+    Leads, known keys, progress and websites live in Redis while the run is in
+    progress; PostgreSQL keeps the scrape's record, and the runner finishes it
+    from :attr:`outcome`.
     """
 
     def __init__(
         self,
-        store: ScrapeStore,
+        database: ScrapeDatabase,
         scrape: ScrapeRecord,
         headless: bool,
+        redis: Redis,
         known_keys: frozenset[str] = frozenset(),
     ):
-        """Read the scrape's settings and progress; nothing runs until :meth:`execute`."""
+        """Read the scrape's settings; nothing runs until :meth:`execute`."""
         self.scrape_id: str = scrape["ID"]
         self.settings = ScrapeSettings.model_validate(scrape["Data"])
-        self._store = store
-        self._crawl = CrawlStore(store)
+        self._database = database
+        self._rows = RowBuffer(redis, BUFFER_TTL_SECONDS)
+        self._known = KnownKeys(redis, BUFFER_TTL_SECONDS)
+        self._websites = WebsiteQueue(redis, BUFFER_TTL_SECONDS)
+        self._scrape_state = ScrapeState(redis, BUFFER_TTL_SECONDS)
         self._known_keys = known_keys
-        self._saved_progress: ProgressData = scrape["Progress"].copy()
+        self.outcome: RunOutcome | None = None
+        self._position_base = 0
         self._stop = threading.Event()
         self._pausing = False
         self._browser = BrowserSession(self.settings.locale_tag, headless)
@@ -65,10 +109,21 @@ class ScrapeRun:
         self._browser.kill()
 
     def execute(self) -> None:
-        """Run the scrape's remaining stages, then store its result or pause it."""
-        if self._store.get_scrape(self.scrape_id) is None:
+        """Run the scrape's remaining stages, then set its outcome or pause it.
+
+        A scrape whose state is still in Redis resumes from the progress kept
+        there; otherwise it starts from the first keyword.
+        """
+        if self._database.get(self.scrape_id) is None:
             return
-        saved = self._saved_progress
+        resumed = self._scrape_state.get_settings(self.scrape_id) is not None
+        if not resumed:
+            self._scrape_state.create(
+                self.scrape_id, self.settings.model_dump(by_alias=True, mode="json")
+            )
+        if self._known_keys or not resumed:
+            self._known.load(self.scrape_id, self._known_keys)
+        saved = self._scrape_state.get_progress(self.scrape_id)
         keywords = self.settings.keywords
         seconds_used = saved.get("elapsed", 0)
         started = time.monotonic()
@@ -78,25 +133,26 @@ class ScrapeRun:
         first_keyword = min(saved.get("done", 0), len(keywords))
         reviews = stage in (ScrapeStage.SEARCH, ScrapeStage.REVIEWS)
 
-        if stage == ScrapeStage.SEARCH:
-            self._store.truncate_rows(self.scrape_id, saved.get("saved", 0))
-        rows = self._store.read_rows(self.scrape_id)
+        rows = _latest_copies(self._rows.read_all(self.scrape_id))
+        if resumed:
+            self._position_base = max(saved.get("leads", 0) - len(rows), 0)
+            self._queue_buffered_websites(rows)
         last_error = saved.get("last_error", "")
         self._state = RunState(
             rows=rows,
-            seen_keys=seen_keys_of(rows) | self._known_keys,
             errors=[last_error] * saved.get("failed", 0) if last_error else [],
             blocked=saved.get("blocked", False),
             retries=saved.get("retried", 0),
             timed_out=saved.get("timed_out", False),
         )
         self._progress = ScrapeProgress(
-            self._store,
+            self._scrape_state,
             self.scrape_id,
             saved,
             rows,
             started,
             seconds_used,
+            self._position_base,
         )
         self._progress.save(stage=stage, done=first_keyword)
         if (
@@ -140,20 +196,70 @@ class ScrapeRun:
             watchdog.cancel()
             self._browser.close()
 
-        if stage == ScrapeStage.WEBSITES and rows and not self._stop.is_set():
-            self._queue_websites()
-
-        if self._pausing and self._store.get_scrape(self.scrape_id) is not None:
+        if self._pausing and self._database.get(self.scrape_id) is not None:
             self._pause(stage)
             return
         self._finish()
+
+    @property
+    def rows(self) -> list[LeadRow]:
+        """The leads accepted so far, in the order they were found."""
+        return self._state.rows
+
+    def accept(self, rows: list[LeadRow]) -> list[LeadRow]:
+        """Buffer the leads not seen before, queue their websites, and return them.
+
+        A lead is seen before when its key is already known for this scrape, so
+        leads are checked against the known keys in Redis, not against the rows.
+        """
+        accepted: list[LeadRow] = []
+        try:
+            for row in rows:
+                if not self._known.add_if_new(self.scrape_id, row):
+                    continue
+                row["website"] = resolve_website(row["website"])
+                accepted.append(row)
+            if accepted:
+                self._rows.append(self.scrape_id, accepted)
+        except Exception:
+            for row in accepted:
+                self._known.forget(self.scrape_id, row)
+            raise
+        if not accepted:
+            return accepted
+        start = self._position_base + len(self._state.rows)
+        self._state.rows.extend(accepted)
+        for position, row in enumerate(accepted, start):
+            if row["website"]:
+                self._queue_website(position, row)
+        self._scrape_state.refresh_ttl(self.scrape_id)
+        return accepted
+
+    def _queue_buffered_websites(self, rows: list[LeadRow]) -> None:
+        """Queue the websites of buffered leads again; a website already queued is skipped."""
+        for position, row in enumerate(rows, self._position_base):
+            if row["website"]:
+                self._queue_website(position, row)
+
+    def _queue_website(self, position: int, row: LeadRow) -> None:
+        website = row["website"]
+        self._websites.enqueue(
+            self.scrape_id,
+            WebsiteJob(
+                scrape_id=self.scrape_id,
+                position=position,
+                row_id=row["link"],
+                website=website,
+                origin=origin_key(website),
+            ),
+        )
 
     def _search(self, first_keyword: int) -> None:
         assert self._progress is not None
         KeywordSearch(
             scrape_id=self.scrape_id,
             settings=self.settings,
-            store=self._store,
+            accept=self.accept,
             browser=self._browser,
             rotation=self._rotation,
             progress=self._progress,
@@ -167,7 +273,7 @@ class ScrapeRun:
         state = self._state
         self._progress.save(
             stage=stage,
-            saved=self._store.append_rows(self.scrape_id, []) or 0,
+            saved=len(state.rows),
             blocked=state.blocked,
             retried=state.retries,
             failed=len(state.errors),
@@ -186,8 +292,10 @@ class ScrapeRun:
             progress=self._progress,
             notes=self._state.notes,
         ).run(self._state.rows)
-        self._store.replace_rows(self.scrape_id, self._state.rows)
-        with_place_id = sum(1 for r in self._state.rows if r.get("place_id"))
+        reviewed_rows = [r for r in self._state.rows if r.get("place_id")]
+        self._rows.append(self.scrape_id, reviewed_rows)
+        self._scrape_state.refresh_ttl(self.scrape_id)
+        with_place_id = len(reviewed_rows)
         logger.info(
             "scrape %s: reviews for %s/%s leads",
             self.scrape_id,
@@ -195,18 +303,10 @@ class ScrapeRun:
             with_place_id,
         )
 
-    def _queue_websites(self) -> None:
-        queued = self._crawl.queue_websites(self.scrape_id)
-        logger.info(
-            "scrape %s: queued %s websites for the crawler", self.scrape_id, queued
-        )
-
     def _pause(self, stage: str) -> None:
         assert self._progress is not None
-        if stage not in (ScrapeStage.SEARCH, ScrapeStage.WEBSITES):
-            self._store.replace_rows(self.scrape_id, self._state.rows)
         self._progress.save()
-        self._store.update_status(self.scrape_id, ScrapeStatus.PENDING)
+        self._database.set_status(self.scrape_id, ScrapeStatus.PENDING)
         done = self._progress.data.get("done", 0)
         logger.info(
             "scrape %s paused at keyword %s/%s (%s): resumes when the engine starts again",
@@ -221,23 +321,20 @@ class ScrapeRun:
         state = self._state
         self._progress.stamp(stage=ScrapeStage.DONE)
         status, note = summarize_outcome(
-            has_rows=bool(state.rows),
+            has_rows=self._progress.data["leads"] > 0,
             errors=state.errors,
             blocked=state.blocked,
             timed_out=state.timed_out,
             notes=state.notes,
             retries=state.retries,
         )
-        if not self._store.finish_scrape(
-            self.scrape_id, state.rows, status, note, self._progress.data
-        ):
-            logger.info("scrape %s deleted while it ran", self.scrape_id)
-            return
+        self._progress.save()
+        self.outcome = RunOutcome(status, note)
         logger.info(
             "scrape %s %s: %s leads%s",
             self.scrape_id,
             status,
-            len(state.rows),
+            self._progress.data["leads"],
             f": {note}" if status == ScrapeStatus.FAILED else "",
         )
 

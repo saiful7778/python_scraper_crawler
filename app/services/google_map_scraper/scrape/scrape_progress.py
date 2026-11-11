@@ -3,12 +3,17 @@
 import time
 from typing import Unpack
 
-from .scrape_store import ScrapeStore
+from redis.exceptions import RedisError
+
+from app.services.buffer.client import BufferError
+from app.services.buffer.scrape_state import ScrapeState
+from app.utils.errors import describe
+
 from .scrape_types import LeadRow, ProgressData
 
 
 class ScrapeProgress:
-    """The progress dict of one scrape, saved to the store on every change.
+    """The progress dict of one scrape, saved to Redis on every change.
 
     Each save also records the elapsed seconds (including time used by earlier
     runs of a resumed scrape) and the number of leads found so far.
@@ -16,20 +21,25 @@ class ScrapeProgress:
 
     def __init__(
         self,
-        store: ScrapeStore,
+        state: ScrapeState,
         scrape_id: str,
         initial: ProgressData,
         rows: list[LeadRow],
         started_at: float,
         seconds_used_before: float,
+        offset: int = 0,
     ):
-        """Wrap ``initial`` progress; ``rows`` is the live list of result rows."""
+        """Wrap ``initial`` progress; ``rows`` is the live list of result rows.
+
+        ``offset`` counts the leads of earlier runs that are no longer in ``rows``.
+        """
         self.data: ProgressData = initial.copy()
-        self._store = store
+        self._state = state
         self._scrape_id = scrape_id
         self._rows = rows
         self._started_at = started_at
         self._seconds_used_before = seconds_used_before
+        self._offset = offset
 
     def elapsed_seconds(self) -> float:
         """Total seconds spent on the scrape across all runs, rounded to 0.1 s."""
@@ -39,9 +49,17 @@ class ScrapeProgress:
         """Update fields (plus elapsed time and lead count) without saving."""
         self.data.update(fields)
         self.data["elapsed"] = self.elapsed_seconds()
-        self.data["leads"] = len(self._rows)
+        self.data["leads"] = self._offset + len(self._rows)
 
     def save(self, **fields: Unpack[ProgressData]) -> None:
-        """Update fields and persist the progress dict."""
+        """Update fields and persist the progress dict.
+
+        :raises BufferError: If Redis fails; the scrape must stop, not go on unsaved.
+        """
         self.stamp(**fields)
-        self._store.save_progress(self._scrape_id, self.data)
+        try:
+            self._state.save_progress(self._scrape_id, dict(self.data))
+        except RedisError as error:
+            raise BufferError(
+                f"Redis failed while saving scrape progress: {describe(error)}"
+            ) from error

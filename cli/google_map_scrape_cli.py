@@ -12,7 +12,6 @@ from pydantic import Field, ValidationError
 from tortoise import Tortoise
 
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
-from app.helpers.ingest import Ingester
 from app.repositories import GoogleMapProfileRepository, LeadRepository
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.place_scraper import (
@@ -243,11 +242,6 @@ async def load_known_keys() -> frozenset[str]:
     return frozenset(seen_keys_of(await repository.key_rows()))
 
 
-async def ingest_rows(rows: list[LeadRow]) -> tuple[int, int]:
-    repository = GoogleMapProfileRepository(LeadRepository())
-    return await Ingester(repository).run(rows)
-
-
 def print_plan(query: CliQuery, output: str) -> None:
     tiles = (query.grid or 1) ** 2
     place = ", ".join(
@@ -357,16 +351,6 @@ def main() -> None:
         print(f"⚠ {result.skipped} scrape(s) skipped; see the ⚠ lines above.")
     if result.finished == 0:
         sys.exit("✗ No scrape finished; the reason is in the ✗ line above.")
-
-    try:
-        saved, failed = asyncio.run(with_database(lambda: ingest_rows(result.rows)))
-    except Exception as exc:  # noqa: BLE001 - any database failure should exit cleanly
-        sys.exit(f"✗ Could not save the leads to the database: {describe(exc)}")
-    print(f"✓ {saved} leads saved to the database")
-    if failed:
-        print(
-            f"⚠ {failed} lead(s) could not be saved; see the ingest failed lines above."
-        )
 
     try:
         write_output(

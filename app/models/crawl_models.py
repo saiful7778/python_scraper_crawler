@@ -90,7 +90,6 @@ class CrawlPageModel(Model):
 
     outgoing_links: fields.ReverseRelation["CrawlLinkModel"]
     incoming_links: fields.ReverseRelation["CrawlLinkModel"]
-    raw_html: fields.ReverseRelation["CrawlRawHTMLModel"]
     findings: fields.ReverseRelation["CrawlFindingModel"]
     events: fields.ReverseRelation["CrawlEventModel"]
 
@@ -116,19 +115,6 @@ class CrawlLinkModel(Model):
     class Meta(Model.Meta):
         table = "crawl_links"
         unique_together = (("source", "target"),)
-
-
-class CrawlRawHTMLModel(Model):
-    id = fields.UUIDField(primary_key=True, default=uuid4)
-    page = fields.OneToOneField(
-        "models.CrawlPageModel", related_name="raw_html", on_delete=fields.CASCADE
-    )
-    html = fields.TextField()
-    stored_at = fields.DatetimeField(auto_now_add=True)
-    updated_at = fields.DatetimeField(auto_now=True)
-
-    class Meta(Model.Meta):
-        table = "crawl_raw_html"
 
 
 class CrawlFindingModel(Model):

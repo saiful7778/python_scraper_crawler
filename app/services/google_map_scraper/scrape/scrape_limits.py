@@ -14,3 +14,7 @@ WATCHDOG_GRACE_SECONDS: Final[float] = 30
 NO_FEED_RETRY_MARGIN_SECONDS: Final[float] = 30
 #: The website pass always gets at least this long, even after max_time ran out.
 WEBSITE_MIN_SECONDS: Final[float] = 5
+#: Backstop expiry of a scrape's Redis keys, longer than the longest expected scrape.
+BUFFER_TTL_SECONDS: Final[int] = 7 * 24 * 3600
+#: Restarts of the engine mid-scrape before the scrape is failed instead of resumed.
+MAX_RESUMES: Final[int] = 3
