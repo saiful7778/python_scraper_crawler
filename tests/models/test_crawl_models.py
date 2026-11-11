@@ -45,7 +45,7 @@ def test_every_crawl_model_has_updated_at():
         assert "updated_at" in model._meta.fields_map, model.__name__
 
 
-def test_website_stores_scrape_and_lead_as_plain_values():
+def test_website_has_no_scrape_lead_key():
     from app.models import CrawlWebsiteModel
 
     fields_map = CrawlWebsiteModel._meta.fields_map
