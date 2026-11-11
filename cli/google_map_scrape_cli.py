@@ -14,13 +14,9 @@ from tortoise import Tortoise
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.repositories import GoogleMapProfileRepository, LeadRepository
 from app.services.google_map_scraper.place_query import PlaceQuery
-from app.services.google_map_scraper.place_scraper import (
-    SALVAGE,
-    columns_for,
-    scrape_place,
-)
 from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.services.google_map_scraper.scraper import PlaceScraper, columns_for
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
 from config.tortoise import TORTOISE_ORM
@@ -321,23 +317,23 @@ def main() -> None:
         )
     print(f"▶ {len(known_keys)} known lead keys loaded; duplicates are skipped\n")
 
+    scraper = PlaceScraper()
     try:
-        result = scrape_place(query, known_keys)
+        result = scraper.scrape(query, known_keys)
     except KeyboardInterrupt:
-        if SALVAGE["rows"]:
+        salvage = scraper.salvage_rows
+        if salvage:
             try:
                 write_output(
                     output,
-                    SALVAGE["rows"],
+                    salvage,
                     query.fields or columns_for(query),
                     query.output_format,
                 )
             except OSError as error:
                 print(f"\n✗ Could not save the leads found so far: {describe(error)}")
                 raise
-            print(
-                f"\n✓ Saved the {len(SALVAGE['rows'])} leads found so far to {output}"
-            )
+            print(f"\n✓ Saved the {len(salvage)} leads found so far to {output}")
         raise
     except ScraperError as exc:
         sys.exit(f"✗ {describe(exc)}")

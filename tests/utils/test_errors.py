@@ -12,10 +12,7 @@ from app.services.browser.website.render_session import (
 )
 from app.services.google_map_scraper.extract_details import parse_place_list
 from app.services.google_map_scraper.google_map import geo
-from app.services.google_map_scraper.place_scraper import (
-    BoundingBoxError,
-    _parse_bounding_box,
-)
+from app.services.google_map_scraper.scraper import BoundingBoxError, parse_bounding_box
 from app.utils.errors import ConfigError, ProxyConfigError, ScraperError, describe
 from app.utils.proxies import parse_proxy_urls
 
@@ -110,15 +107,15 @@ class TestGeocodingErrors:
 
 class TestBoundingBox:
     def test_four_numbers_parse(self) -> None:
-        assert _parse_bounding_box("dhaka", ["1", "2", "3", "4"]) == (1.0, 2.0, 3.0, 4.0)
+        assert parse_bounding_box("dhaka", ["1", "2", "3", "4"]) == (1.0, 2.0, 3.0, 4.0)
 
     def test_wrong_count_is_named(self) -> None:
         with pytest.raises(BoundingBoxError, match="has 2 values, expected 4"):
-            _parse_bounding_box("dhaka", ["1", "2"])
+            parse_bounding_box("dhaka", ["1", "2"])
 
     def test_non_number_is_named(self) -> None:
         with pytest.raises(BoundingBoxError, match="not a number"):
-            _parse_bounding_box("dhaka", ["1", "x", "3", "4"])
+            parse_bounding_box("dhaka", ["1", "x", "3", "4"])
 
 
 class TestMalformedSearchBatch:
