@@ -103,10 +103,12 @@ def parse_bounding_box(place: str, raw_box: list[str]) -> BoundingBox:
         raise BoundingBoxError(
             f"the bounding box for {place!r} has a value that is not a number: {raw_box!r}"
         ) from error
+    logger.debug("bounding box of %r: S%s N%s W%s E%s", place, south, north, west, east)
     return south, north, west, east
 
 
 def _no_bounding_box(query: PlaceQuery) -> ScrapeResult:
+    logger.warning("could not resolve a bounding box for the city")
     print("✗ Could not resolve a bounding box. Try a clearer --city or --state.")
     return ScrapeResult([], columns_for(query), 0, 0, False)
 
@@ -280,6 +282,7 @@ def run_scrape(
     :raises BufferError: If Redis fails.
     :raises ScrapeDatabaseError: If PostgreSQL fails.
     """
+    logger.debug("starting scrape %r with %d known keys", name, len(known_keys))
     session = ScrapeSession(
         config or EngineConfig(),
         redis or connect(RedisConfig()),
@@ -287,7 +290,14 @@ def run_scrape(
         known_keys,
     )
     try:
-        return session.run(name, settings)
+        result = session.run(name, settings)
+        logger.info(
+            "scrape %s ended as %s with %d rows",
+            result.scrape_id,
+            result.status,
+            len(result.rows),
+        )
+        return result
     except RedisError as error:
         raise BufferError(
             f"Redis failed while running the scrape: {describe(error)}"
@@ -317,6 +327,13 @@ class PlaceScraper:
         place = ", ".join(part for part in (query.city, query.state) if part)
         name = f"{query.keyword} @ {place}"[:80]  # the scrape name is what the web UI lists
 
+        logger.info(
+            "scraping %r in %r: grid=%s depth=%s",
+            query.keyword,
+            place,
+            query.grid,
+            query.scroll_depth,
+        )
         print(f'▶ Geocoding "{place}"')
         bounding_box: BoundingBox | None = None
         cells: list[GridCell] = []
@@ -336,16 +353,20 @@ class PlaceScraper:
                 south, north, west, east = bounding_box
                 cells = build_grid_cells(bounding_box, query.grid)
                 print(f"\t→ bbox S{south} N{north} W{west} E{east}, {len(cells)} tiles")
+                logger.info("geocoded %r: %d grid tiles", place, len(cells))
             else:
                 found_point = get_geocode(place, country=query.country)
                 if not found_point:
+                    logger.warning("Nominatim found no coordinates for %r", place)
                     print(
                         "✗ Could not resolve coordinates. Try a clearer --city or --state."
                     )
                     return ScrapeResult([], columns, 0, 0, False)
                 lat, lon = cast(LatLon, found_point)
                 print(f"\t→ {lat}, {lon}")
+                logger.info("geocoded %r: %s, %s", place, lat, lon)
         except ScraperError as error:
+            logger.error("geocoding %r failed: %s", place, describe(error))
             print(f"✗ Could not geocode {place!r}: {describe(error)}")
             return ScrapeResult([], columns, 0, 1, False)
 
@@ -355,13 +376,21 @@ class PlaceScraper:
 
         if not cells:
             print(f"▶ Creating scrape: 1 keyword @ {lat},{lon} depth={query.scroll_depth}")
+            logger.info("single scrape at %s,%s", lat, lon)
             result = run_scrape(name, anchored, known_keys=known_keys)
             if result.status == ScrapeStatus.FAILED:
+                logger.warning("single scrape failed: %s", result.note)
                 print(f"✗ {result.note}")
                 return ScrapeResult([], columns, 0, 1, result.blocked)
             if result.note:
+                logger.info("single scrape note: %s", result.note)
                 print(f"  ⚠ {result.note}")
             rows = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
+            logger.info(
+                "single scrape: %d rows, %d kept after dedupe and filters",
+                len(result.rows),
+                len(rows),
+            )
             return ScrapeResult(rows, columns, 1, 0, result.blocked)
 
         deep_scan_note = (
@@ -396,6 +425,15 @@ class PlaceScraper:
                 }
             )
 
+            logger.debug(
+                "cell %d/%d: lat=%s lon=%s zoom=%s radius=%sm",
+                index,
+                len(cells),
+                cell["lat"],
+                cell["lon"],
+                cell["zoom"],
+                cell["radius"],
+            )
             try:
                 result = run_scrape(name, cell_settings, known_keys=known_keys)
             except CDPError as exc:
@@ -416,6 +454,7 @@ class PlaceScraper:
             rows = dedupe_rows(rows + result.rows, known_keys)
             if result.blocked:
                 blocked = True
+                logger.warning("rate-limited at cell %d; the cells after it are not searched", index)
                 print(
                     f"\n  ⚠ Stopped at cell {index}/{len(cells)}: Google rate-limited "
                     "this IP; the cells after it were not searched."
@@ -436,6 +475,7 @@ class PlaceScraper:
                 f"{len(kept)} kept so far"
             )
             if query.limit and len(kept) >= query.limit:
+                logger.info("reached the row limit of %s; stopping", query.limit)
                 print(f"  ✓ reached --limit {query.limit}; stopping")
                 break
 
@@ -443,6 +483,12 @@ class PlaceScraper:
                 sub_cells: list[GridCell] = [
                     {**cell, "_sub": True} for cell in build_grid_cells(cell["_bbox"], 2)
                 ]
+                logger.info(
+                    "cell %d is at Google's cap (%d rows): %d sub-tiles added",
+                    index,
+                    len(result.rows),
+                    len(sub_cells),
+                )
                 cells.extend(sub_cells)  # one level only: sub-tiles never split again
                 print(
                     f"  ! cell {index} is at Google's cap: "
@@ -450,6 +496,14 @@ class PlaceScraper:
                 )
 
         kept = finalize_rows(rows, query, bounding_box)
+        logger.info(
+            "grid done: %d finished, %d skipped, blocked=%s, %d unique rows, %d kept",
+            finished,
+            skipped,
+            blocked,
+            len(rows),
+            len(kept),
+        )
         print(f"  {len(rows)} unique rows, {len(kept)} after the city box and filters")
 
         return ScrapeResult(kept, columns, finished, skipped, blocked)

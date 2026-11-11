@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    logger.info(
+        "crawl requested: %s (max_pages=%d, finish_incomplete=%s)",
+        args.website,
+        args.max_pages,
+        args.finish_incomplete,
+    )
     options = dataclasses.replace(CRAWL_OPTIONS, max_pages=args.max_pages)
     try:
         summary = crawl_one(
@@ -62,6 +68,7 @@ def main() -> None:
             finish_incomplete=args.finish_incomplete,
         )
     except KeyboardInterrupt:
+        logger.warning("crawl stopped by the user")
         if args.finish_incomplete:
             print(
                 "\n⚠ Crawl stopped; unfinished crawls stay in Redis for the next run."
@@ -72,6 +79,12 @@ def main() -> None:
     except Exception as exc:
         logger.exception("the crawl failed")
         sys.exit(f"✗ The crawl failed: {describe(exc)} (the traceback is above)")
+    logger.info(
+        "crawl done: %d queued, %d rejected, %d skipped",
+        summary.queued,
+        summary.rejected,
+        summary.skipped,
+    )
     print(
         f"✓ Crawl: {summary.queued} queued, {summary.rejected} not crawlable, "
         f"{summary.skipped} skipped"

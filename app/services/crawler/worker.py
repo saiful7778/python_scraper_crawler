@@ -21,6 +21,7 @@ def check_website(
     """Crawl one website into the buffer; a failure is recorded on its website."""
     crawl: WebsiteCrawl | None = None
     website_id: str | None = None
+    logger.debug("checking website %s", job["website"])
     try:
         origin = origin_of(job["website"])
         host = hostname_of(origin)

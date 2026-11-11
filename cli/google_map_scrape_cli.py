@@ -192,6 +192,7 @@ def read_query() -> CliQuery:
                 lines.append(f"✗ {flag}: {problem['msg']}.")
             else:
                 lines.append(f"✗ {problem['msg']}.")
+        logger.warning("invalid arguments: %s", "; ".join(lines))
         sys.exit("\n".join(lines))
 
 
@@ -204,8 +205,10 @@ def check_output_path(path: str) -> None:
     """Exit before scraping when the CSV folder is missing or not writable."""
     folder = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(folder):
+        logger.error("output folder %s does not exist", folder)
         sys.exit(f"✗ --output: the folder {folder} does not exist.")
     if not os.access(folder, os.W_OK):
+        logger.error("output folder %s is not writable", folder)
         sys.exit(f"✗ --output: the folder {folder} is not writable.")
 
 
@@ -242,8 +245,11 @@ async def with_database[T](action: Callable[[], Awaitable[T]]) -> T:
 
 
 async def load_known_keys() -> frozenset[str]:
+    logger.debug("reading the known lead keys from PostgreSQL")
     repository = GoogleMapProfileRepository(LeadRepository())
-    return frozenset(seen_keys_of(await repository.key_rows()))
+    keys = frozenset(seen_keys_of(await repository.key_rows()))
+    logger.info("loaded %d known lead keys", len(keys))
+    return keys
 
 
 def print_plan(query: CliQuery, output: str) -> None:
@@ -284,6 +290,24 @@ def print_plan(query: CliQuery, output: str) -> None:
 
 def main() -> None:
     query = read_query()
+    logger.info(
+        "query: keyword=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s format=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
+        query.keyword,
+        query.city,
+        query.state,
+        query.country,
+        query.grid,
+        query.deep_scan,
+        query.scroll_depth,
+        query.max_seconds,
+        query.limit,
+        query.output_format,
+        query.has_phone,
+        query.has_website,
+        query.no_crawl,
+        query.dry_run,
+        len(query.proxies or []),
+    )
 
     if query.deep_scan:
         n = (query.grid or 3) ** 2
@@ -301,15 +325,20 @@ def main() -> None:
     output = query.output or default_output(
         query.keyword, query.city, query.output_format
     )
+    logger.info("output file: %s", output)
 
     known = set(columns_for(query))
     unknown = [name for name in query.fields or [] if name not in known]
     if unknown:
+        logger.warning(
+            "fields not produced by the scrape, written empty: %s", ", ".join(unknown)
+        )
         print(
             f"⚠ --fields: not a column of the scrape, written empty: {', '.join(unknown)}\n"
         )
 
     if query.dry_run:
+        logger.info("dry run: plan shown, nothing scraped or written")
         print_plan(query, output)
         return
 
@@ -330,6 +359,7 @@ def main() -> None:
         result = scraper.scrape(query, known_keys)
     except KeyboardInterrupt:
         salvage = scraper.salvage_rows
+        logger.warning("scrape interrupted with %d leads found so far", len(salvage))
         if salvage:
             try:
                 write_output(
@@ -339,21 +369,34 @@ def main() -> None:
                     query.output_format,
                 )
             except OSError as error:
+                logger.error("saving the leads found so far failed: %s", describe(error))
                 print(f"\n✗ Could not save the leads found so far: {describe(error)}")
                 raise
+            logger.info("saved %d leads found before the interrupt to %s", len(salvage), output)
             print(f"\n✓ Saved the {len(salvage)} leads found so far to {output}")
         raise
     except ScraperError as exc:
+        logger.error("scrape failed: %s", describe(exc))
         sys.exit(f"✗ {describe(exc)}")
     except (ValueError, RuntimeError) as exc:
         logger.exception("the scrape failed unexpectedly")
         sys.exit(f"✗ {describe(exc)} (the traceback is above)")
 
+    logger.info(
+        "scrape done: %d finished, %d skipped, blocked=%s, %d leads",
+        result.finished,
+        result.skipped,
+        result.blocked,
+        len(result.rows),
+    )
     if result.blocked:
+        logger.warning("Google rate-limited this IP; the rows found before that are kept")
         print("⚠ Google rate-limited this IP. The rows found before that are kept.")
     if result.skipped:
+        logger.warning("%d scrape(s) skipped", result.skipped)
         print(f"⚠ {result.skipped} scrape(s) skipped; see the ⚠ lines above.")
     if result.finished == 0:
+        logger.error("no scrape finished")
         sys.exit("✗ No scrape finished; the reason is in the ✗ line above.")
 
     try:
@@ -364,25 +407,39 @@ def main() -> None:
             query.output_format,
         )
     except OSError as error:
+        logger.error("writing the output failed: %s", describe(error))
         sys.exit(f"✗ {describe(error)}")
+    logger.info("wrote %d leads to %s as %s", len(result.rows), output, query.output_format)
     print(f"✓ {len(result.rows)} leads → {output}")
 
     with_website = [row for row in result.rows if row.get("website")]
     if query.no_crawl or not with_website:
+        logger.info(
+            "crawl stage skipped: %s",
+            "--no-crawl" if query.no_crawl else "no lead has a website",
+        )
         return
 
+    logger.info("crawl stage: %d lead website(s)", len(with_website))
     print(f"\n▶ Crawling the websites of {len(with_website)} lead(s)")
     try:
         summary = run_crawl_stage(
             result.rows, redis=connect(RedisConfig()), postgres=TortoiseConfig()
         )
     except KeyboardInterrupt:
+        logger.warning("crawl stage interrupted; the leads stay in %s", output)
         print(f"\n⚠ Crawl stopped; the leads stay in {output}.")
         raise
     except Exception as exc:  # the CSV is saved; report the crawl failure
         logger.exception("the crawl stage failed")
         print(f"⚠ The crawl stage failed: {describe(exc)} (the CSV is kept)")
         return
+    logger.info(
+        "crawl stage done: %d queued, %d rejected, %d skipped",
+        summary.queued,
+        summary.rejected,
+        summary.skipped,
+    )
     print(
         f"✓ Crawl: {summary.queued} queued, {summary.rejected} not crawlable, "
         f"{summary.skipped} skipped"

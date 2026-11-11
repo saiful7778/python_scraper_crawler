@@ -111,6 +111,8 @@ class Flusher(threading.Thread):
                 self._rows.trim(scrape_id, count)
             saved += count
         self._flush_crawls()
+        if saved:
+            logger.debug("flushed %d buffered lead row(s)", saved)
         return saved
 
     def run(self) -> None:
@@ -164,6 +166,7 @@ class Flusher(threading.Thread):
                     exc_info=error,
                 )
                 continue
+            logger.info("crawl of website %s stored in PostgreSQL", website_id)
             crawl_buffer.release_website(website_id)
 
     async def _save_batch(self, batch: list[LeadRow], scrape_id: str) -> int:
@@ -216,6 +219,7 @@ class Flusher(threading.Thread):
             finally:
                 context.__exit__(None, None, None)
             self._context = context
+            logger.info("opened the PostgreSQL connection for the flusher")
         return self._context
 
     def _close(self) -> None:

@@ -12,11 +12,14 @@ from app.services.google_map_scraper.google_map import (
     CONSENT_COOKIES,
     fetch_lead_panel_json,
 )
+from app.utils.logger import get_logger
 
 from .lead_rows import review_start_columns
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_types import LeadRow, is_lead_key
+
+logger = get_logger(__name__)
 
 _PANEL_ONLY_FIELDS = ("user_reviews", "reviews_per_rating")
 _COORDINATE_FIELDS = ("latitude", "longitude")
@@ -52,6 +55,7 @@ class ReviewPass:
             return 0
         proxy = self._proxies[0] if self._proxies else None
         reviewed = 0
+        logger.info("reviews: reading the panels of %d lead(s)", len(todo))
         try:
             with self._browser.open_tab(proxy) as proxy_tab:
                 tab = proxy_tab.tab
@@ -69,6 +73,10 @@ class ReviewPass:
                         break
                     body = fetch_lead_panel_json(tab, self._panel_url(row))
                     if "/sorry/" in (tab.get_url() or ""):
+                        logger.warning(
+                            "reviews: Google's unusual-traffic page after %d panel(s)",
+                            reviewed,
+                        )
                         self._notes.append(
                             f"reviews read for {position} of {len(todo)} leads: "
                             "Google's unusual-traffic page"
@@ -76,11 +84,19 @@ class ReviewPass:
                         break
                     self._merge_panel(row, parse_place_panel(body or ""))
                     reviewed += 1
+                    logger.debug(
+                        "reviews: panel %d/%d read for %s",
+                        position + 1,
+                        len(todo),
+                        row.get("title", ""),
+                    )
                     self._progress.save(
                         reviews_done=position + 1, reviews_total=len(todo)
                     )
         except (CDPError, OSError) as error:
+            logger.warning("the reviews pass stopped early: %s", error)
             self._notes.append(f"the reviews pass stopped early: {error}")
+        logger.info("reviews: %d of %d lead panel(s) read", reviewed, len(todo))
         return reviewed
 
     def _panel_url(self, row: LeadRow) -> str:

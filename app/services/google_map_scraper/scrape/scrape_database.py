@@ -56,6 +56,7 @@ class ScrapeDatabase:
                 scrape_id, name, settings, list(settings["keywords"])
             ),
         )
+        logger.info("created scrape %s for %r", scrape_id, name)
         return str(scrape_id)
 
     def get(self, scrape_id: str) -> ScrapeRecord | None:
@@ -77,10 +78,13 @@ class ScrapeDatabase:
         self, scrape_id: str, status: str, error: str, progress: ProgressData
     ) -> bool:
         """Store the final status; False when the scrape was deleted."""
-        return self._call(
+        finished = self._call(
             "finishing the scrape",
             self._repository.finish(scrape_id, status, error, progress),
         )
+        if not finished:
+            logger.warning("scrape %s was deleted before it finished", scrape_id)
+        return finished
 
     def requeue_interrupted(self, max_resumes: int) -> tuple[int, int]:
         """Resume scrapes a stopped engine left working; returns ``(resumed, failed)``."""

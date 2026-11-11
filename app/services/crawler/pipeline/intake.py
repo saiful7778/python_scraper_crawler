@@ -38,14 +38,17 @@ class CrawlIntake:
                 skipped += 1
                 continue
             if self._buffer.has_website(origin):
+                logger.debug("website %s already crawled in this run; skipped", origin)
                 skipped += 1
                 continue
             check = check_origin(origin, self._fetch)
             if check.crawlable:
                 job: CrawlJob = {"website": website, "origin": origin}
                 if self._queue.enqueue(job):
+                    logger.debug("website %s queued", website)
                     queued += 1
                 else:
+                    logger.debug("website %s already in the queue; skipped", website)
                     skipped += 1
                 continue
             website_id = self._buffer.create_website(
@@ -54,5 +57,6 @@ class CrawlIntake:
                 origin=origin,
             )
             self._buffer.fail_website(website_id, "not_crawlable", check.reason)
+            logger.info("website %s not crawlable: %s", website, check.reason)
             rejected += 1
         return IntakeResult(queued=queued, rejected=rejected, skipped=skipped)

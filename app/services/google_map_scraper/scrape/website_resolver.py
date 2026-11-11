@@ -57,8 +57,11 @@ def resolve_website(
             if not _is_public(final, public):
                 continue
             if response.status_code < 400:
+                logger.debug("website %s resolved to %s", raw, final)
                 return final
             fallback = fallback or final
+    if fallback is None:
+        logger.debug("no address of %s answered below 400; keeping it", raw)
     return fallback or raw
 
 

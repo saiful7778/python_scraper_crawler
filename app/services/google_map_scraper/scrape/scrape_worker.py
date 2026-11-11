@@ -96,6 +96,7 @@ class ScrapeWorker(threading.Thread):
             self._database, scrape, self._headless, self._redis, self._known_keys
         )
         self._current = run
+        logger.info("scrape %s: starting", scrape["ID"])
         if self._stopped.is_set():
             run.pause()
         try:
@@ -112,5 +113,11 @@ class ScrapeWorker(threading.Thread):
             self._report(scrape, run.outcome, run)
 
     def _report(self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun) -> None:
+        logger.info(
+            "scrape %s reported as %s with %d leads",
+            scrape["ID"],
+            outcome.status,
+            len(run.rows),
+        )
         if self._on_finished is not None:
             self._on_finished(scrape["ID"], outcome, run.rows)

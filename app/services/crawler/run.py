@@ -18,12 +18,15 @@ from app.services.crawler.site.scope import origin_of, registrable_domain
 from app.services.crawler.worker import check_website
 from app.services.google_map_scraper.scrape.scrape_limits import BUFFER_TTL_SECONDS
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
-from app.utils.errors import ScraperError
+from app.utils.errors import ScraperError, describe
+from app.utils.logger import get_logger
 from config.tortoise import TortoiseConfig
 
 from .pipeline.crawlability import check_origin
 from .pipeline.intake import CrawlIntake
 from .pipeline.stage import CRAWL_OPTIONS, CrawlStage, site_fetch
+
+logger = get_logger(__name__)
 
 CRAWL_THREADS = 4
 #: Seconds the threads get to stop after their current website.
@@ -59,8 +62,17 @@ def run_crawl_stage(
     buffer = RedisCrawlBuffer(redis, BUFFER_TTL_SECONDS)
     fetch = fetch or site_fetch(WebPageFetcher())
 
+    logger.info(
+        "crawl stage: %d website(s) from %d lead(s)", len(websites), len(rows)
+    )
     queue.requeue_processing()
     intake = CrawlIntake(queue, buffer, fetch).submit(websites)
+    logger.info(
+        "intake: %d queued, %d rejected, %d skipped",
+        intake.queued,
+        intake.rejected,
+        intake.skipped,
+    )
 
     flusher = _flusher(redis, buffer, postgres)
     stage = CrawlStage(queue, buffer, fetch, CRAWL_THREADS, options)
@@ -106,7 +118,8 @@ def crawl_one(
     try:
         origin = origin_of(website)
         host = hostname_of(origin)
-    except Exception:
+    except Exception as error:
+        logger.warning("website %r has no usable origin: %s", website, describe(error))
         return CrawlSummary(queued=0, rejected=0, skipped=1, checked=0)
 
     buffer = RedisCrawlBuffer(redis, BUFFER_TTL_SECONDS)
@@ -137,6 +150,7 @@ def _check_directly(
     host: str,
     options: CrawlOptions,
 ) -> CrawlSummary:
+    logger.info("crawl of %s: checking %s", website, origin)
     check = check_origin(origin, fetch)
     if not check.crawlable:
         website_id = buffer.create_website(
@@ -145,7 +159,9 @@ def _check_directly(
             origin=origin,
         )
         buffer.fail_website(website_id, "not_crawlable", check.reason)
+        logger.info("crawl of %s rejected: %s", website, check.reason)
         return CrawlSummary(queued=0, rejected=1, skipped=0, checked=1)
+    logger.info("crawl of %s: starting", website)
     check_website(buffer, fetch, {"website": website, "origin": origin}, options)
     return CrawlSummary(queued=0, rejected=0, skipped=0, checked=1)
 

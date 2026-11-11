@@ -70,6 +70,12 @@ class KeywordSearch:
         """Search keywords in order until all are done, the time runs out or the scrape stops."""
         keywords = self._settings.keywords
         index, again, relaunches = first_keyword, False, 0
+        logger.info(
+            "scrape %s: searching %d keyword(s) from keyword %d",
+            self._scrape_id,
+            len(keywords) - first_keyword,
+            first_keyword + 1,
+        )
         while (
             index < len(keywords)
             and self._browser.browser is not None
@@ -82,6 +88,13 @@ class KeywordSearch:
                 break
             self._index, self._keyword = index, keywords[index]
             proxy = self._rotation.pick(index)
+            logger.debug(
+                "scrape %s keyword %s: %r, %s",
+                self._scrape_id,
+                self._position(),
+                self._keyword,
+                "through a proxy" if proxy else "without a proxy",
+            )
             url = build_maps_search_url(
                 self._keyword,
                 self._settings.latitude,
@@ -333,6 +346,12 @@ class KeywordSearch:
         if not self._stop.is_set() and remaining > 0 and self._state.errors:
             self._state.errors[-1] += (
                 f"; {remaining} keyword(s) after it were not searched"
+            )
+            logger.warning(
+                "scrape %s: %d keyword(s) after %s were not searched",
+                self._scrape_id,
+                remaining,
+                self._position(),
             )
 
     def _has_room(self, pending: int = 0) -> bool:

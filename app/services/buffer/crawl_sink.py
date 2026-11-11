@@ -17,6 +17,9 @@ from app.services.buffer.crawl_types import WEBSITE_TECH_FIELDS, WebsiteSnapshot
 from app.services.buffer.flusher import upsert
 from app.services.crawler.findings import Finding
 from app.services.crawler.lead_fields import lead_columns, social_links
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _event_id(run_id: object, event_number: object) -> UUID:
@@ -59,7 +62,16 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
     a match the website is stored with no lead. Repeating it is harmless.
     """
     domain = snapshot.website["host"].removeprefix("www.")
+    logger.debug(
+        "storing crawl of %s: %d pages, %d links, %d findings, %d events",
+        domain,
+        len(snapshot.pages),
+        len(snapshot.links),
+        len(snapshot.findings),
+        len(snapshot.events),
+    )
     lead = await LeadRepository().find_by_host(domain)
+    logger.debug("crawl of %s: lead match %s", domain, lead.id if lead else "none")
     columns = crawl_columns(snapshot)
     first_per_platform: dict[str, str] = {}
     for platform, url in crawl_socials(snapshot):

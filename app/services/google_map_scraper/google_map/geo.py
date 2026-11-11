@@ -10,8 +10,10 @@ from collections.abc import Mapping
 from typing import Any, NotRequired, TypedDict
 
 from app.utils.errors import ScraperError, describe
+from app.utils.logger import get_logger
 
 USER_AGENT = "Mozilla/5.0 (compatible; python_scraper_crawler-scraper/3.0)"
+logger = get_logger(__name__)
 
 BoundingBox = tuple[float, float, float, float]  # (south, north, west, east)
 LatLon = tuple[str, str]
@@ -58,6 +60,7 @@ def get_geocode(
     query = urllib.parse.urlencode(params)
     url = f"https://nominatim.openstreetmap.org/search?{query}"
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    logger.debug("geocoding %r (country=%s)", place, country or "any")
 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -77,6 +80,7 @@ def get_geocode(
         raise GeocodingError(
             f"Nominatim's answer for {place!r} is a {type(hits).__name__}, not a list"
         )
+    logger.debug("Nominatim returned %d hit(s) for %r", len(hits), place)
     if not hits:
         return None
     try:
@@ -127,6 +131,7 @@ def build_grid_cells(bounding_box: BoundingBox, cells_per_side: int) -> list[Gri
                     ),
                 }
             )
+    logger.debug("built %d grid cells (%dx%d)", len(cells), cells_per_side, cells_per_side)
     return cells
 
 

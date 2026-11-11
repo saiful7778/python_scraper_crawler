@@ -133,6 +133,13 @@ class WebsiteCrawl:
                 requested_url=self._website,
                 config=asdict(self._options),
             )
+            logger.info(
+                "crawl of %s started: run %s, max_pages=%s, max_depth=%s",
+                self._website,
+                self._run_id,
+                self._options.max_pages,
+                self._options.max_depth,
+            )
         except Exception as exc:
             logger.error(
                 "crawl of %s could not start, no run was recorded: %s",
@@ -253,6 +260,13 @@ class WebsiteCrawl:
             seeds.append(PageSeed(url, normalized, depth, source))
         if not seeds:
             return
+        logger.debug(
+            "crawl of %s: queued %d page(s) from %s at depth %d",
+            self._website,
+            len(seeds),
+            source,
+            depth,
+        )
         ids = self._buffer.add_pages(self._active_run_id(), seeds)
         for seed in seeds:
             self._queue.append((seed.normalized_url, ids[seed.normalized_url], depth))
@@ -267,6 +281,13 @@ class WebsiteCrawl:
         )
 
     def _save(self, page_id: str, result: PageResult) -> None:
+        logger.debug(
+            "crawl of %s: page %s saved as %s %s",
+            self._website,
+            page_id,
+            result.status,
+            result.skip_reason or result.error_code or "",
+        )
         self._buffer.save_page(page_id, result)
         self._counts[result.status] = self._counts.get(result.status, 0) + 1
         if result.status == "skipped" and result.skip_reason not in QUIET_SKIPS:
@@ -275,6 +296,7 @@ class WebsiteCrawl:
     def _fetch_home(self) -> None:
         if self._policy is not None and not self._policy.is_allowed(self._home_url):
             self._home_state = "disallowed"
+            logger.info("crawl of %s: homepage disallowed by robots.txt", self._website)
             self._seed([self._home_url], 0, "start")
             _, page_id, _ = self._queue.popleft()
             self._save(
@@ -344,12 +366,21 @@ class WebsiteCrawl:
             )
         else:
             self._home_state = "ok"
+            logger.debug(
+                "crawl of %s: homepage fetched in %s ms", self._website, self._home_ms
+            )
 
     def _read_robots(self) -> None:
         result = self._fetch(self._origin + "/robots.txt")
         if result.error is None and result.status == 200:
             self._robots_text = result.text
             self._policy = RobotTxtPolicy.from_text(self._robots_text)
+            logger.debug(
+                "crawl of %s: robots.txt read, %d disallow rule(s), %d sitemap(s)",
+                self._website,
+                len(self._policy.disallow),
+                len(self._policy.sitemaps),
+            )
         elif result.error is not None or result.status >= 500:
             self._event(
                 "robots",
@@ -397,6 +428,13 @@ class WebsiteCrawl:
             self._event("sitemap", "warning", f"{url}: {exc}")
             return [], []
         self._sitemap_ok = True
+        logger.debug(
+            "crawl of %s: sitemap %s lists %d URL(s) and %d sitemap(s)",
+            self._website,
+            url,
+            len(urls),
+            len(children),
+        )
         return urls, children
 
     def _crawl_pages(self) -> None:
@@ -424,6 +462,11 @@ class WebsiteCrawl:
                     )
         if self._truncated:
             self._degraded = True
+            logger.warning(
+                "crawl of %s: page limit %d reached; some pages were not queued",
+                self._website,
+                self._options.max_pages,
+            )
             self._event(
                 "pages",
                 "warning",
@@ -594,6 +637,13 @@ class WebsiteCrawl:
             except Exception as exc:  # noqa: BLE001 - one failed extractor leaves the others running
                 self._fail(f"extract_{name}", exc, page_id)
                 continue
+            logger.debug(
+                "crawl of %s: %s found %d row(s) on %s",
+                self._website,
+                name,
+                len(rows),
+                page_url,
+            )
             findings.extend(rows)
         if not findings:
             return
@@ -618,6 +668,9 @@ class WebsiteCrawl:
             self._robots_text,
             self._sitemap_ok,
             self._sitemap_count,
+        )
+        logger.debug(
+            "crawl of %s: %d site check(s) recorded", self._website, len(findings)
         )
         self._buffer.add_findings(
             website_id=self._website_id,

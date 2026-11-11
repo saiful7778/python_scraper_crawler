@@ -78,6 +78,7 @@ class CrawlStage:
             threading.Thread(target=self._run, daemon=True, name=f"crawl-{number}")
             for number in range(self._size)
         ]
+        logger.info("starting %d crawl thread(s)", self._size)
         for thread in self._threads:
             thread.start()
         for thread in self._threads:
@@ -102,12 +103,15 @@ class CrawlStage:
                 )
                 return
             if job is None:
+                logger.debug("%s: no websites left to claim", threading.current_thread().name)
                 return
             self._handle(job)
 
     def _handle(self, job: CrawlJob) -> None:
         if not self._origins.acquire(job["origin"], self._stopped):
+            logger.info("website %s not checked: the crawl is stopping", job["website"])
             return
+        logger.info("crawl of %s: checking %s", job["website"], job["origin"])
         try:
             try:
                 check_website(self._buffer, self._fetch, job, self._options)
