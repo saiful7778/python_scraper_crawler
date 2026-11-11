@@ -36,3 +36,15 @@ def crawl_finished_key() -> str:
 
 def crawl_owners_key() -> str:
     return "buffer:crawl_owners"
+
+
+def crawl_queue_key() -> str:
+    return "buffer:crawl_queue"
+
+
+def crawl_processing_key() -> str:
+    return "buffer:crawl_processing"
+
+
+def crawl_queued_key() -> str:
+    return "buffer:crawl_queued"
