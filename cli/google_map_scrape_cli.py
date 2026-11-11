@@ -14,7 +14,7 @@ from tortoise import Tortoise
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.repositories import GoogleMapProfileRepository, LeadRepository
 from app.services.buffer.client import connect
-from app.services.crawl_pipeline.run import run_crawl_stage
+from app.services.crawler.pipeline.run import run_crawl_stage
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow

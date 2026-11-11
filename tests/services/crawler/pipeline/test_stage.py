@@ -4,13 +4,8 @@ import pytest
 from app.helpers.http_fetcher import FetchResult, SITE_TIMEOUT
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_queue import CrawlQueue
-from app.services.crawl_pipeline.stage import (
-    CRAWL_OPTIONS,
-    CrawlIntake,
-    CrawlStage,
-    IntakeResult,
-    site_fetch,
-)
+from app.services.crawler.pipeline.intake import CrawlIntake, IntakeResult
+from app.services.crawler.pipeline.stage import CRAWL_OPTIONS, CrawlStage, site_fetch
 
 TTL = 3600
 HTML = b"<html><head><title>Home</title></head><body>Bakery</body></html>"

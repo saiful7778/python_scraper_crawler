@@ -1,7 +1,7 @@
 import pytest
 
 from app.helpers.http_fetcher import FetchError, FetchResult
-from app.services.crawl_pipeline.crawlability import CrawlCheck, check_origin, is_crawlable
+from app.services.crawler.pipeline.crawlability import CrawlCheck, check_origin, is_crawlable
 
 
 def make_result(

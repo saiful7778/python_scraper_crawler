@@ -16,7 +16,8 @@ from app.services.google_map_scraper.scrape.scrape_limits import BUFFER_TTL_SECO
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from config.tortoise import TortoiseConfig
 
-from .stage import CRAWL_OPTIONS, CrawlIntake, CrawlStage, site_fetch
+from .intake import CrawlIntake
+from .stage import CRAWL_OPTIONS, CrawlStage, site_fetch
 
 CRAWL_THREADS = 4
 #: Seconds the threads get to stop after their current website.
