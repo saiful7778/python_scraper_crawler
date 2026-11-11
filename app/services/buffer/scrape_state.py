@@ -13,9 +13,10 @@ from app.services.buffer.keys import (
     rows_key,
     state_key,
 )
-
-SettingsData = dict[str, Any]
-ProgressData = dict[str, Any]
+from app.services.google_map_scraper.scrape.scrape_types import (
+    ProgressData,
+    SettingsData,
+)
 
 
 def _scrape_keys(scrape_id: str) -> list[str]:
