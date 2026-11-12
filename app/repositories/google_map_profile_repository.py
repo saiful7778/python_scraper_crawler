@@ -50,7 +50,7 @@ PROFILE_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in PROFILE_TEXT_FIELDS)
 LEAD_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in LEAD_FIELDS)
 
 
-def _number(text, kind):
+def we_number(text, kind):
     if not text:
         return None
     try:
@@ -87,7 +87,7 @@ def _profile_values(row: LeadRow) -> dict:
     values["about"] = _about(row.get("about", ""))
     values["review_count"] = _number(row.get("review_count", ""), int)
     values["review_rating"] = _number(row.get("review_rating", ""), float)
-    for star in range(1, 5):
+    for star in range(1, 6):
         key = f"review_star_{star}_count"
         values[key] = _number(row.get(key, ""), int)
     return values
