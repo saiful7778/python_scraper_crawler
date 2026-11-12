@@ -60,10 +60,6 @@ class ScrapeWorkerDiedError(ScraperError):
     """The scrape worker thread stopped before the scrape reached an outcome."""
 
 
-class ScrapeFlushError(ScraperError):
-    """PostgreSQL did not take every buffered lead, so the scrape stays resumable."""
-
-
 def columns_for(query: PlaceQuery) -> list[str]:
     """The CSV columns a query produces."""
     return result_columns(query.engine_settings())
@@ -228,17 +224,30 @@ class ScrapeSession:
         ids = [i for i in (*carried, scrape_id) if i in self._finished]
         self._worker.shutdown(wait=1)
         self._flusher.shutdown(wait=_FINAL_FLUSH_SECONDS)
-        for finished_id in ids:
-            left = self._rows.length(finished_id)
-            if left:
-                raise ScrapeFlushError(
-                    f"PostgreSQL did not take {left} buffered lead(s) of scrape "
-                    f"{finished_id}; they stay in Redis and the scrape resumes on the next start"
-                )
         result: RunResult | None = None
         for finished_id in ids:
             outcome, rows = self._finished[finished_id]
             progress = self._state.get_progress(finished_id)
+            left = self._rows.length(finished_id)
+            if left:
+                logger.warning(
+                    "PostgreSQL did not take %d buffered lead(s) of scrape %s; they stay in Redis and the scrape resumes on the next start",
+                    left,
+                    finished_id,
+                )
+                if finished_id == scrape_id:
+                    unsaved = (
+                        f"{left} lead(s) not saved to PostgreSQL; they stay in Redis "
+                        "and the scrape resumes on the next start"
+                    )
+                    result = RunResult(
+                        scrape_id=scrape_id,
+                        status=outcome.status,
+                        note="; ".join(filter(None, (outcome.note, unsaved))),
+                        rows=rows,
+                        blocked=bool(progress.get("blocked")),
+                    )
+                continue
             discard_scrape(self._redis, finished_id)
             if not self._database.finish(
                 finished_id, outcome.status, outcome.note, progress
@@ -280,8 +289,6 @@ def run_scrape(
     :raises ScrapeDeletedError: If the scrape is deleted while it runs.
     :raises ScrapeWorkerDiedError: If the worker thread stops before the scrape
         has an outcome, so the wait would otherwise never end.
-    :raises ScrapeFlushError: If PostgreSQL did not take every buffered lead;
-        they stay in Redis and the scrape resumes on the next start.
     :raises BufferError: If Redis fails.
     :raises ScrapeDatabaseError: If PostgreSQL fails.
     """
