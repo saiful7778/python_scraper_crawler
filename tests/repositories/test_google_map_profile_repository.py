@@ -3,10 +3,13 @@ import json
 import pytest
 
 from app.models import (
+    GoogleMapKeyword,
+    GoogleMapProfileHourModel,
     GoogleMapProfileImageModel,
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
     GoogleMapProfileToLeadModel,
+    KeywordModel,
     LeadModel,
 )
 from app.repositories.google_map_profile_repository import GoogleMapProfileRepository
@@ -79,3 +82,27 @@ async def test_saving_a_row_with_place_id_and_no_website_twice_creates_one_lead(
     await repo.save_row(row, scrape_id="s1")
     assert await GoogleMapProfileModel.all().count() == 1
     assert await LeadModel.all().count() == 1
+
+
+async def test_saving_a_row_links_its_keyword_to_the_profile(db, repo):
+    row = {"place_id": "p1", "title": "Cafe A", "input_id": "Coffee Shops"}
+    await repo.save_row(row, scrape_id="s1")
+    await repo.save_row({**row, "input_id": "coffee shops"}, scrape_id="s2")
+    links = await GoogleMapKeyword.all().prefetch_related("keyword")
+    assert len(links) == 1
+    assert links[0].keyword.name == "Coffee Shops"
+    assert links[0].scrape_id == "s1"
+    assert await KeywordModel.all().count() == 1
+
+
+async def test_saving_a_row_stores_one_hour_per_time_range(db, repo):
+    hours = {"Monday": ["9 AM-5 PM", "6 PM-9 PM"], "Tuesday": ["Closed"]}
+    row = {"place_id": "p1", "title": "Cafe A", "open_hours": json.dumps(hours)}
+    await repo.save_row(row, scrape_id="s1")
+    await repo.save_row(row, scrape_id="s1")
+    saved = await GoogleMapProfileHourModel.all().order_by("day", "position")
+    assert [(h.day, h.position, h.span) for h in saved] == [
+        ("Monday", 0, "9 AM-5 PM"),
+        ("Monday", 1, "6 PM-9 PM"),
+        ("Tuesday", 0, "Closed"),
+    ]

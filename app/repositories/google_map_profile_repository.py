@@ -8,6 +8,9 @@ from app.models import (
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
     GoogleMapProfileToLeadModel,
+    GoogleMapKeyword,
+    GoogleMapProfileHourModel,
+    KeywordModel,
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
@@ -95,6 +98,19 @@ def _list(text):
     return items if isinstance(items, list) else []
 
 
+def _hour_spans(open_hours) -> list[tuple[str, int, str]]:
+    """The (day, position, span) triples of an open-hours record, one per time range."""
+    if not isinstance(open_hours, dict):
+        return []
+    return [
+        (day, position, span)
+        for day, spans in open_hours.items()
+        if isinstance(spans, list)
+        for position, span in enumerate(spans)
+        if isinstance(span, str) and span
+    ]
+
+
 def review_hash(review: dict) -> str:
     return hashlib.sha256(
         json.dumps(review, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -141,6 +157,8 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def save_row(self, row: LeadRow, scrape_id: str) -> None:
         profile = await self._save_profile(row)
+        await self._save_keyword(profile, row, scrape_id)
+        await self._save_hours(profile, row)
         await self._save_images(profile, row)
         await self._save_reviews(profile, row)
         lead = await self._save_lead(row, profile)
@@ -188,6 +206,49 @@ class GoogleMapProfileRepository(BaseRepository):
         if self.fill_empty(profile, values):
             await profile.save()
         return profile
+
+    async def _save_keyword(self, profile, row: LeadRow, scrape_id: str) -> None:
+        name = row.get("input_id", "").strip()
+        if not name:
+            return
+        keyword, _ = await KeywordModel.get_or_create(
+            name_key=name.lower(),
+            defaults={
+                "name": name,
+                "counter": await self.next_counter(KeywordModel),
+            },
+        )
+        base = await self.next_counter(GoogleMapKeyword, google_map_id=profile.id)
+        await self.insert_ignoring_conflicts(
+            GoogleMapKeyword,
+            [
+                GoogleMapKeyword(
+                    google_map_id=profile.id,
+                    keyword_id=keyword.id,
+                    counter=base,
+                    scrape_id=scrape_id,
+                )
+            ],
+        )
+
+    async def _save_hours(self, profile, row: LeadRow) -> None:
+        spans = _hour_spans(_json(row.get("open_hours", "")))
+        base = await self.next_counter(
+            GoogleMapProfileHourModel, google_map_id=profile.id
+        )
+        await self.insert_ignoring_conflicts(
+            GoogleMapProfileHourModel,
+            [
+                GoogleMapProfileHourModel(
+                    google_map_id=profile.id,
+                    counter=base + i,
+                    day=day,
+                    position=position,
+                    span=span,
+                )
+                for i, (day, position, span) in enumerate(spans)
+            ],
+        )
 
     async def _save_images(self, profile, row: LeadRow) -> None:
         images = [
