@@ -69,9 +69,13 @@ def columns_for(query: PlaceQuery) -> list[str]:
     return result_columns(query.engine_settings())
 
 
+def _has_value(row: LeadRow, column: str) -> bool:
+    return bool(str(row.get(column) or "").strip())
+
+
 def keep_row(row: LeadRow, query: PlaceQuery) -> bool:
-    return (not query.has_phone or bool(row.get("phone"))) and (
-        not query.has_website or bool(row.get("website"))
+    return (not query.has_phone or _has_value(row, "phone")) and (
+        not query.has_website or _has_value(row, "website")
     )
 
 

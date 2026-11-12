@@ -93,6 +93,8 @@ def maps_place_url(title: str, place_id: str) -> str:
 
 def cell_text(value: object) -> str:
     """The text of a row cell: a list or dict as JSON, anything else as text."""
+    if value is None:
+        return ""
     if isinstance(value, (list, dict)):
         value = json.dumps(value, ensure_ascii=False)
     return _sanitize_cell(value)

@@ -46,6 +46,12 @@ def test_keep_row_applies_the_website_filter():
     assert not keep_row(_row(website=""), query)
 
 
+@pytest.mark.parametrize("blank", ["   ", "\n\t"])
+def test_keep_row_treats_whitespace_as_no_website_or_phone(blank):
+    assert not keep_row(_row(website=blank), _query(has_website=True))
+    assert not keep_row(_row(phone=blank), _query(has_phone=True))
+
+
 def test_keep_row_keeps_everything_without_filters():
     assert keep_row(_row(), _query())
 
