@@ -41,7 +41,6 @@ class GoogleMapProfileModel(Model):
 
 class GoogleMapProfileHourModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     day = fields.CharField(max_length=16)
     position = fields.IntField(default=0)
     span = fields.TextField(null=True)
@@ -56,7 +55,6 @@ class GoogleMapProfileHourModel(Model):
 
 class GoogleMapProfileReviewModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     rating = fields.IntField(null=True)
     when_text = fields.TextField(null=True)
     description = fields.TextField(null=True)
@@ -74,7 +72,6 @@ class GoogleMapProfileReviewModel(Model):
 
 class GoogleMapProfileImageModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     isThumbnail = fields.BooleanField(default=False)
     url = fields.TextField()
     title = fields.TextField(null=True)

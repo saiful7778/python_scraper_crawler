@@ -63,7 +63,6 @@ class LeadEmailModel(Model):
     """Lead email model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     email = fields.CharField(max_length=320)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -80,7 +79,6 @@ class LeadCategoryModel(Model):
     """Lead category model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     name = fields.CharField(max_length=255)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -97,7 +95,6 @@ class LeadSocialModel(Model):
     """Lead social model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     platform = fields.CharField(max_length=16)
     url = fields.TextField()
     created_at = fields.DatetimeField(auto_now_add=True)

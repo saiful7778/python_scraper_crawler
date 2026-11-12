@@ -91,28 +91,19 @@ class LeadRepository(BaseRepository):
 
     async def _add_children(self, lead, parts):
         pid = lead.id
-        base_email = await self.next_counter(LeadEmailModel, lead_id=pid)
         await self.insert_ignoring_conflicts(
             LeadEmailModel,
-            [
-                LeadEmailModel(lead_id=pid, email=e, counter=base_email + i)
-                for i, e in enumerate(parts.get("emails", []))
-            ],
+            [LeadEmailModel(lead_id=pid, email=e) for e in parts.get("emails", [])],
         )
-        base_category = await self.next_counter(LeadCategoryModel, lead_id=pid)
         await self.insert_ignoring_conflicts(
             LeadCategoryModel,
-            [
-                LeadCategoryModel(lead_id=pid, name=c, counter=base_category + i)
-                for i, c in enumerate(parts["categories"])
-            ],
+            [LeadCategoryModel(lead_id=pid, name=c) for c in parts["categories"]],
         )
-        base_social = await self.next_counter(LeadSocialModel, lead_id=pid)
         await self.insert_ignoring_conflicts(
             LeadSocialModel,
             [
-                LeadSocialModel(lead_id=pid, platform=k, url=v, counter=base_social + i)
-                for i, (k, v) in enumerate(parts["socials"].items())
+                LeadSocialModel(lead_id=pid, platform=k, url=v)
+                for k, v in parts["socials"].items()
             ],
         )
         if parts["address"]:

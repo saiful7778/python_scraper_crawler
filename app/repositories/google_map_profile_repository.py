@@ -233,20 +233,13 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def _save_hours(self, profile, row: LeadRow) -> None:
         spans = _hour_spans(_json(row.get("open_hours", "")))
-        base = await self.next_counter(
-            GoogleMapProfileHourModel, google_map_id=profile.id
-        )
         await self.insert_ignoring_conflicts(
             GoogleMapProfileHourModel,
             [
                 GoogleMapProfileHourModel(
-                    google_map_id=profile.id,
-                    counter=base + i,
-                    day=day,
-                    position=position,
-                    span=span,
+                    google_map_id=profile.id, day=day, position=position, span=span
                 )
-                for i, (day, position, span) in enumerate(spans)
+                for day, position, span in spans
             ],
         )
 
@@ -256,39 +249,31 @@ class GoogleMapProfileRepository(BaseRepository):
             for image in _list(row.get("images", ""))
             if isinstance(image, dict) and image.get("image")
         ]
-        base = await self.next_counter(
-            GoogleMapProfileImageModel, google_map_id=profile.id
-        )
         await self.insert_ignoring_conflicts(
             GoogleMapProfileImageModel,
             [
                 GoogleMapProfileImageModel(
                     google_map_id=profile.id,
-                    counter=base + i,
                     url=image["image"],
                     title=image.get("title") or None,
                 )
-                for i, image in enumerate(images)
+                for image in images
             ],
         )
 
     async def _save_reviews(self, profile, row: LeadRow) -> None:
         reviews = [r for r in _list(row.get("user_reviews", "")) if isinstance(r, dict)]
-        base = await self.next_counter(
-            GoogleMapProfileReviewModel, google_map_id=profile.id
-        )
         await self.insert_ignoring_conflicts(
             GoogleMapProfileReviewModel,
             [
                 GoogleMapProfileReviewModel(
                     google_map_id=profile.id,
-                    counter=base + i,
                     rating=review.get("Rating"),
                     when_text=review.get("When") or None,
                     description=review.get("Description") or None,
                     content_hash=review_hash(review),
                 )
-                for i, review in enumerate(reviews)
+                for review in reviews
             ],
         )
 

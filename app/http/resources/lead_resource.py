@@ -53,12 +53,12 @@ class LeadListItemResource(Resource):
             "counter": lead.counter,
             "title": lead.title,
             "categories": [
-                c.name for c in sorted(lead.categories, key=lambda c: c.counter)
+                c.name for c in sorted(lead.categories, key=lambda c: c.created_at)
             ],
             "address": lead.address,
             "phone": lead.phone,
             "email": next(
-                (e.email for e in sorted(lead.emails, key=lambda e: e.counter)),
+                (e.email for e in sorted(lead.emails, key=lambda e: e.created_at)),
                 None,
             ),
             "website": lead.website,
@@ -81,10 +81,10 @@ class LeadDetailResource(LeadListItemResource):
             "timezone": lead.timezone,
             "created_at": self.iso(lead.created_at),
             "updated_at": self.iso(lead.updated_at),
-            "emails": [e.email for e in sorted(lead.emails, key=lambda e: e.counter)],
+            "emails": [e.email for e in sorted(lead.emails, key=lambda e: e.created_at)],
             "socials": [
                 {"platform": s.platform, "url": s.url}
-                for s in sorted(lead.socials, key=lambda s: s.counter)
+                for s in sorted(lead.socials, key=lambda s: s.created_at)
             ],
             "detailed_address": None
             if self.address is None
