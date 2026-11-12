@@ -288,12 +288,12 @@ class Migration(migrations.Migration):
             name='LeadCategoryModel',
             fields=[
                 ('id', fields.UUIDField(primary_key=True, default=uuid4, unique=True, db_index=True)),
-                ('name', fields.CharField(max_length=255)),
+                ('name', fields.CharField(unique=True, max_length=255)),
                 ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
-                ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', db_constraint=True, to_field='id', related_name='categories', on_delete=OnDelete.CASCADE)),
+                ('leads', fields.ManyToManyField('models.LeadModel', unique=True, db_constraint=True, through='lead_category_links', forward_key='category_id', backward_key='lead_id', related_name='categories', on_delete=OnDelete.CASCADE)),
             ],
-            options={'table': 'lead_categories', 'app': 'models', 'unique_together': (('lead', 'name'),), 'pk_attr': 'id', 'table_description': 'Lead category model'},
+            options={'table': 'lead_categories', 'app': 'models', 'pk_attr': 'id', 'table_description': 'Lead category model'},
             bases=['Model'],
         ),
         ops.CreateModel(

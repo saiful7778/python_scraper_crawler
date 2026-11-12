@@ -95,10 +95,12 @@ class LeadRepository(BaseRepository):
             LeadEmailModel,
             [LeadEmailModel(lead_id=pid, email=e) for e in parts.get("emails", [])],
         )
-        await self.insert_ignoring_conflicts(
-            LeadCategoryModel,
-            [LeadCategoryModel(lead_id=pid, name=c) for c in parts["categories"]],
-        )
+        names = list(dict.fromkeys(parts["categories"]))
+        if names:
+            await self.insert_ignoring_conflicts(
+                LeadCategoryModel, [LeadCategoryModel(name=n) for n in names]
+            )
+            await lead.categories.add(*await LeadCategoryModel.filter(name__in=names))
         await self.insert_ignoring_conflicts(
             LeadSocialModel,
             [

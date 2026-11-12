@@ -27,7 +27,7 @@ class LeadModel(Model):
     updated_at = fields.DatetimeField(auto_now=True)
 
     emails: fields.ReverseRelation["LeadEmailModel"]
-    categories: fields.ReverseRelation["LeadCategoryModel"]
+    categories: fields.ManyToManyRelation["LeadCategoryModel"]
     socials: fields.ReverseRelation["LeadSocialModel"]
     crawl_websites: fields.ReverseRelation["CrawlWebsiteModel"]
 
@@ -79,16 +79,20 @@ class LeadCategoryModel(Model):
     """Lead category model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    name = fields.CharField(max_length=255)
+    name = fields.CharField(max_length=255, unique=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
-    lead = fields.ForeignKeyField(
-        "models.LeadModel", related_name="categories", on_delete=fields.CASCADE
+    leads = fields.ManyToManyField(
+        "models.LeadModel",
+        related_name="categories",
+        through="lead_category_links",
+        forward_key="category_id",
+        backward_key="lead_id",
+        on_delete=fields.CASCADE,
     )
 
     class Meta(Model.Meta):
         table = "lead_categories"
-        unique_together = (("lead", "name"),)
 
 
 class LeadSocialModel(Model):
