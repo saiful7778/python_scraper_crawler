@@ -227,3 +227,45 @@ def test_replayed_flush_does_not_duplicate_leads(tmp_path, rows, state):
 
     assert rows.length("s1") == 0
     assert in_database(config, counts) == (1, 1, 2)
+
+
+class ConnectionDropsOnce(Saved):
+    def __init__(self):
+        super().__init__()
+        self.dropped = False
+
+    async def __call__(self, row, scrape_id):
+        if not self.dropped:
+            self.dropped = True
+            raise ConnectionResetError("connection reset by peer")
+        await super().__call__(row, scrape_id)
+
+
+def test_flush_retries_a_row_once_after_the_connection_drops(rows, state, make_flusher):
+    rows.append("s1", [{"title": "A"}, {"title": "B"}])
+    save = ConnectionDropsOnce()
+    assert make_flusher(rows, save).flush_once() == 2
+    assert save.calls == [("s1", "A"), ("s1", "B")]
+    assert rows.length("s1") == 0
+
+
+def test_dropped_connection_is_replaced_by_a_new_one(tmp_path, rows, state):
+    config = sqlite_config(tmp_path / "leads.db")
+    in_database(config, generate_schemas=True)
+    rows.append("s1", [{"title": "A"}])
+    opened = []
+
+    async def save(row, scrape_id):
+        if not opened:
+            opened.append(flusher._context)
+            raise ConnectionResetError("connection reset by peer")
+
+    flusher = Flusher(rows, state, save_row=save, crawl_sink=None, config=config)
+    try:
+        assert flusher.flush_once() == 1
+        assert opened[0] is not None
+        assert flusher._context is not None
+        assert flusher._context is not opened[0]
+    finally:
+        flusher.shutdown()
+    assert rows.length("s1") == 0

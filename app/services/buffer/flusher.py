@@ -5,6 +5,7 @@ from dataclasses import asdict
 from functools import partial
 from typing import Any
 
+from asyncpg import InterfaceError
 from tortoise.context import TortoiseContext
 from tortoise.models import Model
 
@@ -26,6 +27,8 @@ BATCH_SIZE = 500
 CONNECTION = "scrape_engine"
 #: Columns an upsert never rewrites.
 _KEPT_COLUMNS = frozenset({"id", "created_at"})
+#: Errors meaning the PostgreSQL connection itself is gone, not the row is bad.
+CONNECTION_LOST = (InterfaceError, ConnectionError)
 
 SaveRow = Callable[[LeadRow, str], Awaitable[None]]
 #: Stores one finished website snapshot. It raises when the snapshot cannot be
@@ -186,7 +189,22 @@ class Flusher(threading.Thread):
         return saved
 
     async def _save_in_context(self, row: LeadRow, scrape_id: str) -> None:
-        await self._in_context(lambda: self._save_row(row, scrape_id))
+        try:
+            await self._in_context(lambda: self._save_row(row, scrape_id))
+        except CONNECTION_LOST:
+            await self._drop_context()
+            await self._in_context(lambda: self._save_row(row, scrape_id))
+
+    async def _drop_context(self) -> None:
+        context, self._context = self._context, None
+        if context is None:
+            return
+        try:
+            await context.close_connections()
+        except Exception as error:  # noqa: BLE001 -- the connection is already dead
+            logger.warning(
+                "closing the lost PostgreSQL connection failed: %s", describe(error)
+            )
 
     async def _in_context(self, work: Callable[[], Awaitable[None]]) -> None:
         if self._config is None:
