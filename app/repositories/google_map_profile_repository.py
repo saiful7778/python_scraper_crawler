@@ -50,7 +50,7 @@ PROFILE_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in PROFILE_TEXT_FIELDS)
 LEAD_KEY_FIELDS = tuple(f for f in KEY_FIELDS if f in LEAD_FIELDS)
 
 
-def we_number(text, kind):
+def _number(text, kind):
     if not text:
         return None
     try:
