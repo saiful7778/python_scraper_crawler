@@ -1,4 +1,4 @@
-"""A search for one keyword in one city: the schema behind every place-level scrape."""
+"""A search for one or more keywords in one city: the schema behind every place-level scrape."""
 
 from typing import Annotated, Any, Literal
 
@@ -10,11 +10,8 @@ CountryCode = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z
 
 
 class PlaceQuery(ScrapeSettings):
-    """Keyword and city, plus how to tile the city and which rows to keep."""
+    """Keywords and city, plus how to tile the city and which rows to keep."""
 
-    keyword: CleanText = Field(
-        description="Business type to search for, e.g. 'coffee shops'."
-    )
     city: CleanText = Field(max_length=200, description="City to search in.")
     state: CleanText | None = Field(
         default=None, max_length=200, description="Optional state or region."
@@ -45,8 +42,6 @@ class PlaceQuery(ScrapeSettings):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        if "keyword" in data and "keywords" not in data:
-            data["keywords"] = [data["keyword"]]
         if data.get("deep_scan") is True and data.get("grid") is None:
             data["grid"] = 3
         data["email"] = True

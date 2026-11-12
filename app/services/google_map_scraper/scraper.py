@@ -1,4 +1,4 @@
-"""Scrapes one keyword in one city, as a single scrape or a grid of scrapes, and stores the leads."""
+"""Scrapes the keywords in one city, as a single scrape or a grid of scrapes, and stores the leads."""
 
 import time
 from typing import cast
@@ -310,7 +310,7 @@ def run_scrape(
 
 
 class PlaceScraper:
-    """Scrapes one keyword in one city, as a single scrape or a grid of scrapes."""
+    """Scrapes the keywords in one city, as a single scrape or a grid of scrapes."""
 
     def __init__(self) -> None:
         self._salvage: list[LeadRow] = []
@@ -328,13 +328,13 @@ class PlaceScraper:
         self._salvage = []
 
         place = ", ".join(part for part in (query.city, query.state) if part)
-        name = f"{query.keyword} @ {place}"[
+        name = f"{', '.join(query.keywords)} @ {place}"[
             :80
         ]  # the scrape name is what the web UI lists
 
         logger.info(
             "scraping %r in %r: grid=%s depth=%s",
-            query.keyword,
+            query.keywords,
             place,
             query.grid,
             query.scroll_depth,

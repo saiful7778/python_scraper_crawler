@@ -10,7 +10,7 @@ from app.services.google_map_scraper.scraper import (
 
 
 def _query(**overrides) -> PlaceQuery:
-    data = {"keyword": "cafe", "city": "Austin", "country": "us", **overrides}
+    data = {"keywords": ["cafe"], "city": "Austin", "country": "us", **overrides}
     return PlaceQuery.model_validate(data)
 
 

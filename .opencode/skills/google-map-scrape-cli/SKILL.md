@@ -9,7 +9,7 @@ Runs `cli/google_map_scrape_cli.py` from the repo root. It scrapes Google Maps l
 
 ## Workflow
 
-1. Gather `--keyword`, `--city`, and `--country` (2 letters). Ask for anything else only if the user needs it.
+1. Gather `--keywords`, `--city`, and `--country` (2 letters). `--keywords` takes one or more business types separated by commas. Ask for anything else only if the user needs it.
 2. Always run `--dry-run` first with the same flags and show the plan.
 3. Confirm with the user before a real run. The CLI prints a heads-up for `--depth 10` or `--grid` 2 or more, because Google can rate-limit the IP. `--deep-scan` takes longer: the CLI prints its own estimate (about 25 s per tile; 3×3 by default gives roughly 3 to 18 min per city).
 4. Run the real scrape with the same flags minus `--dry-run`, as a background job (see below). Never run a real scrape as a foreground shell call: the call can be aborted mid-run, which kills the scrape.
@@ -17,8 +17,8 @@ Runs `cli/google_map_scrape_cli.py` from the repo root. It scrapes Google Maps l
 
 ```bash
 cd /home/saiful/programming/projects/python_scraper_crawler
-uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austin --state TX --country us --dry-run
-uv run python cli/google_map_scrape_cli.py --keyword "coffee shops" --city Austin --state TX --country us --has-website --limit 100
+uv run python cli/google_map_scrape_cli.py --keywords "coffee shops,bakeries" --city Austin --state TX --country us --dry-run
+uv run python cli/google_map_scrape_cli.py --keywords "coffee shops,bakeries" --city Austin --state TX --country us --has-website --limit 100
 ```
 
 ## Running in the background
@@ -28,7 +28,7 @@ Run every real scrape as a background job, with output sent to a log file in `/t
 ```bash
 cd /home/saiful/programming/projects/python_scraper_crawler
 mkdir -p /tmp/opencode
-nohup uv run python cli/google_map_scrape_cli.py --keyword "plumbers" --city Sydney --state NSW --country au --grid 3 > /tmp/opencode/plumbers_sydney.log 2>&1 &
+nohup uv run python cli/google_map_scrape_cli.py --keywords "plumbers" --city Sydney --state NSW --country au --grid 3 > /tmp/opencode/plumbers_sydney.log 2>&1 &
 echo $!
 ```
 
@@ -45,7 +45,7 @@ When the process exits, read the log for the `✗`, `⚠`, and final lead count 
 
 | Flag | Notes |
 |------|-------|
-| `--keyword`, `--city`, `--country` | Required. `--country` must be exactly 2 letters, such as `us`, `de`, `br`. |
+| `--keywords`, `--city`, `--country` | Required. `--keywords` is a comma-separated list, e.g. `"coffee shops,bakeries"`; each keyword is searched in turn. A keyword cannot contain a comma. `--country` must be exactly 2 letters, such as `us`, `de`, `br`. |
 | `--state` | Optional region, e.g. `TX`. Not part of the default file name. |
 | `--lang XX` | Engine language, 2 letters, default `en`. Use the local language (`pt`, `es`, `de`) for non-English markets. |
 | `--depth N` | Batches of results per keyword, 1 to 10, default 5. |
@@ -58,7 +58,7 @@ When the process exits, read the log for the `✗`, `⚠`, and final lead count 
 | `--limit N` | Stop at N rows. |
 | `--format csv\|json` | Default `csv`. CSV is UTF-8 with a BOM, so Excel opens it cleanly. |
 | `--fields a,b,c` | Columns to write, in that order, default all. A name the scrape does not produce prints a `⚠` line and is written empty. |
-| `--output PATH` | Default `./storage/scrape-leads/leads_<keyword>_<city>.<format>`, e.g. `leads_coffee_shops_austin.csv`. The default folder is created automatically. A custom `--output` folder must already exist and be writable, or the CLI exits before scraping. |
+| `--output PATH` | Default `./storage/scrape-leads/leads_<keywords>_<city>.<format>`, e.g. `leads_coffee_shops_bakeries_austin.csv`. The default folder is created automatically. A custom `--output` folder must already exist and be writable, or the CLI exits before scraping. |
 | `--dry-run` | Prints the plan and exits. Scrapes nothing, writes nothing, creates no folder. |
 
 ## Output and behavior

@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
 from pydantic import Field, ValidationError
@@ -67,22 +67,32 @@ class CliQuery(PlaceQuery):
     )
 
 
-def field_names(text: str) -> list[str]:
-    """Split a comma-separated list of field names, dropping blanks and repeats."""
+def comma_list(text: str, label: str) -> list[str]:
+    """Split a comma-separated list, dropping blanks and repeats."""
     names = list(
         dict.fromkeys(part.strip() for part in text.split(",") if part.strip())
     )
     if not names:
-        raise argparse.ArgumentTypeError("give at least one field name")
+        raise argparse.ArgumentTypeError(f"give at least one {label}")
     return names
+
+
+def field_names(text: str) -> list[str]:
+    return comma_list(text, "field name")
+
+
+def keyword_names(text: str) -> list[str]:
+    return comma_list(text, "keyword")
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Scrape Google Maps business listings.")
     ap.add_argument(
-        "--keyword",
+        "--keywords",
+        type=keyword_names,
         required=True,
-        help='business type to search for, e.g. "coffee shops"',
+        metavar="KW,...",
+        help='comma-separated business types to search for, e.g. "coffee shops,bakeries"',
     )
     ap.add_argument("--city", required=True, help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -149,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--output",
         metavar="PATH",
-        help=f"file to write (default: {OUTPUT_DIR}/leads_<keyword>_<city>.<format>)",
+        help=f"file to write (default: {OUTPUT_DIR}/leads_<keywords>_<city>.<format>)",
     )
     ap.add_argument(
         "--dry-run",
@@ -196,8 +206,9 @@ def read_query() -> CliQuery:
         sys.exit("\n".join(lines))
 
 
-def default_output(keyword: str, city: str, output_format: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "_", f"{keyword} {city}".lower()).strip("_")
+def default_output(keywords: Sequence[str], city: str, output_format: str) -> str:
+    text = f"{', '.join(keywords)} {city}"
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
     return os.path.join(OUTPUT_DIR, f"leads_{slug}.{output_format}")
 
 
@@ -258,7 +269,8 @@ def print_plan(query: CliQuery, output: str) -> None:
         part for part in (query.city, query.state, query.country.upper()) if part
     )
     print("Dry run: nothing will be scraped or written.\n")
-    print(f"Search: {query.keyword!r} in {place}")
+    keywords = ", ".join(repr(keyword) for keyword in query.keywords)
+    print(f"Search: {keywords} in {place}")
     print(
         f"Tiles: {tiles}"
         + (
@@ -291,8 +303,8 @@ def print_plan(query: CliQuery, output: str) -> None:
 def main() -> None:
     query = read_query()
     logger.info(
-        "query: keyword=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s format=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
-        query.keyword,
+        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s format=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
+        query.keywords,
         query.city,
         query.state,
         query.country,
@@ -323,7 +335,7 @@ def main() -> None:
         )
 
     output = query.output or default_output(
-        query.keyword, query.city, query.output_format
+        query.keywords, query.city, query.output_format
     )
     logger.info("output file: %s", output)
 
