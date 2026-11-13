@@ -8,8 +8,6 @@ from tortoise import Tortoise
 
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.repositories import GoogleMapProfileRepository, LeadRepository
-from app.services.buffer.client import connect
-from app.services.crawler.run import run_crawl_stage
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
@@ -49,11 +47,6 @@ class CliQuery(PlaceQuery):
     )
     dry_run: bool = Field(
         default=False, strict=True, description="Show the plan and exit."
-    )
-    no_crawl: bool = Field(
-        default=False,
-        strict=True,
-        description="Skip the crawl of the lead websites after the scrape.",
     )
 
 
@@ -107,14 +100,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="interface language the engine asks Google for, 2 letters (default: en; use the local language, e.g. pt, es, de)",
     )
     ap.add_argument(
-        "--website-depth",
-        type=int,
-        choices=(1,),
-        default=1,
-        metavar="N",
-        help="website crawler level: 1=emails, socials, tech from the websute (default: 1)",
-    )
-    ap.add_argument(
         "--grid",
         type=int,
         metavar="N",
@@ -143,11 +128,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="check the arguments and show the plan, without scraping or writing a CSV",
-    )
-    ap.add_argument(
-        "--no-crawl",
-        action="store_true",
-        help="skip the crawl of the lead websites that runs after the scrape",
     )
 
     f = ap.add_argument_group("filters", "keep only the rows that have the field")
@@ -233,13 +213,12 @@ def print_plan(query: CliQuery) -> None:
         if on
     ]
     print(f"Filters: {', '.join(filters) or 'none'}")
-    print(f"Crawl: {'off (--no-crawl)' if query.no_crawl else 'on, after the scrape'}")
 
 
 def main() -> None:
     query = read_query()
     logger.info(
-        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
+        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
         query.keywords,
         query.city,
         query.state,
@@ -251,7 +230,6 @@ def main() -> None:
         query.limit,
         query.has_phone,
         query.has_website,
-        query.no_crawl,
         query.dry_run,
         len(query.proxies or []),
     )
@@ -324,37 +302,6 @@ def main() -> None:
     if result.finished == 0:
         logger.error("no scrape finished")
         sys.exit("✗ No scrape finished; the reason is in the ✗ line above.")
-
-    with_website = [row for row in result.rows if row.get("website")]
-    if query.no_crawl or not with_website:
-        logger.info(
-            "crawl stage skipped: %s",
-            "--no-crawl" if query.no_crawl else "no lead has a website",
-        )
-        return
-
-    logger.info("crawl stage: %d lead website(s)", len(with_website))
-    print(f"\n▶ Crawling the websites of {len(with_website)} lead(s)")
-    try:
-        summary = run_crawl_stage(
-            result.rows, redis=connect(RedisConfig()), postgres=TortoiseConfig()
-        )
-    except KeyboardInterrupt:
-        raise
-    except Exception as exc:  # the CSV is saved; report the crawl failure
-        logger.exception("the crawl stage failed")
-        print(f"⚠ The crawl stage failed: {describe(exc)} (the CSV is kept)")
-        return
-    logger.info(
-        "crawl stage done: %d queued, %d rejected, %d skipped",
-        summary.queued,
-        summary.rejected,
-        summary.skipped,
-    )
-    print(
-        f"✓ Crawl: {summary.queued} queued, {summary.rejected} not crawlable, "
-        f"{summary.skipped} skipped"
-    )
 
 
 def interrupted() -> str:
