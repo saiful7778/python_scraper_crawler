@@ -33,9 +33,6 @@ class PlaceQuery(ScrapeSettings):
         strict=True,
         description="Split tiles that reach Google's result cap; needs a grid, 3 by default.",
     )
-    has_phone: bool = Field(default=False, strict=True)
-    has_website: bool = Field(default=False, strict=True)
-
     @model_validator(mode="before")
     @classmethod
     def _derive_engine_fields(cls, data: Any) -> Any:

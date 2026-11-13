@@ -15,6 +15,7 @@ from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
 
 from .keyword_search import KeywordSearch
+from .lead_filter import keep_lead
 from .review_pass import ReviewPass
 from .run_state import RunState
 from .scrape_database import ScrapeDatabase
@@ -203,6 +204,8 @@ class ScrapeRun:
         accepted: list[LeadRow] = []
         try:
             for row in rows:
+                if not keep_lead(row, self.settings):
+                    continue
                 if not self._known.add_if_new(self.scrape_id, row):
                     continue
                 row["website"] = resolve_website(row["website"])

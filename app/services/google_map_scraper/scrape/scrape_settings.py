@@ -89,6 +89,16 @@ class ScrapeSettings(BaseModel):
         description="Time limit of the scrape in seconds.",
     )
     fast_mode: bool = Field(default=False, strict=True)
+    has_phone: bool = Field(
+        default=False,
+        strict=True,
+        description="Keep only leads that have a phone number.",
+    )
+    has_website: bool = Field(
+        default=False,
+        strict=True,
+        description="Keep only leads that have a website.",
+    )
     collect_emails: bool = Field(
         default=False,
         alias="email",

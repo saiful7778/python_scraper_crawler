@@ -30,6 +30,7 @@ from .google_map.geo import (
 from .place_query import PlaceQuery
 from .scrape.dedupe import dedupe_rows
 from .scrape.engine_config import EngineConfig
+from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
 from .scrape.scrape_database import ScrapeDatabase
 from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
@@ -65,16 +66,6 @@ def columns_for(query: PlaceQuery) -> list[str]:
     return result_columns(query.engine_settings())
 
 
-def _has_value(row: LeadRow, column: str) -> bool:
-    return bool(str(row.get(column) or "").strip())
-
-
-def keep_row(row: LeadRow, query: PlaceQuery) -> bool:
-    return (not query.has_phone or _has_value(row, "phone")) and (
-        not query.has_website or _has_value(row, "website")
-    )
-
-
 def finalize_rows(
     rows: list[LeadRow], query: PlaceQuery, bounding_box: BoundingBox | None
 ) -> list[LeadRow]:
@@ -82,7 +73,7 @@ def finalize_rows(
         row
         for row in rows
         if (bounding_box is None or is_in_bounding_box(row, bounding_box))
-        and keep_row(row, query)
+        and keep_lead(row, query)
     ]
     return kept[: query.limit] if query.limit else kept
 

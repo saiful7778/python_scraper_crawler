@@ -46,8 +46,8 @@ def lead(title: str, website: str = "") -> LeadRow:
     )
 
 
-def fake_scrape_run(database, redis, known_keys=frozenset()) -> ScrapeRun:
-    settings = ScrapeSettings(keywords=("bakery",))
+def fake_scrape_run(database, redis, known_keys=frozenset(), **overrides) -> ScrapeRun:
+    settings = ScrapeSettings(keywords=("bakery",), **overrides)
     settings_data = settings.model_dump(by_alias=True, mode="json")
     ScrapeState(redis, TTL_SECONDS).create(SCRAPE_ID, settings_data)
     KnownKeys(redis, TTL_SECONDS).load(SCRAPE_ID, known_keys)
@@ -84,6 +84,30 @@ def test_lead_without_website_is_buffered(fake_redis, database):
     run = fake_scrape_run(database, fake_redis)
     run.accept([lead("Cafe", "")])
     assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
+
+
+def test_lead_without_website_is_not_buffered_when_website_filter_is_on(
+    fake_redis, database
+):
+    run = fake_scrape_run(database, fake_redis, has_website=True)
+    accepted = run.accept([lead("Cafe", "")])
+    assert accepted == []
+    assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 0
+
+
+def test_lead_with_website_is_buffered_when_website_filter_is_on(fake_redis, database):
+    run = fake_scrape_run(database, fake_redis, has_website=True)
+    run.accept([lead("Cafe", "https://cafe.example")])
+    assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
+
+
+def test_lead_without_phone_is_not_buffered_when_phone_filter_is_on(
+    fake_redis, database
+):
+    run = fake_scrape_run(database, fake_redis, has_phone=True)
+    accepted = run.accept([lead("Cafe", "https://cafe.example")])
+    assert accepted == []
+    assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 0
 
 
 def test_known_key_lead_is_skipped(fake_redis, database):

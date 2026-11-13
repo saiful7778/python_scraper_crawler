@@ -1,10 +1,10 @@
 import pytest
 
 from app.services.google_map_scraper.place_query import PlaceQuery
+from app.services.google_map_scraper.scrape.lead_filter import keep_lead
 from app.services.google_map_scraper.scraper import (
     BoundingBoxError,
     finalize_rows,
-    keep_row,
     parse_bounding_box,
 )
 
@@ -36,24 +36,24 @@ def test_parse_bounding_box_raises_for_three_values():
 
 def test_keep_row_applies_the_phone_filter():
     query = _query(has_phone=True)
-    assert keep_row(_row(phone="+1 512"), query)
-    assert not keep_row(_row(phone=""), query)
+    assert keep_lead(_row(phone="+1 512"), query)
+    assert not keep_lead(_row(phone=""), query)
 
 
 def test_keep_row_applies_the_website_filter():
     query = _query(has_website=True)
-    assert keep_row(_row(website="https://cafe.example"), query)
-    assert not keep_row(_row(website=""), query)
+    assert keep_lead(_row(website="https://cafe.example"), query)
+    assert not keep_lead(_row(website=""), query)
 
 
 @pytest.mark.parametrize("blank", ["   ", "\n\t"])
 def test_keep_row_treats_whitespace_as_no_website_or_phone(blank):
-    assert not keep_row(_row(website=blank), _query(has_website=True))
-    assert not keep_row(_row(phone=blank), _query(has_phone=True))
+    assert not keep_lead(_row(website=blank), _query(has_website=True))
+    assert not keep_lead(_row(phone=blank), _query(has_phone=True))
 
 
 def test_keep_row_keeps_everything_without_filters():
-    assert keep_row(_row(), _query())
+    assert keep_lead(_row(), _query())
 
 
 def test_finalize_rows_drops_rows_outside_the_bounding_box():
