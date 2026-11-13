@@ -281,6 +281,7 @@ def main() -> None:
 
     if query.dry_run:
         logger.info("dry run: plan shown, nothing scraped or written")
+        print_plan(query)
         return
 
     try:
