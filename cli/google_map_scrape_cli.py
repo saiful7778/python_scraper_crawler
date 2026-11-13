@@ -26,16 +26,12 @@ from config.tortoise import TORTOISE_ORM, TortoiseConfig
 
 logger = get_logger(__name__)
 
-FLAG_NAMES = {"proxies": "--proxy", "output_format": "--format"}
-OUTPUT_DIR = "./storage/scrape-leads"
+FLAG_NAMES = {"proxies": "--proxy"}
 
 
 class CliQuery(PlaceQuery):
     """The flags of the CLI: the place search with the defaults and limits a terminal run uses."""
 
-    output_format: Literal["csv", "json"] = Field(
-        default="csv", description="File format to write: csv or json."
-    )
     fields: list[str] | None = Field(
         default=None,
         description="Columns to write, in this order. Names the scrape does not produce are written empty.",
@@ -56,7 +52,6 @@ class CliQuery(PlaceQuery):
         strict=True,
         description="Time limit in seconds for each scrape.",
     )
-    output: str | None = Field(default=None, description="CSV file to write.")
     dry_run: bool = Field(
         default=False, strict=True, description="Show the plan and exit."
     )
@@ -144,22 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--limit", type=int, metavar="N", help="stop at N rows")
     ap.add_argument(
-        "--format",
-        dest="output_format",
-        choices=("csv", "json"),
-        default="csv",
-        help="file format to write (default: csv)",
-    )
-    ap.add_argument(
         "--fields",
         type=field_names,
         metavar="NAME,...",
         help="comma-separated columns to write, in this order (default: all); a name the scrape does not produce is written empty",
-    )
-    ap.add_argument(
-        "--output",
-        metavar="PATH",
-        help=f"file to write (default: {OUTPUT_DIR}/leads_<keywords>_<city>.<format>)",
     )
     ap.add_argument(
         "--dry-run",
@@ -206,46 +189,6 @@ def read_query() -> CliQuery:
         sys.exit("\n".join(lines))
 
 
-def default_output(keywords: Sequence[str], city: str, output_format: str) -> str:
-    text = f"{', '.join(keywords)} {city}"
-    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
-    return os.path.join(OUTPUT_DIR, f"leads_{slug}.{output_format}")
-
-
-def check_output_path(path: str) -> None:
-    """Exit before scraping when the CSV folder is missing or not writable."""
-    folder = os.path.dirname(os.path.abspath(path))
-    if not os.path.isdir(folder):
-        logger.error("output folder %s does not exist", folder)
-        sys.exit(f"✗ --output: the folder {folder} does not exist.")
-    if not os.access(folder, os.W_OK):
-        logger.error("output folder %s is not writable", folder)
-        sys.exit(f"✗ --output: the folder {folder} is not writable.")
-
-
-def write_output(
-    path: str, rows: list[LeadRow], columns: list[str], output_format: str
-) -> None:
-    """Write the rows as CSV or JSON, keeping only ``columns``; a column a row lacks is written empty.
-
-    :raises OSError: If the file cannot be created or written; the message
-        names the path.
-    """
-    table = [{column: row.get(column, "") for column in columns} for row in rows]
-    try:
-        if output_format == "json":
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(table, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-        else:
-            with open(path, "w", newline="", encoding="utf-8-sig") as handle:
-                writer = csv.DictWriter(handle, fieldnames=columns)
-                writer.writeheader()
-                writer.writerows(table)
-    except OSError as error:
-        raise OSError(f"could not write {path}: {describe(error)}") from error
-
-
 async def with_database[T](action: Callable[[], Awaitable[T]]) -> T:
     """Open Tortoise, run ``action``, and close the connections, all on one event loop."""
     await Tortoise.init(config=TORTOISE_ORM)
@@ -263,7 +206,7 @@ async def load_known_keys() -> frozenset[str]:
     return keys
 
 
-def print_plan(query: CliQuery, output: str) -> None:
+def print_plan(query: CliQuery) -> None:
     tiles = (query.grid or 1) ** 2
     place = ", ".join(
         part for part in (query.city, query.state, query.country.upper()) if part
@@ -285,7 +228,6 @@ def print_plan(query: CliQuery, output: str) -> None:
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
     print(f"Row limit: {query.limit or 'none'}")
-    print(f"Format: {query.output_format}")
     print(f"Fields: {', '.join(query.fields) if query.fields else 'all'}")
     filters = [
         name
@@ -297,13 +239,12 @@ def print_plan(query: CliQuery, output: str) -> None:
     ]
     print(f"Filters: {', '.join(filters) or 'none'}")
     print(f"Crawl: {'off (--no-crawl)' if query.no_crawl else 'on, after the scrape'}")
-    print(f"Output: {output}\n")
 
 
 def main() -> None:
     query = read_query()
     logger.info(
-        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s format=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
+        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s no_crawl=%s dry_run=%s proxies=%d",
         query.keywords,
         query.city,
         query.state,
@@ -313,7 +254,6 @@ def main() -> None:
         query.scroll_depth,
         query.max_seconds,
         query.limit,
-        query.output_format,
         query.has_phone,
         query.has_website,
         query.no_crawl,
@@ -334,11 +274,6 @@ def main() -> None:
             "For big or repeated runs, add proxies. Proceeding....\n",
         )
 
-    output = query.output or default_output(
-        query.keywords, query.city, query.output_format
-    )
-    logger.info("output file: %s", output)
-
     known = set(columns_for(query))
     unknown = [name for name in query.fields or [] if name not in known]
     if unknown:
@@ -351,12 +286,7 @@ def main() -> None:
 
     if query.dry_run:
         logger.info("dry run: plan shown, nothing scraped or written")
-        print_plan(query, output)
         return
-
-    if not query.output:
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-    check_output_path(output)
 
     try:
         known_keys = asyncio.run(with_database(load_known_keys))
@@ -372,20 +302,6 @@ def main() -> None:
     except KeyboardInterrupt:
         salvage = scraper.salvage_rows
         logger.warning("scrape interrupted with %d leads found so far", len(salvage))
-        if salvage:
-            try:
-                write_output(
-                    output,
-                    salvage,
-                    query.fields or columns_for(query),
-                    query.output_format,
-                )
-            except OSError as error:
-                logger.error("saving the leads found so far failed: %s", describe(error))
-                print(f"\n✗ Could not save the leads found so far: {describe(error)}")
-                raise
-            logger.info("saved %d leads found before the interrupt to %s", len(salvage), output)
-            print(f"\n✓ Saved the {len(salvage)} leads found so far to {output}")
         raise
     except ScraperError as exc:
         logger.error("scrape failed: %s", describe(exc))
@@ -402,7 +318,9 @@ def main() -> None:
         len(result.rows),
     )
     if result.blocked:
-        logger.warning("Google rate-limited this IP; the rows found before that are kept")
+        logger.warning(
+            "Google rate-limited this IP; the rows found before that are kept"
+        )
         print("⚠ Google rate-limited this IP. The rows found before that are kept.")
     if result.skipped:
         logger.warning("%d scrape(s) skipped", result.skipped)
@@ -410,19 +328,6 @@ def main() -> None:
     if result.finished == 0:
         logger.error("no scrape finished")
         sys.exit("✗ No scrape finished; the reason is in the ✗ line above.")
-
-    try:
-        write_output(
-            output,
-            result.rows,
-            query.fields or result.columns,
-            query.output_format,
-        )
-    except OSError as error:
-        logger.error("writing the output failed: %s", describe(error))
-        sys.exit(f"✗ {describe(error)}")
-    logger.info("wrote %d leads to %s as %s", len(result.rows), output, query.output_format)
-    print(f"✓ {len(result.rows)} leads → {output}")
 
     with_website = [row for row in result.rows if row.get("website")]
     if query.no_crawl or not with_website:
@@ -439,8 +344,6 @@ def main() -> None:
             result.rows, redis=connect(RedisConfig()), postgres=TortoiseConfig()
         )
     except KeyboardInterrupt:
-        logger.warning("crawl stage interrupted; the leads stay in %s", output)
-        print(f"\n⚠ Crawl stopped; the leads stay in {output}.")
         raise
     except Exception as exc:  # the CSV is saved; report the crawl failure
         logger.exception("the crawl stage failed")
