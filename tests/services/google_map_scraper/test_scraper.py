@@ -74,3 +74,13 @@ def test_final_flush_has_no_time_limit():
     import app.services.google_map_scraper.scraper as scraper
 
     assert not hasattr(scraper, "_FINAL_FLUSH_SECONDS")
+
+
+def test_unsaved_leads_of_the_scrape_raise(monkeypatch):
+    from app.services.google_map_scraper.scraper import UnsavedLeadsError
+    from app.utils.errors import ScraperError
+
+    assert issubclass(UnsavedLeadsError, ScraperError)
+    error = UnsavedLeadsError("s1", 3)
+    assert "3 lead(s)" in str(error)
+    assert "s1" in str(error)

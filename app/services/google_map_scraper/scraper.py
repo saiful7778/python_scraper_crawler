@@ -59,6 +59,16 @@ class ScrapeWorkerDiedError(ScraperError):
     """The scrape worker thread stopped before the scrape reached an outcome."""
 
 
+class UnsavedLeadsError(ScraperError):
+    """The final save left the scrape's leads in Redis, so they are not in PostgreSQL."""
+
+    def __init__(self, scrape_id: str, count: int):
+        super().__init__(
+            f"{count} lead(s) of scrape {scrape_id} are not saved to PostgreSQL and stay "
+            "in Redis; they are saved when the scrape resumes"
+        )
+
+
 def columns_for(query: PlaceQuery) -> list[str]:
     """The CSV columns a query produces."""
     return result_columns(query.engine_settings())
@@ -225,17 +235,7 @@ class ScrapeSession:
                     finished_id,
                 )
                 if finished_id == scrape_id:
-                    unsaved = (
-                        f"{left} lead(s) not saved to PostgreSQL; they stay in Redis "
-                        "and the scrape resumes on the next start"
-                    )
-                    result = RunResult(
-                        scrape_id=scrape_id,
-                        status=outcome.status,
-                        note="; ".join(filter(None, (outcome.note, unsaved))),
-                        rows=rows,
-                        blocked=bool(progress.get("blocked")),
-                    )
+                    raise UnsavedLeadsError(scrape_id, left)
                 continue
             discard_scrape(self._redis, finished_id)
             if not self._database.finish(
@@ -276,6 +276,7 @@ def run_scrape(
     ends, and its ``scrapes`` row stays with the final status.
 
     :raises ScrapeDeletedError: If the scrape is deleted while it runs.
+    :raises UnsavedLeadsError: If the final save leaves the scrape's leads in Redis.
     :raises ScrapeWorkerDiedError: If the worker thread stops before the scrape
         has an outcome, so the wait would otherwise never end.
     :raises BufferError: If Redis fails.
