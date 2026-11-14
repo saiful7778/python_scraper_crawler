@@ -28,7 +28,7 @@ from .google_map.geo import (
     is_in_bounding_box,
 )
 from .place_query import PlaceQuery
-from .scrape.dedupe import dedupe_rows
+from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
 from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
@@ -307,7 +307,7 @@ def run_scrape(
 
 
 class PlaceScraper:
-    """Scrapes the keywords in one city, as a single scrape or a grid of scrapes."""
+    """Scrapes the keywords in one city, one scrape per keyword, each as a single scrape or a grid."""
 
     def __init__(self) -> None:
         self._salvage: list[LeadRow] = []
@@ -325,9 +325,6 @@ class PlaceScraper:
         self._salvage = []
 
         place = ", ".join(part for part in (query.city, query.state) if part)
-        name = f"{', '.join(query.keywords)} @ {place}"[
-            :80
-        ]  # the scrape name is what the web UI lists
 
         logger.info(
             "scraping %r in %r: grid=%s depth=%s",
@@ -376,27 +373,93 @@ class PlaceScraper:
             update={"latitude": float(lat), "longitude": float(lon)}
         )
 
+        all_kept: list[LeadRow] = []
+        known = known_keys
+        finished = skipped = 0
+        blocked = False
+        total = len(query.keywords)
+
+        for number, keyword in enumerate(query.keywords, 1):
+            print(f"▶ Keyword {number}/{total}: {keyword}")
+            # the scrape name is what the web UI lists
+            name = f"{keyword} @ {place}"[:80]
+            kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
+            kept, kw_finished, kw_skipped, kw_blocked, stop = self._scrape_keyword(
+                query, kw_settings, name, cells, bounding_box, known, all_kept
+            )
+            all_kept.extend(kept)
+            known = known | frozenset(key for row in kept for key in lead_keys(row))
+            finished += kw_finished
+            skipped += kw_skipped
+            blocked = blocked or kw_blocked
+            if stop:
+                break
+
+        logger.info(
+            "keywords done: %d finished, %d skipped, blocked=%s, %d kept",
+            finished,
+            skipped,
+            blocked,
+            len(all_kept),
+        )
+        return ScrapeResult(all_kept, columns, finished, skipped, blocked)
+
+    def _scrape_keyword(
+        self,
+        query: PlaceQuery,
+        settings: ScrapeSettings,
+        name: str,
+        cells: list[GridCell],
+        bounding_box: BoundingBox | None,
+        known_keys: frozenset[str],
+        saved: list[LeadRow],
+    ) -> tuple[list[LeadRow], int, int, bool, bool]:
+        """Scrape one keyword, as a single scrape or as a grid of scrapes.
+
+        Returns the kept rows, the finished and skipped counts, whether Google
+        rate-limited the keyword, and whether the run must stop after it.
+        ``saved`` holds the rows of the keywords before this one, for salvage.
+
+        :raises UnsavedLeadsError: If a scrape's leads stay unsaved in Redis.
+        """
         if not cells:
             print(
-                f"▶ Creating scrape: 1 keyword @ {lat},{lon} depth={query.scroll_depth}"
+                f"▶ Creating scrape: 1 keyword @ {settings.latitude},{settings.longitude} depth={query.scroll_depth}"
             )
-            logger.info("single scrape at %s,%s", lat, lon)
-            result = run_scrape(name, anchored, known_keys=known_keys)
-            if result.status == ScrapeStatus.FAILED:
-                logger.warning("single scrape failed: %s", result.note)
-                print(f"✗ {result.note}")
-                return ScrapeResult([], columns, 0, 1, result.blocked)
-            if result.note:
-                logger.info("single scrape note: %s", result.note)
-                print(f"⚠ {result.note}")
-            rows = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
+            logger.info("single scrape at %s,%s", settings.latitude, settings.longitude)
+            try:
+                result = run_scrape(name, settings, known_keys=known_keys)
+            except ScrapeDeletedError as exc:
+                print(f"\n⚠ keyword skipped: {describe(exc)}")
+                logger.warning("single scrape deleted: %s", describe(exc))
+                return [], 0, 1, False, False
+            except CDPError as exc:
+                print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
+                logger.exception("single scrape stopped on a lost Chrome connection")
+                return [], 0, 1, False, True
+            except UnsavedLeadsError:
+                raise
+            except Exception as exc:
+                print(f"\n⚠ keyword skipped: {describe(exc)}")
+                logger.exception("single scrape skipped")
+                return [], 0, 1, False, False
+
+            kept = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
             logger.info(
                 "single scrape: %d rows, %d kept after dedupe and filters",
                 len(result.rows),
-                len(rows),
+                len(kept),
             )
-            return ScrapeResult(rows, columns, 1, 0, result.blocked)
+            if result.note:
+                logger.info("single scrape note: %s", result.note)
+                print(f"⚠ {result.note}")
+            if result.status == ScrapeStatus.FAILED:
+                logger.warning("single scrape failed: %s", result.note)
+                print(f"✗ {result.note}")
+                return kept, 0, 1, result.blocked, result.blocked
+            return kept, 1, 0, result.blocked, result.blocked
 
+        cells = list(cells)
         deep_scan_note = (
             " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
             if query.deep_scan
@@ -409,6 +472,7 @@ class PlaceScraper:
         rows: list[LeadRow] = []
         finished = skipped = 0
         blocked = False
+        lost_chrome = False
         index = 0
 
         # Sequential on purpose: never run parallel scrapes against Google.
@@ -419,7 +483,7 @@ class PlaceScraper:
             print(
                 f"▶ Cell {index}/{len(cells)} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
             )
-            cell_settings = anchored.model_copy(
+            cell_settings = settings.model_copy(
                 update={
                     "latitude": float(cell["lat"]),
                     "longitude": float(cell["lon"]),
@@ -445,6 +509,7 @@ class PlaceScraper:
                 )
                 logger.exception("cell %d stopped on a lost Chrome connection", index)
                 skipped += 1
+                lost_chrome = True
                 break
             except UnsavedLeadsError:
                 raise
@@ -474,7 +539,7 @@ class PlaceScraper:
             if result.note:
                 print(f"⚠ cell {index}/{len(cells)}: {result.note}")
             kept = finalize_rows(rows, query, bounding_box)
-            self._salvage = kept
+            self._salvage = saved + kept
             print(
                 f"cell {index}/{len(cells)}: {len(result.rows)} rows, {len(kept)} kept so far"
             )
@@ -514,4 +579,4 @@ class PlaceScraper:
         )
         print(f"{len(rows)} unique rows, {len(kept)} after the city box and filters")
 
-        return ScrapeResult(kept, columns, finished, skipped, blocked)
+        return kept, finished, skipped, blocked, blocked or lost_chrome

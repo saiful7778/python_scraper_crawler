@@ -1,9 +1,14 @@
 import pytest
 
+from app.services.google_map_scraper import scraper as scraper_module
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.lead_filter import keep_lead
+from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus
+from app.services.google_map_scraper.scrape.scrape_types import RunResult
 from app.services.google_map_scraper.scraper import (
     BoundingBoxError,
+    PlaceScraper,
+    ScrapeDeletedError,
     finalize_rows,
     parse_bounding_box,
 )
@@ -105,3 +110,77 @@ def test_unsaved_leads_of_the_scrape_raise(monkeypatch):
     error = UnsavedLeadsError("s1", 3)
     assert "3 lead(s)" in str(error)
     assert "s1" in str(error)
+
+
+def test_each_keyword_is_its_own_scrape(monkeypatch):
+    calls = []
+
+    def fake_run(name, settings, *, known_keys=frozenset(), **_):
+        calls.append((name, settings.keywords))
+        return RunResult(
+            "id", ScrapeStatus.OK, "", [_row(title=settings.keywords[0])], False
+        )
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert [keywords for _, keywords in calls] == [("cafes",), ("bakeries",)]
+    assert len(result.rows) == 2
+
+
+def test_a_lead_kept_by_the_first_keyword_is_known_to_the_second(monkeypatch):
+    seen_known = []
+
+    def fake_run(name, settings, *, known_keys=frozenset(), **_):
+        seen_known.append(set(known_keys))
+        return RunResult("id", ScrapeStatus.OK, "", [_row(place_id="p1")], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert seen_known[1]  # the second scrape received the first scrape's keys
+
+
+def test_a_deleted_keyword_scrape_is_skipped_and_the_next_one_runs(monkeypatch):
+    names = []
+
+    def fake_run(name, settings, **_):
+        names.append(settings.keywords[0])
+        if settings.keywords[0] == "cafes":
+            raise ScrapeDeletedError("deleted")
+        return RunResult("id", ScrapeStatus.OK, "", [_row()], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert names == ["cafes", "bakeries"]
+    assert result.skipped == 1
+
+
+def test_a_lead_filtered_out_by_the_first_keyword_is_not_known(monkeypatch):
+    seen_known = []
+
+    def fake_run(name, settings, *, known_keys=frozenset(), **_):
+        seen_known.append(set(known_keys))
+        return RunResult(
+            "id", ScrapeStatus.OK, "", [_row(place_id="p1", phone="")], False
+        )
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"], has_phone=True))
+    assert not seen_known[1]  # the phone filter dropped it, so keyword 2 may keep it
+
+
+def test_rate_limit_stops_the_remaining_keywords(monkeypatch):
+    names = []
+
+    def fake_run(name, settings, **_):
+        names.append(settings.keywords[0])
+        return RunResult("id", ScrapeStatus.OK, "", [_row()], True)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert names == ["cafes"]
+    assert result.blocked
