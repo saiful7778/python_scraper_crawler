@@ -335,7 +335,6 @@ class PlaceScraper:
         )
         print(f'▶ Geocoding "{place}"')
         bounding_box: BoundingBox | None = None
-        cells: list[GridCell] = []
 
         try:
             if query.grid:
@@ -350,9 +349,8 @@ class PlaceScraper:
                     return _no_bounding_box(query)
                 bounding_box = parse_bounding_box(place, raw_box)
                 south, north, west, east = bounding_box
-                cells = build_grid_cells(bounding_box, query.grid)
-                print(f"\t→ bbox S{south} N{north} W{west} E{east}, {len(cells)} tiles")
-                logger.info("geocoded %r: %d grid tiles", place, len(cells))
+                print(f"\t→ bbox S{south} N{north} W{west} E{east}, {query.grid}x{query.grid} tiles")
+                logger.info("geocoded %r: %dx%d grid", place, query.grid, query.grid)
             else:
                 found_point = get_geocode(place, country=query.country)
                 if not found_point:
@@ -385,7 +383,7 @@ class PlaceScraper:
             name = f"{keyword} @ {place}"[:80]
             kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
             kept, kw_finished, kw_skipped, kw_blocked, stop = self._scrape_keyword(
-                query, kw_settings, name, cells, bounding_box, known, all_kept
+                query, kw_settings, name, bounding_box, known, all_kept
             )
             all_kept.extend(kept)
             known = known | frozenset(key for row in kept for key in lead_keys(row))
@@ -409,7 +407,6 @@ class PlaceScraper:
         query: PlaceQuery,
         settings: ScrapeSettings,
         name: str,
-        cells: list[GridCell],
         bounding_box: BoundingBox | None,
         known_keys: frozenset[str],
         saved: list[LeadRow],
@@ -419,10 +416,12 @@ class PlaceScraper:
         Returns the kept rows, the finished and skipped counts, whether Google
         rate-limited the keyword, and whether the run must stop after it.
         ``saved`` holds the rows of the keywords before this one, for salvage.
+        Each grid tile is limited by its own rows, and tiles dedupe against
+        each other and against ``known_keys``.
 
         :raises UnsavedLeadsError: If a scrape's leads stay unsaved in Redis.
         """
-        if not cells:
+        if not query.grid:
             print(
                 f"▶ Creating scrape: 1 keyword @ {settings.latitude},{settings.longitude} depth={query.scroll_depth}"
             )
@@ -460,7 +459,7 @@ class PlaceScraper:
                 return kept, 0, 1, result.blocked, result.blocked
             return kept, 1, 0, result.blocked, result.blocked
 
-        cells = list(cells)
+        cells = build_grid_cells(bounding_box, query.grid)
         deep_scan_note = (
             " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
             if query.deep_scan
@@ -471,6 +470,7 @@ class PlaceScraper:
         )
 
         rows: list[LeadRow] = []
+        kept: list[LeadRow] = []
         finished = skipped = 0
         blocked = False
         lost_chrome = False
@@ -520,6 +520,7 @@ class PlaceScraper:
                 skipped += 1
                 continue
 
+            before = len(rows)
             rows = dedupe_rows(rows + result.rows, known_keys)
             if result.blocked:
                 blocked = True
@@ -539,15 +540,11 @@ class PlaceScraper:
             finished += 1
             if result.note:
                 print(f"⚠ cell {index}/{len(cells)}: {result.note}")
-            kept = finalize_rows(rows, query, bounding_box)
+            kept.extend(finalize_rows(rows[before:], query, bounding_box))
             self._salvage = saved + kept
             print(
                 f"cell {index}/{len(cells)}: {len(result.rows)} rows, {len(kept)} kept so far"
             )
-            if query.limit and len(kept) >= query.limit:
-                logger.info("reached the row limit of %s; stopping", query.limit)
-                print(f"✓ reached --limit {query.limit}; stopping")
-                break
 
             if (
                 query.deep_scan
@@ -569,7 +566,6 @@ class PlaceScraper:
                     f"! cell {index} is at Google's cap: {len(sub_cells)} sub-tiles added, {len(cells)} cells now"
                 )
 
-        kept = finalize_rows(rows, query, bounding_box)
         logger.info(
             "grid done: %d finished, %d skipped, blocked=%s, %d unique rows, %d kept",
             finished,

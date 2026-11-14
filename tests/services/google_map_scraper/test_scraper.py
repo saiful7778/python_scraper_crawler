@@ -216,3 +216,51 @@ def test_unsaved_leads_stop_the_keyword_loop(monkeypatch):
     with pytest.raises(UnsavedLeadsError):
         PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
     assert calls == ["cafes"]
+
+
+def test_grid_runs_one_scrape_per_tile_for_each_keyword(monkeypatch):
+    names = []
+
+    def fake_run(name, settings, **_):
+        names.append((settings.keywords[0], settings.latitude))
+        return RunResult("id", ScrapeStatus.OK, "", [], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(
+        scraper_module,
+        "get_geocode",
+        lambda *a, **k: ((1.0, 2.0), ["0", "1", "0", "1"]),
+    )
+    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"], grid=2))
+    keywords = [keyword for keyword, _ in names]
+    assert keywords.count("cafes") == 4
+    assert keywords.count("bakeries") == 4
+    assert keywords[:4] == ["cafes"] * 4
+
+
+def test_limit_applies_to_each_tile_not_the_whole_grid(monkeypatch):
+    calls = []
+
+    def fake_run(name, settings, **_):
+        calls.append(name)
+        tile = len(calls)
+        return RunResult(
+            "id",
+            ScrapeStatus.OK,
+            "",
+            [
+                _row(title=f"tile{tile}-a", latitude=0.5, longitude=0.5),
+                _row(title=f"tile{tile}-b", latitude=0.5, longitude=0.5),
+            ],
+            False,
+        )
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(
+        scraper_module,
+        "get_geocode",
+        lambda *a, **k: ((1.0, 2.0), ["0", "1", "0", "1"]),
+    )
+    result = PlaceScraper().scrape(_query(grid=2, limit=1, keywords=["cafes"]))
+    assert len(calls) == 4
+    assert len(result.rows) == 4
