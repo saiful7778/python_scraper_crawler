@@ -184,3 +184,35 @@ def test_rate_limit_stops_the_remaining_keywords(monkeypatch):
     result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
     assert names == ["cafes"]
     assert result.blocked
+
+
+def test_a_redis_failure_stops_the_keyword_loop(monkeypatch):
+    from app.services.buffer.client import BufferError
+
+    calls = []
+
+    def fake_run(name, settings, **_):
+        calls.append(settings.keywords[0])
+        raise BufferError("redis down")
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    with pytest.raises(BufferError):
+        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert calls == ["cafes"]
+
+
+def test_unsaved_leads_stop_the_keyword_loop(monkeypatch):
+    from app.services.google_map_scraper.scraper import UnsavedLeadsError
+
+    calls = []
+
+    def fake_run(name, settings, **_):
+        calls.append(settings.keywords[0])
+        raise UnsavedLeadsError("s1", 3)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    with pytest.raises(UnsavedLeadsError):
+        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert calls == ["cafes"]

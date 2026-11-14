@@ -437,7 +437,7 @@ class PlaceScraper:
                 print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
                 logger.exception("single scrape stopped on a lost Chrome connection")
                 return [], 0, 1, False, True
-            except UnsavedLeadsError:
+            except (BufferError, UnsavedLeadsError):
                 raise
             except Exception as exc:
                 print(f"\n⚠ keyword skipped: {describe(exc)}")
@@ -445,6 +445,7 @@ class PlaceScraper:
                 return [], 0, 1, False, False
 
             kept = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
+            self._salvage = saved + kept
             logger.info(
                 "single scrape: %d rows, %d kept after dedupe and filters",
                 len(result.rows),
@@ -511,7 +512,7 @@ class PlaceScraper:
                 skipped += 1
                 lost_chrome = True
                 break
-            except UnsavedLeadsError:
+            except (BufferError, UnsavedLeadsError):
                 raise
             except Exception as exc:
                 print(f"\n⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
