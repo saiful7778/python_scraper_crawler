@@ -142,7 +142,7 @@ class GoogleMapProfileRepository(BaseRepository):
     async def key_rows(self) -> list[LeadRow]:
         """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""
         profiles = await self._model.all().values(*PROFILE_KEY_FIELDS)
-        leads = await self._model.filter(lead__isnull=False).values(
+        leads = await self._model.filter(lead_id__isnull=False).values(
             *(f"lead__{field}" for field in LEAD_KEY_FIELDS)
         )
         return [
