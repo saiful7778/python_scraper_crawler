@@ -459,6 +459,7 @@ class PlaceScraper:
                 return kept, 0, 1, result.blocked, result.blocked
             return kept, 1, 0, result.blocked, result.blocked
 
+        assert bounding_box is not None  # Grid queries require a resolved bounding box.
         cells = build_grid_cells(bounding_box, query.grid)
         deep_scan_note = (
             " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
