@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import queue
 import time
+from collections import deque
 from typing import Final
 
 from app.services.browser import BrowserTab, CDPError
@@ -24,6 +25,9 @@ logger = get_logger(__name__)
 
 #: How often the response queue is drained while waiting.
 _POLL_INTERVAL_SECONDS: Final[float] = 0.3
+
+#: How many recent responses are logged when no panel JSON arrives.
+_RECENT_RESPONSES: Final[int] = 5
 
 
 def fetch_lead_panel_json(tab: BrowserTab, url: str, timeout: float = 10.0) -> str:
@@ -51,6 +55,7 @@ def fetch_lead_panel_json(tab: BrowserTab, url: str, timeout: float = 10.0) -> s
         deadline = time.monotonic() + timeout
         request_id: str | None = None
         last_error: str = "no panel response was seen"
+        responses_seen: deque[str] = deque(maxlen=_RECENT_RESPONSES)
         while time.monotonic() < deadline:
             while request_id is None:
                 try:
@@ -63,6 +68,10 @@ def fetch_lead_panel_json(tab: BrowserTab, url: str, timeout: float = 10.0) -> s
                         f"{describe(tab.client.closed) if tab.client.closed else 'closed'}"
                     )
                 response: Params = message.get("response", {})
+                responses_seen.append(
+                    f"{response.get('status')} {response.get('mimeType')} "
+                    f"{str(response.get('url', ''))[:120]}"
+                )
                 if LEAD_PANEL_URL_PATTERN.match(response.get("url", "")) and "json" in (
                     response.get("mimeType") or ""
                 ):
@@ -84,7 +93,11 @@ def fetch_lead_panel_json(tab: BrowserTab, url: str, timeout: float = 10.0) -> s
                     return response_text(result, url)
             time.sleep(_POLL_INTERVAL_SECONDS)
         logger.warning(
-            "no panel JSON for %s within %s s: %s", url, timeout, last_error
+            "no panel JSON for %s within %s s: %s; last responses: %s",
+            url,
+            timeout,
+            last_error,
+            list(responses_seen) or "none",
         )
         return ""
     finally:

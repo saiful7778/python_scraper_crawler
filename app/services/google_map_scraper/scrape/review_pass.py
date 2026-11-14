@@ -23,6 +23,8 @@ logger = get_logger(__name__)
 
 _PANEL_ONLY_FIELDS = ("user_reviews", "reviews_per_rating")
 _COORDINATE_FIELDS = ("latitude", "longitude")
+#: Stop the pass after this many empty panels in a row: Google is not serving them.
+_MAX_EMPTY_IN_A_ROW = 3
 
 
 class ReviewPass:
@@ -55,6 +57,7 @@ class ReviewPass:
             return 0
         proxy = self._proxies[0] if self._proxies else None
         reviewed = 0
+        empty_in_a_row = 0
         logger.info("reviews: reading the panels of %d lead(s)", len(todo))
         try:
             with self._browser.open_tab(proxy) as proxy_tab:
@@ -82,7 +85,21 @@ class ReviewPass:
                             "Google's unusual-traffic page"
                         )
                         break
-                    self._merge_panel(row, parse_place_panel(body or ""))
+                    if not body:
+                        empty_in_a_row += 1
+                        if empty_in_a_row >= _MAX_EMPTY_IN_A_ROW:
+                            logger.warning(
+                                "reviews: %d panels in a row came back empty; stopping",
+                                empty_in_a_row,
+                            )
+                            self._notes.append(
+                                f"reviews read for {reviewed} of {len(todo)} leads: "
+                                f"{empty_in_a_row} panels in a row were empty"
+                            )
+                            break
+                        continue
+                    empty_in_a_row = 0
+                    self._merge_panel(row, parse_place_panel(body))
                     reviewed += 1
                     logger.debug(
                         "reviews: panel %d/%d read for %s",

@@ -123,3 +123,22 @@ def test_raises_when_event_queue_delivers_connection_loss(clock: FakeClock):
         fetch_lead_panel_json(cast(BrowserTab, tab), URL)
 
     assert len(tab.client.unsubscribed) == 1
+
+
+def test_timeout_log_lists_the_responses_seen(clock: FakeClock, caplog):
+    tab = FakeTab()
+    tab.client.events.put(
+        {
+            "requestId": "R0",
+            "response": {
+                "url": "https://www.google.com/sorry/index",
+                "status": 429,
+                "mimeType": "text/html",
+            },
+        }
+    )
+
+    body = fetch_lead_panel_json(cast(BrowserTab, tab), URL, timeout=1.0)
+
+    assert body == ""
+    assert "429 text/html https://www.google.com/sorry/index" in caplog.text
