@@ -32,6 +32,7 @@ class LeadModel(Model):
     socials: fields.ReverseRelation["LeadSocialModel"]
     crawl_websites: fields.ReverseRelation["CrawlWebsiteModel"]
     map_profiles: fields.ReverseRelation["GoogleMapProfileModel"]
+    detailed_address: fields.BackwardOneToOneRelation["LeadAddressModel"]
 
     class Meta(Model.Meta):
         table = "leads"

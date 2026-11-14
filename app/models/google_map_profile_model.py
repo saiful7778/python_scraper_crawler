@@ -37,9 +37,13 @@ class GoogleMapProfileModel(Model):
     lead = fields.ForeignKeyField(
         "models.LeadModel",
         related_name="map_profiles",
-        null=True,
-        on_delete=fields.SET_NULL,
+        on_delete=fields.CASCADE,
     )
+
+    hours: fields.ReverseRelation["GoogleMapProfileHourModel"]
+    reviews: fields.ReverseRelation["GoogleMapProfileReviewModel"]
+    image_rows: fields.ReverseRelation["GoogleMapProfileImageModel"]
+    keyword_links: fields.ReverseRelation["GoogleMapKeyword"]
 
     class Meta(Model.Meta):
         table = "google_maps_profiles"
@@ -98,6 +102,8 @@ class KeywordModel(Model):
     name_key = fields.CharField(max_length=500, unique=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
+
+    google_map_links: fields.ReverseRelation["GoogleMapKeyword"]
 
     class Meta(Model.Meta):
         table = "keywords"

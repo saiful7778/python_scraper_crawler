@@ -193,7 +193,7 @@ class Migration(migrations.Migration):
                 ('review_star_5_count', fields.IntField(null=True)),
                 ('created_at', fields.DatetimeField(auto_now=False, auto_now_add=True)),
                 ('updated_at', fields.DatetimeField(auto_now=True, auto_now_add=False)),
-                ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', null=True, db_constraint=True, to_field='id', related_name='map_profiles', on_delete=OnDelete.SET_NULL)),
+                ('lead', fields.ForeignKeyField('models.LeadModel', source_field='lead_id', db_constraint=True, to_field='id', related_name='map_profiles', on_delete=OnDelete.CASCADE)),
             ],
             options={'table': 'google_maps_profiles', 'app': 'models', 'pk_attr': 'id'},
             bases=['Model'],

@@ -141,7 +141,7 @@ class GoogleMapProfileRepository(BaseRepository):
     async def key_rows(self) -> list[LeadRow]:
         """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""
         profiles = await self._model.all().values(*PROFILE_KEY_FIELDS)
-        leads = await self._model.filter(lead_id__isnull=False).values(
+        leads = await self._model.all().values(
             *(f"lead__{field}" for field in LEAD_KEY_FIELDS)
         )
         return [
@@ -155,15 +155,14 @@ class GoogleMapProfileRepository(BaseRepository):
         ]
 
     async def save_row(self, row: LeadRow, scrape_id: str) -> None:
-        profile = await self._save_profile(row)
+        existing = await self._find_profile(row)
+        lead = await self._save_lead(row, existing)
+        await self._leads.add_children(lead, _children(row))
+        profile = await self._save_profile(row, lead, existing)
         await self._save_keyword(profile, row, scrape_id)
         await self._save_hours(profile, row)
         await self._save_images(profile, row)
         await self._save_reviews(profile, row)
-        lead = await self._save_lead(row, profile)
-        await self._leads.add_children(lead, _children(row))
-        profile.lead = lead
-        await profile.save()
 
     async def _find_profile(self, row: LeadRow):
         place_id = row.get("place_id")
@@ -189,15 +188,15 @@ class GoogleMapProfileRepository(BaseRepository):
             ),
         ).first()
 
-    async def _save_profile(self, row: LeadRow):
+    async def _save_profile(self, row: LeadRow, lead, profile):
         values = _profile_values(row)
-        profile = await self._find_profile(row)
         if profile is None:
             return await self._model.create(
-                counter=await self._next_global_counter(), **values
+                counter=await self._next_global_counter(), lead=lead, **values
             )
-        if self.fill_empty(profile, values):
-            await profile.save()
+        self.fill_empty(profile, values)
+        profile.lead = lead
+        await profile.save()
         return profile
 
     async def _save_keyword(self, profile, row: LeadRow, scrape_id: str) -> None:
@@ -266,6 +265,8 @@ class GoogleMapProfileRepository(BaseRepository):
         )
 
     async def _linked_lead(self, profile):
+        if profile is None:
+            return None
         await profile.fetch_related("lead")
         return profile.lead
 
