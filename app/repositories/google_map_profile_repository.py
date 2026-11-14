@@ -10,7 +10,6 @@ from app.models import (
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
     KeywordModel,
-    LeadModel,
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
@@ -163,7 +162,7 @@ class GoogleMapProfileRepository(BaseRepository):
         await self._save_reviews(profile, row)
         lead = await self._save_lead(row, profile)
         await self._leads.add_children(lead, _children(row))
-        profile.lead_id = lead.id
+        profile.lead = lead
         await profile.save()
 
     async def _find_profile(self, row: LeadRow):
@@ -267,9 +266,8 @@ class GoogleMapProfileRepository(BaseRepository):
         )
 
     async def _linked_lead(self, profile):
-        if profile.lead_id is None:
-            return None
-        return await LeadModel.get_or_none(id=profile.lead_id)
+        await profile.fetch_related("lead")
+        return profile.lead
 
     async def _save_lead(self, row: LeadRow, profile):
         domain = website_domain(row.get("website", ""))
