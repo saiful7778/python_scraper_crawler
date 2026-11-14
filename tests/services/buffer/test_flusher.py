@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from asyncpg.exceptions import ConnectionDoesNotExistError
 from tortoise.context import TortoiseContext
 
 from app.models import GoogleMapProfileModel, LeadModel
@@ -249,23 +250,60 @@ def test_flush_retries_a_row_once_after_the_connection_drops(rows, state, make_f
     assert rows.length("s1") == 0
 
 
+class ServerClosesConnectionOnce(Saved):
+    def __init__(self):
+        super().__init__()
+        self.closed = False
+
+    async def __call__(self, row, scrape_id):
+        if not self.closed:
+            self.closed = True
+            raise ConnectionDoesNotExistError(
+                "connection was closed in the middle of operation"
+            )
+        await super().__call__(row, scrape_id)
+
+
+def test_flush_retries_a_row_once_after_the_server_closes_the_connection(
+    rows, state, make_flusher
+):
+    rows.append("s1", [{"title": "A"}, {"title": "B"}])
+    save = ServerClosesConnectionOnce()
+    assert make_flusher(rows, save).flush_once() == 2
+    assert save.calls == [("s1", "A"), ("s1", "B")]
+    assert rows.length("s1") == 0
+
+
+def test_connection_is_closed_after_each_flush(tmp_path, rows, state):
+    config = sqlite_config(tmp_path / "leads.db")
+    in_database(config, generate_schemas=True)
+    rows.append("s1", [{"title": "A"}])
+    flusher = Flusher(rows, state, save_row=Saved(), crawl_sink=None, config=config)
+    try:
+        assert flusher.flush_once() == 1
+        assert flusher._context is None
+    finally:
+        flusher.shutdown()
+
+
 def test_dropped_connection_is_replaced_by_a_new_one(tmp_path, rows, state):
     config = sqlite_config(tmp_path / "leads.db")
     in_database(config, generate_schemas=True)
     rows.append("s1", [{"title": "A"}])
-    opened = []
+    contexts = []
 
     async def save(row, scrape_id):
-        if not opened:
-            opened.append(flusher._context)
+        contexts.append(flusher._context)
+        if len(contexts) == 1:
             raise ConnectionResetError("connection reset by peer")
 
     flusher = Flusher(rows, state, save_row=save, crawl_sink=None, config=config)
     try:
         assert flusher.flush_once() == 1
-        assert opened[0] is not None
-        assert flusher._context is not None
-        assert flusher._context is not opened[0]
+        assert len(contexts) == 2
+        assert contexts[0] is not None
+        assert contexts[1] is not None
+        assert contexts[1] is not contexts[0]
     finally:
         flusher.shutdown()
     assert rows.length("s1") == 0

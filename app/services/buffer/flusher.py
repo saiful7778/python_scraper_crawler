@@ -6,6 +6,7 @@ from functools import partial
 from typing import Any
 
 from asyncpg import InterfaceError
+from asyncpg.exceptions import PostgresConnectionError
 from tortoise.context import TortoiseContext
 from tortoise.models import Model
 
@@ -28,7 +29,7 @@ CONNECTION = "scrape_engine"
 #: Columns an upsert never rewrites.
 _KEPT_COLUMNS = frozenset({"id", "created_at"})
 #: Errors meaning the PostgreSQL connection itself is gone, not the row is bad.
-CONNECTION_LOST = (InterfaceError, ConnectionError)
+CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
 
 SaveRow = Callable[[LeadRow, str], Awaitable[None]]
 #: Stores one finished website snapshot. It raises when the snapshot cannot be
@@ -104,16 +105,21 @@ class Flusher(threading.Thread):
 
     def flush_once(self) -> int:
         saved = 0
-        for scrape_id in self._state.active_ids():
-            batch = self._rows.peek(scrape_id, BATCH_SIZE)
-            if not batch:
-                continue
-            self._state.refresh_ttl(scrape_id)
-            count = self._loop.run_until_complete(self._save_batch(batch, scrape_id))
-            if count:
-                self._rows.trim(scrape_id, count)
-            saved += count
-        self._flush_crawls()
+        try:
+            for scrape_id in self._state.active_ids():
+                batch = self._rows.peek(scrape_id, BATCH_SIZE)
+                if not batch:
+                    continue
+                self._state.refresh_ttl(scrape_id)
+                count = self._loop.run_until_complete(
+                    self._save_batch(batch, scrape_id)
+                )
+                if count:
+                    self._rows.trim(scrape_id, count)
+                saved += count
+            self._flush_crawls()
+        finally:
+            self._loop.run_until_complete(self._drop_context())
         if saved:
             logger.debug("flushed %d buffered lead row(s)", saved)
         return saved
