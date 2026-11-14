@@ -45,6 +45,13 @@ async def test_saving_a_row_without_place_id_twice_creates_one_profile_and_lead(
     assert await LeadModel.all().count() == 1
 
 
+async def test_a_second_business_on_a_taken_domain_gets_its_own_lead(db, repo):
+    await repo.save_row({"place_id": "p1", "title": "Cafe A", "website": "https://a.com"}, "s1")
+    await repo.save_row({"place_id": "p2", "title": "Cafe B", "website": "https://a.com"}, "s1")
+    assert await LeadModel.all().count() == 2
+    assert await GoogleMapProfileModel.filter(lead__website_domain=None).count() == 1
+
+
 async def test_rows_without_place_id_and_different_titles_stay_separate(db, repo):
     await repo.save_row({"title": "Cafe A", "website": "https://a.com"}, "s1")
     await repo.save_row({"title": "Cafe B", "website": "https://b.com"}, "s1")

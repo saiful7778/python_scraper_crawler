@@ -271,16 +271,13 @@ class GoogleMapProfileRepository(BaseRepository):
         return profile.lead
 
     async def _save_lead(self, row: LeadRow, profile):
-        domain = website_domain(row.get("website", ""))
         values = {name: row.get(name) or None for name in LEAD_FIELDS}
-        if domain is None:
-            lead = await self._linked_lead(profile)
-            if lead is None:
-                return await self._leads.create({**values, "website_domain": None})
-        else:
-            lead = await self._leads.find_by_domain(domain)
-            if lead is None:
-                return await self._leads.create({**values, "website_domain": domain})
+        lead = await self._linked_lead(profile)
+        if lead is None:
+            domain = await self._leads.find_by_domain(
+                website_domain(row.get("website", ""))
+            )
+            return await self._leads.create({**values, "website_domain": domain})
         if self.fill_empty(lead, values):
             await lead.save()
         return lead

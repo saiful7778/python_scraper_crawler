@@ -41,8 +41,11 @@ class LeadRepository(BaseRepository):
         self._counters[self._model] = value
         return value
 
-    async def find_by_domain(self, domain: str):
-        return await self._model.get_or_none(website_domain=domain)
+    async def find_by_domain(self, domain: str | None) -> str | None:
+        """The domain a new lead may take: ``None`` when there is none or another lead already has it."""
+        if domain is None or await self._model.filter(website_domain=domain).exists():
+            return None
+        return domain
 
     async def find_by_host(self, host: str) -> LeadModel | None:
         lead = await self._model.get_or_none(website_domain=host)
