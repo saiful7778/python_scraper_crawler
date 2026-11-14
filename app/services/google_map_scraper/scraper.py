@@ -32,7 +32,7 @@ from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
 from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
-from .scrape.scrape_database import ScrapeDatabase
+from .scrape.scrape_database import ScrapeDatabase, ScrapeDatabaseError
 from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
 from .scrape.scrape_run import RunOutcome
 from .scrape.scrape_settings import ScrapeSettings
@@ -436,7 +436,7 @@ class PlaceScraper:
                 print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
                 logger.exception("single scrape stopped on a lost Chrome connection")
                 return [], 0, 1, False, True
-            except (BufferError, UnsavedLeadsError):
+            except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
                 raise
             except Exception as exc:
                 print(f"\n⚠ keyword skipped: {describe(exc)}")
@@ -512,7 +512,7 @@ class PlaceScraper:
                 skipped += 1
                 lost_chrome = True
                 break
-            except (BufferError, UnsavedLeadsError):
+            except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
                 raise
             except Exception as exc:
                 print(f"\n⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
@@ -522,6 +522,8 @@ class PlaceScraper:
 
             before = len(rows)
             rows = dedupe_rows(rows + result.rows, known_keys)
+            kept.extend(finalize_rows(rows[before:], query, bounding_box))
+            self._salvage = saved + kept
             if result.blocked:
                 blocked = True
                 logger.warning(
@@ -540,8 +542,6 @@ class PlaceScraper:
             finished += 1
             if result.note:
                 print(f"⚠ cell {index}/{len(cells)}: {result.note}")
-            kept.extend(finalize_rows(rows[before:], query, bounding_box))
-            self._salvage = saved + kept
             print(
                 f"cell {index}/{len(cells)}: {len(result.rows)} rows, {len(kept)} kept so far"
             )

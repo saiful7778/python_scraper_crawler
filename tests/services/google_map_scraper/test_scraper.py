@@ -264,3 +264,63 @@ def test_limit_applies_to_each_tile_not_the_whole_grid(monkeypatch):
     result = PlaceScraper().scrape(_query(grid=2, limit=1, keywords=["cafes"]))
     assert len(calls) == 4
     assert len(result.rows) == 4
+
+
+def _grid_geocode(*a, **k):
+    return ((1.0, 2.0), ["0", "1", "0", "1"])
+
+
+def test_a_failed_grid_tiles_rows_are_kept(monkeypatch):
+    calls = []
+
+    def fake_run(name, settings, **_):
+        calls.append(settings.latitude)
+        if len(calls) == 1:
+            return RunResult(
+                "id",
+                ScrapeStatus.FAILED,
+                "boom",
+                [_row(title="failed-tile", latitude=0.5, longitude=0.5)],
+                False,
+            )
+        return RunResult("id", ScrapeStatus.OK, "", [], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", _grid_geocode)
+    result = PlaceScraper().scrape(_query(grid=2, keywords=["cafes"]))
+    assert "failed-tile" in [row["title"] for row in result.rows]
+
+
+def test_a_blocked_grid_tiles_rows_are_kept(monkeypatch):
+    def fake_run(name, settings, **_):
+        return RunResult(
+            "id",
+            ScrapeStatus.OK,
+            "",
+            [_row(title="blocked-tile", latitude=0.5, longitude=0.5)],
+            True,
+        )
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", _grid_geocode)
+    result = PlaceScraper().scrape(_query(grid=2, keywords=["cafes"]))
+    assert result.blocked
+    assert "blocked-tile" in [row["title"] for row in result.rows]
+
+
+def test_a_postgres_error_stops_the_keyword_loop(monkeypatch):
+    from app.services.google_map_scraper.scrape.scrape_database import (
+        ScrapeDatabaseError,
+    )
+
+    calls = []
+
+    def fake_run(name, settings, **_):
+        calls.append(settings.keywords[0])
+        raise ScrapeDatabaseError("postgres down")
+
+    monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    with pytest.raises(ScrapeDatabaseError):
+        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    assert calls == ["cafes"]
