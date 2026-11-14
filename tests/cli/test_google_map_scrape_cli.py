@@ -12,6 +12,30 @@ def parse(monkeypatch: pytest.MonkeyPatch, *extra: str):
     return read_query()
 
 
+def _valid_query():
+    from cli.google_map_scrape_cli import CliQuery
+
+    return CliQuery.model_validate(
+        {"keywords": ["coffee shops"], "city": "Austin", "country": "us"}
+    )
+
+
+def test_unsaved_leads_exit_with_the_message(monkeypatch, capsys):
+    import cli.google_map_scrape_cli as cli
+    from app.services.google_map_scraper.scraper import UnsavedLeadsError
+
+    class Boom:
+        def scrape(self, query, known):
+            raise UnsavedLeadsError("s1", 4)
+
+    monkeypatch.setattr(cli, "PlaceScraper", Boom)
+    monkeypatch.setattr(cli, "read_query", lambda: _valid_query())
+    monkeypatch.setattr(cli.asyncio, "run", lambda coro: (coro.close(), frozenset())[1])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert "4 lead(s)" in str(exit_info.value)
+
+
 def test_keywords_are_split_on_commas(monkeypatch: pytest.MonkeyPatch) -> None:
     from cli.google_map_scrape_cli import read_query
 

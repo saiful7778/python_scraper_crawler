@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=keyword_names,
         required=True,
         metavar="KW,...",
-        help='comma-separated business types to search for, e.g. "coffee shops, bakeries"',
+        help='comma-separated business types to search for, e.g. "coffee shops, bakeries"; each keyword is its own scrape',
     )
     ap.add_argument("--city", required=True, help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -105,9 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_time",
         type=int,
         default=600,
-        help="time limit in SECONDS for each scrape (default: 600, max 1200)",
+        help="time limit in SECONDS for each scrape's Google Maps work (default: 600, max 1200). Each keyword, and each grid tile, is its own scrape.",
     )
-    ap.add_argument("--limit", type=int, metavar="N", help="stop at N rows")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="stop each scrape at N rows (each keyword, and each grid tile, has its own limit)",
+    )
     ap.add_argument(
         "--dry-run",
         action="store_true",
@@ -181,12 +186,17 @@ def print_plan(query: CliQuery) -> None:
             else ""
         )
     )
+    if tiles > 1:
+        print(f"Scrapes: {len(query.keywords)} keyword(s) × {tiles} tiles")
+    else:
+        print(f"Scrapes: one per keyword ({len(query.keywords)})")
     print(
         f"Depth: {query.scroll_depth} batch(es) per keyword, {query.max_seconds}s per scrape"
     )
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
-    print(f"Row limit: {query.limit or 'none'}")
+    row_limit = f"{query.limit} per scrape" if query.limit else "none"
+    print(f"Row limit: {row_limit}")
     filters = [
         name
         for name, on in (
