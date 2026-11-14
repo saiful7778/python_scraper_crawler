@@ -45,8 +45,6 @@ logger = get_logger(__name__)
 SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
 
 _POLL_SECONDS = 1
-#: Seconds the flusher gets for its last flush; a slow PostgreSQL may need long.
-_FINAL_FLUSH_SECONDS = 60
 
 
 class BoundingBoxError(ScraperError):
@@ -158,7 +156,7 @@ class ScrapeSession:
     def stop(self) -> None:
         for name, stop in (
             ("scrape worker", lambda: self._worker.shutdown(wait=1)),
-            ("flusher", lambda: self._flusher.shutdown(wait=_FINAL_FLUSH_SECONDS)),
+            ("flusher", lambda: self._flusher.shutdown(wait=None)),
             ("scrape database", self._database.close),
         ):
             try:
@@ -214,7 +212,7 @@ class ScrapeSession:
     def _finish(self, carried: list[str], scrape_id: str) -> RunResult:
         ids = [i for i in (*carried, scrape_id) if i in self._finished]
         self._worker.shutdown(wait=1)
-        self._flusher.shutdown(wait=_FINAL_FLUSH_SECONDS)
+        self._flusher.shutdown(wait=None)
         result: RunResult | None = None
         for finished_id in ids:
             outcome, rows = self._finished[finished_id]

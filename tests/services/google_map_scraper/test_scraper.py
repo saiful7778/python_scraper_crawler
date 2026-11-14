@@ -68,3 +68,9 @@ def test_finalize_rows_applies_the_limit():
     rows = [_row(title=str(index)) for index in range(5)]
     kept = finalize_rows(rows, _query(limit=2), None)
     assert [row["title"] for row in kept] == ["0", "1"]
+
+
+def test_final_flush_has_no_time_limit():
+    import app.services.google_map_scraper.scraper as scraper
+
+    assert not hasattr(scraper, "_FINAL_FLUSH_SECONDS")
