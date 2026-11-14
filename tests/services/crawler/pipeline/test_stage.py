@@ -1,7 +1,7 @@
 import fakeredis
 import pytest
 
-from app.helpers.http_fetcher import FetchResult, SITE_TIMEOUT
+from app.helpers.http_fetcher import SITE_TIMEOUT, FetchResult
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_queue import CrawlQueue
 from app.services.crawler.pipeline.intake import CrawlIntake, IntakeResult

@@ -8,12 +8,12 @@ from fastapi_startkit.vite import ViteProvider
 from config.app import AppConfig
 from config.fastapi import FastAPIConfig
 from config.logging import LoggingConfig
+from config.queue import QueueConfig
 from config.tortoise import TortoiseConfig
 from config.vite import ViteConfig
 from providers.fastapi_provider import FastapiProvider
-from providers.tortoise_provider import TortoiseProvider
-from config.queue import QueueConfig
 from providers.queue_provider import QueueProvider
+from providers.tortoise_provider import TortoiseProvider
 
 app = Application(
     base_path=Path(__file__).resolve().parent.parent,

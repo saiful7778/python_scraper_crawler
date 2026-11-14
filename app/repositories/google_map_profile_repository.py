@@ -4,13 +4,13 @@ from typing import cast
 
 from app.constant import SOCIALS
 from app.models import (
+    GoogleMapKeyword,
+    GoogleMapProfileHourModel,
     GoogleMapProfileImageModel,
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
-    GoogleMapProfileToLeadModel,
-    GoogleMapKeyword,
-    GoogleMapProfileHourModel,
     KeywordModel,
+    LeadModel,
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
@@ -142,7 +142,7 @@ class GoogleMapProfileRepository(BaseRepository):
     async def key_rows(self) -> list[LeadRow]:
         """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""
         profiles = await self._model.all().values(*PROFILE_KEY_FIELDS)
-        leads = await GoogleMapProfileToLeadModel.all().values(
+        leads = await self._model.filter(lead__isnull=False).values(
             *(f"lead__{field}" for field in LEAD_KEY_FIELDS)
         )
         return [
@@ -163,9 +163,8 @@ class GoogleMapProfileRepository(BaseRepository):
         await self._save_reviews(profile, row)
         lead = await self._save_lead(row, profile)
         await self._leads.add_children(lead, _children(row))
-        await GoogleMapProfileToLeadModel.get_or_create(
-            map_profile_id=profile.id, lead_id=lead.id
-        )
+        profile.lead_id = lead.id
+        await profile.save()
 
     async def _find_profile(self, row: LeadRow):
         place_id = row.get("place_id")
@@ -182,19 +181,14 @@ class GoogleMapProfileRepository(BaseRepository):
         if not title:
             return None
         domain = website_domain(row.get("website", ""))
-        link = (
-            await GoogleMapProfileToLeadModel.filter(
-                lead__title=title,
-                **(
-                    {"lead__website_domain": domain}
-                    if domain
-                    else {"lead__website_domain__isnull": True}
-                ),
-            )
-            .first()
-            .prefetch_related("map_profile")
-        )
-        return link.map_profile if link else None
+        return await self._model.filter(
+            lead__title=title,
+            **(
+                {"lead__website_domain": domain}
+                if domain
+                else {"lead__website_domain__isnull": True}
+            ),
+        ).first()
 
     async def _save_profile(self, row: LeadRow):
         values = _profile_values(row)
@@ -213,19 +207,14 @@ class GoogleMapProfileRepository(BaseRepository):
             return
         keyword, _ = await KeywordModel.get_or_create(
             name_key=name.lower(),
-            defaults={
-                "name": name,
-                "counter": await self.next_counter(KeywordModel),
-            },
+            defaults={"name": name},
         )
-        base = await self.next_counter(GoogleMapKeyword, google_map_id=profile.id)
         await self.insert_ignoring_conflicts(
             GoogleMapKeyword,
             [
                 GoogleMapKeyword(
                     google_map_id=profile.id,
                     keyword_id=keyword.id,
-                    counter=base,
                     scrape_id=scrape_id,
                 )
             ],
@@ -278,12 +267,9 @@ class GoogleMapProfileRepository(BaseRepository):
         )
 
     async def _linked_lead(self, profile):
-        link = (
-            await GoogleMapProfileToLeadModel.filter(map_profile_id=profile.id)
-            .first()
-            .prefetch_related("lead")
-        )
-        return link.lead if link else None
+        if profile.lead_id is None:
+            return None
+        return await LeadModel.get_or_none(id=profile.lead_id)
 
     async def _save_lead(self, row: LeadRow, profile):
         domain = website_domain(row.get("website", ""))

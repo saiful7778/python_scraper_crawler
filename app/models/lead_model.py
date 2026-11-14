@@ -6,6 +6,7 @@ from tortoise.models import Model
 
 if TYPE_CHECKING:
     from .crawl_models import CrawlWebsiteModel
+    from .google_map_profile_model import GoogleMapProfileModel
 
 
 class LeadModel(Model):
@@ -30,6 +31,7 @@ class LeadModel(Model):
     categories: fields.ManyToManyRelation["LeadCategoryModel"]
     socials: fields.ReverseRelation["LeadSocialModel"]
     crawl_websites: fields.ReverseRelation["CrawlWebsiteModel"]
+    map_profiles: fields.ReverseRelation["GoogleMapProfileModel"]
 
     class Meta(Model.Meta):
         table = "leads"

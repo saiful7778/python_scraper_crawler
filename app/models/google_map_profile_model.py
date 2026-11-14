@@ -34,6 +34,12 @@ class GoogleMapProfileModel(Model):
 
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
+    lead = fields.ForeignKeyField(
+        "models.LeadModel",
+        related_name="map_profiles",
+        null=True,
+        on_delete=fields.SET_NULL,
+    )
 
     class Meta(Model.Meta):
         table = "google_maps_profiles"
@@ -88,7 +94,6 @@ class GoogleMapProfileImageModel(Model):
 
 class KeywordModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(null=True, db_index=True)
     name = fields.CharField(max_length=500)
     name_key = fields.CharField(max_length=500, unique=True)
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -100,7 +105,6 @@ class KeywordModel(Model):
 
 class GoogleMapKeyword(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     scrape_id = fields.CharField(max_length=64, default="", db_index=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)

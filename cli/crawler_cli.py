@@ -4,8 +4,8 @@ import sys
 
 import bootstrap.application  # noqa: F401 -- installs the central logging (config/logging.py)
 from app.services.buffer.client import connect
-from app.services.crawler.run import crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
+from app.services.crawler.run import crawl_one
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 from config.redis import RedisConfig

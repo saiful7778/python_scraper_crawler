@@ -10,12 +10,10 @@ import bootstrap.application  # noqa: F401 -- installs the central logging (conf
 from app.repositories import GoogleMapProfileRepository, LeadRepository
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
-from app.services.google_map_scraper.scrape.scrape_types import LeadRow
-from app.services.google_map_scraper.scraper import PlaceScraper, columns_for
+from app.services.google_map_scraper.scraper import PlaceScraper
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
-from config.redis import RedisConfig
-from config.tortoise import TORTOISE_ORM, TortoiseConfig
+from config.tortoise import TORTOISE_ORM
 
 logger = get_logger(__name__)
 
@@ -25,10 +23,6 @@ FLAG_NAMES = {"proxies": "--proxy"}
 class CliQuery(PlaceQuery):
     """The flags of the CLI: the place search with the defaults and limits a terminal run uses."""
 
-    fields: list[str] | None = Field(
-        default=None,
-        description="Columns to write, in this order. Names the scrape does not produce are written empty.",
-    )
     scroll_depth: int = Field(
         default=5,
         alias="depth",
@@ -60,10 +54,6 @@ def comma_list(text: str, label: str) -> list[str]:
     return names
 
 
-def field_names(text: str) -> list[str]:
-    return comma_list(text, "field name")
-
-
 def keyword_names(text: str) -> list[str]:
     return comma_list(text, "keyword")
 
@@ -75,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=keyword_names,
         required=True,
         metavar="KW,...",
-        help='comma-separated business types to search for, e.g. "coffee shops,bakeries"',
+        help='comma-separated business types to search for, e.g. "coffee shops, bakeries"',
     )
     ap.add_argument("--city", required=True, help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -118,12 +108,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="time limit in SECONDS for each scrape (default: 600, max 1200)",
     )
     ap.add_argument("--limit", type=int, metavar="N", help="stop at N rows")
-    ap.add_argument(
-        "--fields",
-        type=field_names,
-        metavar="NAME,...",
-        help="comma-separated columns to write, in this order (default: all); a name the scrape does not produce is written empty",
-    )
     ap.add_argument(
         "--dry-run",
         action="store_true",
@@ -203,7 +187,6 @@ def print_plan(query: CliQuery) -> None:
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
     print(f"Row limit: {query.limit or 'none'}")
-    print(f"Fields: {', '.join(query.fields) if query.fields else 'all'}")
     filters = [
         name
         for name, on in (
@@ -245,16 +228,6 @@ def main() -> None:
             "\nHeads-up: this is a large scrape (high depth or a grid).\n"
             "Running it back-to-back without proxies can get your IP temporarily rate-limited by Google (clears in minutes-hours; returns empty/failed scrapes meanwhile).\n"
             "For big or repeated runs, add proxies. Proceeding....\n",
-        )
-
-    known = set(columns_for(query))
-    unknown = [name for name in query.fields or [] if name not in known]
-    if unknown:
-        logger.warning(
-            "fields not produced by the scrape, written empty: %s", ", ".join(unknown)
-        )
-        print(
-            f"⚠ --fields: not a column of the scrape, written empty: {', '.join(unknown)}\n"
         )
 
     if query.dry_run:

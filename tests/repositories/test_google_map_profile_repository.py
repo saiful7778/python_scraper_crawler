@@ -8,7 +8,6 @@ from app.models import (
     GoogleMapProfileImageModel,
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
-    GoogleMapProfileToLeadModel,
     KeywordModel,
     LeadModel,
 )
@@ -33,7 +32,7 @@ async def test_saving_the_same_row_twice_creates_one_lead(db, repo):
     await repo.save_row(row, scrape_id="s1")
     await repo.save_row(row, scrape_id="s1")
     assert await LeadModel.all().count() == 1
-    assert await GoogleMapProfileToLeadModel.all().count() == 1
+    assert await GoogleMapProfileModel.filter(lead_id__isnull=False).count() == 1
 
 
 async def test_saving_a_row_without_place_id_twice_creates_one_profile_and_lead(

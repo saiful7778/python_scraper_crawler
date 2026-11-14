@@ -14,7 +14,6 @@ from .google_map_profile_model import (
     GoogleMapProfileReviewModel,
     KeywordModel,
 )
-from .google_map_profile_to_lead_model import GoogleMapProfileToLeadModel
 from .lead_model import (
     LeadAddressModel,
     LeadCategoryModel,
@@ -36,7 +35,6 @@ __all__ = [
     "GoogleMapProfileImageModel",
     "GoogleMapProfileModel",
     "GoogleMapProfileReviewModel",
-    "GoogleMapProfileToLeadModel",
     "KeywordModel",
     "LeadAddressModel",
     "LeadCategoryModel",

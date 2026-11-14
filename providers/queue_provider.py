@@ -1,12 +1,12 @@
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
+from fastapi_startkit.support import Provider
 from taskiq import InMemoryBroker
 from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
 from commands.queue_work_command import QueueWorkCommand
 from config.queue import QueueConfig
-from fastapi_startkit.support import Provider
 
 
 class QueueProvider(Provider):

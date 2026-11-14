@@ -1,7 +1,7 @@
 from app.helpers.http_fetcher import FetchResult
 from app.models import CrawlWebsiteModel, LeadEmailModel, LeadModel, LeadSocialModel
-from app.services.crawler.run import crawl_one
 from app.services.crawler.pipeline.stage import CRAWL_OPTIONS
+from app.services.crawler.run import crawl_one
 from tests.services.crawler.pipeline.conftest import in_database
 
 HTML = (
