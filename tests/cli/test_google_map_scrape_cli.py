@@ -33,6 +33,7 @@ def test_unsaved_leads_exit_with_the_message(monkeypatch, capsys):
     monkeypatch.setattr(cli.asyncio, "run", lambda coro: (coro.close(), frozenset())[1])
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
+    assert str(exit_info.value).startswith("✗ ")
     assert "4 lead(s)" in str(exit_info.value)
 
 
