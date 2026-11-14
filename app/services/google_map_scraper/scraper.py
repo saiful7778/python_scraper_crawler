@@ -446,6 +446,8 @@ class PlaceScraper:
                 logger.exception("cell %d stopped on a lost Chrome connection", index)
                 skipped += 1
                 break
+            except UnsavedLeadsError:
+                raise
             except Exception as exc:
                 print(f"\n⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
                 logger.exception("cell %d skipped", index)

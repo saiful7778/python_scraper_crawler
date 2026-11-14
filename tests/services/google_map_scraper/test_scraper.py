@@ -76,6 +76,27 @@ def test_final_flush_has_no_time_limit():
     assert not hasattr(scraper, "_FINAL_FLUSH_SECONDS")
 
 
+def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch):
+    import app.services.google_map_scraper.scraper as scraper
+    from app.services.google_map_scraper.scraper import PlaceScraper, UnsavedLeadsError
+
+    calls = []
+
+    def fake_geocode(place, with_bbox=False, country=None):
+        return (30.0, -97.0), ["29.0", "31.0", "-98.0", "-96.0"]
+
+    def fake_run_scrape(name, settings, **kwargs):
+        calls.append(settings)
+        raise UnsavedLeadsError("s1", 3)
+
+    monkeypatch.setattr(scraper, "get_geocode", fake_geocode)
+    monkeypatch.setattr(scraper, "run_scrape", fake_run_scrape)
+
+    with pytest.raises(UnsavedLeadsError):
+        PlaceScraper().scrape(_query(grid=2))
+    assert len(calls) == 1
+
+
 def test_unsaved_leads_of_the_scrape_raise(monkeypatch):
     from app.services.google_map_scraper.scraper import UnsavedLeadsError
     from app.utils.errors import ScraperError
