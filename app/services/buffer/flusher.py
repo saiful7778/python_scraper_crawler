@@ -132,10 +132,13 @@ class Flusher(threading.Thread):
         finally:
             self._close()
 
-    def shutdown(self, wait: float = 0) -> None:
+    def shutdown(self, wait: float | None = 0) -> None:
+        """Stop the flusher; ``None`` waits for the final save with no time limit."""
         self._stop_requested.set()
         if self.is_alive():
-            if wait > 0:
+            if wait is None:
+                self.join()
+            elif wait > 0:
                 self.join(wait)
         elif self.ident is None:
             self._close()

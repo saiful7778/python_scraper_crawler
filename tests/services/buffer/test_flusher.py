@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from asyncpg.exceptions import ConnectionDoesNotExistError
@@ -126,6 +127,21 @@ def test_run_flushes_until_shutdown(rows, state):
     flusher.shutdown(wait=2)
     assert not flusher.is_alive()
     assert rows.length("s1") == 0
+
+
+def test_shutdown_without_limit_waits_for_a_slow_final_save(rows, state):
+    saved = []
+
+    async def slow_save(row, scrape_id):
+        time.sleep(0.3)
+        saved.append(row["id"])
+
+    rows.append("s1", [{"id": "a"}])
+    flusher = Flusher(rows, state, save_row=slow_save, crawl_sink=None, interval=60)
+    flusher.start()
+    flusher.shutdown(wait=None)
+    assert saved == ["a"]
+    assert not flusher.is_alive()
 
 
 class TrimFailsOnce(RowBuffer):
