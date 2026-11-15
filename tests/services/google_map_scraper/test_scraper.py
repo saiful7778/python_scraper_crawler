@@ -1,3 +1,4 @@
+import fakeredis
 import pytest
 
 from app.services.google_map_scraper import scraper as scraper_module
@@ -12,6 +13,11 @@ from app.services.google_map_scraper.scraper import (
     finalize_rows,
     parse_bounding_box,
 )
+
+
+@pytest.fixture
+def redis():
+    return fakeredis.FakeRedis(decode_responses=True)
 
 
 def _query(**overrides) -> PlaceQuery:
@@ -81,7 +87,7 @@ def test_final_flush_has_no_time_limit():
     assert not hasattr(scraper, "_FINAL_FLUSH_SECONDS")
 
 
-def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch):
+def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch, redis):
     from app.services.google_map_scraper import scraper
     from app.services.google_map_scraper.scraper import PlaceScraper, UnsavedLeadsError
 
@@ -98,7 +104,7 @@ def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch):
     monkeypatch.setattr(scraper, "run_scrape", fake_run_scrape)
 
     with pytest.raises(UnsavedLeadsError):
-        PlaceScraper().scrape(_query(grid=2))
+        PlaceScraper(redis).scrape(_query(grid=2))
     assert len(calls) == 1
 
 
@@ -112,7 +118,7 @@ def test_unsaved_leads_of_the_scrape_raise(monkeypatch):
     assert "s1" in str(error)
 
 
-def test_each_keyword_is_its_own_scrape(monkeypatch):
+def test_each_keyword_is_its_own_scrape(monkeypatch, redis):
     calls = []
 
     def fake_run(name, settings, *, known_keys=frozenset(), **_):
@@ -123,12 +129,12 @@ def test_each_keyword_is_its_own_scrape(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
-    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert [keywords for _, keywords in calls] == [("cafes",), ("bakeries",)]
     assert len(result.rows) == 2
 
 
-def test_a_lead_kept_by_the_first_keyword_is_known_to_the_second(monkeypatch):
+def test_a_lead_kept_by_the_first_keyword_is_known_to_the_second(monkeypatch, redis):
     seen_known = []
 
     def fake_run(name, settings, *, known_keys=frozenset(), **_):
@@ -137,11 +143,11 @@ def test_a_lead_kept_by_the_first_keyword_is_known_to_the_second(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
-    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert seen_known[1]  # the second scrape received the first scrape's keys
 
 
-def test_a_deleted_keyword_scrape_is_skipped_and_the_next_one_runs(monkeypatch):
+def test_a_deleted_keyword_scrape_is_skipped_and_the_next_one_runs(monkeypatch, redis):
     names = []
 
     def fake_run(name, settings, **_):
@@ -152,12 +158,12 @@ def test_a_deleted_keyword_scrape_is_skipped_and_the_next_one_runs(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
-    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert names == ["cafes", "bakeries"]
     assert result.skipped == 1
 
 
-def test_a_lead_filtered_out_by_the_first_keyword_is_not_known(monkeypatch):
+def test_a_lead_filtered_out_by_the_first_keyword_is_not_known(monkeypatch, redis):
     seen_known = []
 
     def fake_run(name, settings, *, known_keys=frozenset(), **_):
@@ -168,11 +174,11 @@ def test_a_lead_filtered_out_by_the_first_keyword_is_not_known(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
-    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"], has_phone=True))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"], has_phone=True))
     assert not seen_known[1]  # the phone filter dropped it, so keyword 2 may keep it
 
 
-def test_rate_limit_stops_the_remaining_keywords(monkeypatch):
+def test_rate_limit_stops_the_remaining_keywords(monkeypatch, redis):
     names = []
 
     def fake_run(name, settings, **_):
@@ -181,12 +187,12 @@ def test_rate_limit_stops_the_remaining_keywords(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
-    result = PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert names == ["cafes"]
     assert result.blocked
 
 
-def test_a_redis_failure_stops_the_keyword_loop(monkeypatch):
+def test_a_redis_failure_stops_the_keyword_loop(monkeypatch, redis):
     from app.services.buffer.client import BufferError
 
     calls = []
@@ -198,11 +204,11 @@ def test_a_redis_failure_stops_the_keyword_loop(monkeypatch):
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
     with pytest.raises(BufferError):
-        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+        PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert calls == ["cafes"]
 
 
-def test_unsaved_leads_stop_the_keyword_loop(monkeypatch):
+def test_unsaved_leads_stop_the_keyword_loop(monkeypatch, redis):
     from app.services.google_map_scraper.scraper import UnsavedLeadsError
 
     calls = []
@@ -214,11 +220,11 @@ def test_unsaved_leads_stop_the_keyword_loop(monkeypatch):
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
     with pytest.raises(UnsavedLeadsError):
-        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+        PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert calls == ["cafes"]
 
 
-def test_grid_runs_one_scrape_per_tile_for_each_keyword(monkeypatch):
+def test_grid_runs_one_scrape_per_tile_for_each_keyword(monkeypatch, redis):
     names = []
 
     def fake_run(name, settings, **_):
@@ -231,14 +237,14 @@ def test_grid_runs_one_scrape_per_tile_for_each_keyword(monkeypatch):
         "get_geocode",
         lambda *a, **k: ((1.0, 2.0), ["0", "1", "0", "1"]),
     )
-    PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"], grid=2))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"], grid=2))
     keywords = [keyword for keyword, _ in names]
     assert keywords.count("cafes") == 4
     assert keywords.count("bakeries") == 4
     assert keywords[:4] == ["cafes"] * 4
 
 
-def test_limit_applies_to_each_tile_not_the_whole_grid(monkeypatch):
+def test_limit_applies_to_each_tile_not_the_whole_grid(monkeypatch, redis):
     calls = []
 
     def fake_run(name, settings, **_):
@@ -261,7 +267,7 @@ def test_limit_applies_to_each_tile_not_the_whole_grid(monkeypatch):
         "get_geocode",
         lambda *a, **k: ((1.0, 2.0), ["0", "1", "0", "1"]),
     )
-    result = PlaceScraper().scrape(_query(grid=2, limit=1, keywords=["cafes"]))
+    result = PlaceScraper(redis).scrape(_query(grid=2, limit=1, keywords=["cafes"]))
     assert len(calls) == 4
     assert len(result.rows) == 4
 
@@ -270,7 +276,7 @@ def _grid_geocode(*a, **k):
     return ((1.0, 2.0), ["0", "1", "0", "1"])
 
 
-def test_a_failed_grid_tiles_rows_are_kept(monkeypatch):
+def test_a_failed_grid_tiles_rows_are_kept(monkeypatch, redis):
     calls = []
 
     def fake_run(name, settings, **_):
@@ -287,11 +293,11 @@ def test_a_failed_grid_tiles_rows_are_kept(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", _grid_geocode)
-    result = PlaceScraper().scrape(_query(grid=2, keywords=["cafes"]))
+    result = PlaceScraper(redis).scrape(_query(grid=2, keywords=["cafes"]))
     assert "failed-tile" in [row["title"] for row in result.rows]
 
 
-def test_a_blocked_grid_tiles_rows_are_kept(monkeypatch):
+def test_a_blocked_grid_tiles_rows_are_kept(monkeypatch, redis):
     def fake_run(name, settings, **_):
         return RunResult(
             "id",
@@ -303,12 +309,12 @@ def test_a_blocked_grid_tiles_rows_are_kept(monkeypatch):
 
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", _grid_geocode)
-    result = PlaceScraper().scrape(_query(grid=2, keywords=["cafes"]))
+    result = PlaceScraper(redis).scrape(_query(grid=2, keywords=["cafes"]))
     assert result.blocked
     assert "blocked-tile" in [row["title"] for row in result.rows]
 
 
-def test_a_postgres_error_stops_the_keyword_loop(monkeypatch):
+def test_a_postgres_error_stops_the_keyword_loop(monkeypatch, redis):
     from app.services.google_map_scraper.scrape.scrape_database import (
         ScrapeDatabaseError,
     )
@@ -322,5 +328,5 @@ def test_a_postgres_error_stops_the_keyword_loop(monkeypatch):
     monkeypatch.setattr(scraper_module, "run_scrape", fake_run)
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
     with pytest.raises(ScrapeDatabaseError):
-        PlaceScraper().scrape(_query(keywords=["cafes", "bakeries"]))
+        PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert calls == ["cafes"]
