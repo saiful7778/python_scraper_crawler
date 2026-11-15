@@ -423,6 +423,13 @@ def test_a_tile_deleted_before_its_worker_claims_it_is_skipped_and_the_run_ends(
     assert not redis.keys("place_queue:*")
 
 
+def test_a_deleted_flight_cancels_the_worker_that_runs_it(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    env.deleted.add("scrape-1")
+    PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
+    assert env.cancelled == ["scrape-1"]
+
+
 def test_the_connection_flag_alone_stops_the_run_and_keeps_the_queue(arrange, redis):
     env = arrange(
         lambda kw, slot: Reply(

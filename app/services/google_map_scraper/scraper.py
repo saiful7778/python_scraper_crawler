@@ -227,6 +227,11 @@ class ScrapeSession:
         """Raise if a worker stopped while scrapes are still waiting for an outcome."""
         self._check_workers("a queued scrape")
 
+    def cancel(self, scrape_id: str) -> None:
+        """Stop the worker running ``scrape_id``, if this session has one."""
+        for worker in self._workers:
+            worker.cancel(scrape_id)
+
     def run(self, name: str, settings: ScrapeSettings) -> RunResult:
         carried = self.start()
         scrape_id = self._database.create(
@@ -570,6 +575,7 @@ class _TileRun:
                 continue
             del self._flights[scrape_id]
             self._load[flight.slot] -= 1
+            self._session.cancel(scrape_id)
             dropped = True
             logger.info("scrape %s was deleted while it was queued", scrape_id)
             if flight.tile is not None:

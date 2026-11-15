@@ -94,6 +94,7 @@ class TileEnv:
         self.deleted: set[str] = (
             set()
         )  # deleted before their worker claims them: never reported
+        self.cancelled: list[str] = []  # flights dropped while their worker ran
         self._count = 0
 
     def slots_used_for(self, keyword: str) -> list[int]:
@@ -186,6 +187,9 @@ class TileSession:
             raise UnsavedLeadsError(scrape_id, 1)
         env.finished.append(scrape_id)
         return RunResult(scrape_id, reply.status, reply.note, reply.rows, reply.blocked)
+
+    def cancel(self, scrape_id: str) -> None:
+        self._env.cancelled.append(scrape_id)
 
     def check_workers(self) -> None:
         return None
