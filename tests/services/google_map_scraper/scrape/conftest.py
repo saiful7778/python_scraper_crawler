@@ -62,7 +62,7 @@ class FakeProxyTab:
 
 
 class FakeBrowserSession:
-    def __init__(self, locale: str, headless: bool):
+    def __init__(self, locale: str, headless: bool, shared=None):
         self.browser = None
 
     @property
@@ -100,6 +100,10 @@ def fake_maps(monkeypatch):
     """A browser and a Maps search that find one bakery; tests may replace the search."""
     monkeypatch.setattr(
         "app.services.google_map_scraper.scrape.scrape_run.BrowserSession",
+        FakeBrowserSession,
+    )
+    monkeypatch.setattr(
+        "app.services.google_map_scraper.scraper.BrowserSession",
         FakeBrowserSession,
     )
     monkeypatch.setattr(

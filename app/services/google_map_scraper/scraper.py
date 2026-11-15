@@ -1,14 +1,16 @@
 """Scrapes the keywords in one city, as a single scrape or a grid of scrapes, and stores the leads."""
 
+import queue
 import threading
 import time
+from functools import partial
 from typing import cast
 
 from redis import Redis
 from redis.exceptions import RedisError
 
 from app.repositories import GoogleMapProfileRepository, LeadRepository
-from app.services.browser import CDPError
+from app.services.browser import BrowserSession, CDPError, SharedBrowser
 from app.services.buffer.client import BufferError, connect
 from app.services.buffer.discard import discard_scrape
 from app.services.buffer.flusher import Flusher
@@ -28,8 +30,8 @@ from .google_map.geo import (
     get_geocode,
     is_in_bounding_box,
 )
-from .place_queue import DoneKeyword, PlaceJob, PlaceJobQueue
 from .place_query import PlaceQuery
+from .place_queue import DoneKeyword, PlaceJob, PlaceJobQueue
 from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
 from .scrape.lead_filter import keep_lead
@@ -114,8 +116,15 @@ def _no_bounding_box(query: PlaceQuery) -> ScrapeResult:
     return ScrapeResult([], columns_for(query), 0, 0, False)
 
 
+FinishedTile = tuple[str, RunOutcome, list[LeadRow], int]
+
+
 class ScrapeSession:
-    """The threads and Redis buffers of one ``run_scrape`` call."""
+    """The threads and Redis buffers of one ``run_scrape`` call, or of one city run.
+
+    One worker runs per proxy slot. All of them attach to one shared browser and
+    each takes the scrape ids submitted to its slot.
+    """
 
     def __init__(
         self,
@@ -123,21 +132,38 @@ class ScrapeSession:
         redis: Redis,
         postgres: TortoiseConfig,
         known_keys: frozenset[str],
+        slots: int,
+        *,
+        locale: str,
     ):
         self._redis = redis
         self._state = ScrapeState(redis, BUFFER_TTL_SECONDS)
         self._rows = RowBuffer(redis, BUFFER_TTL_SECONDS)
         self._queue = WebsiteQueue(redis, BUFFER_TTL_SECONDS)
         self._finished: dict[str, tuple[RunOutcome, list[LeadRow]]] = {}
+        self._finished_queue: queue.Queue[FinishedTile] = queue.Queue()
         self._deleted: set[str] = set()
         self._database = ScrapeDatabase(postgres)
-        self._worker = ScrapeWorker(
-            self._database,
-            redis,
-            headless=config.headless,
-            known_keys=known_keys,
-            on_finished=self._keep_finished,
-        )
+        self._shared = SharedBrowser(locale, config.headless)
+        self._assignments: list[queue.Queue[str]] = []
+        self._workers: list[ScrapeWorker] = []
+        for slot in range(slots):
+            assignments: queue.Queue[str] = queue.Queue()
+            self._assignments.append(assignments)
+            self._workers.append(
+                ScrapeWorker(
+                    self._database,
+                    redis,
+                    headless=config.headless,
+                    known_keys=known_keys,
+                    on_finished=partial(self._keep_finished, slot=slot),
+                    assignments=assignments,
+                    browser=BrowserSession(
+                        locale, config.headless, shared=self._shared
+                    ),
+                    proxy_slot=slot,
+                )
+            )
         profiles = GoogleMapProfileRepository(LeadRepository())
         self._flusher = Flusher(
             self._rows,
@@ -149,13 +175,43 @@ class ScrapeSession:
             save_rows=profiles.save_rows,
         )
 
-    def run(self, name: str, settings: ScrapeSettings) -> RunResult:
+    def start(self) -> list[str]:
+        """Resume interrupted scrapes, start the Flusher and the workers; returns the carried ids."""
         carried = self._resume_interrupted()
+        self._flusher.start()
+        for worker in self._workers:
+            worker.start()
+        return carried
+
+    def submit(self, scrape_id: str, slot: int) -> None:
+        """Give a scrape id to the worker of ``slot``."""
+        self._assignments[slot].put(scrape_id)
+
+    def next_finished(self, timeout: float) -> FinishedTile | None:
+        """The next tile that finished, with its slot; None when none finishes within ``timeout``."""
+        try:
+            return self._finished_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def finish(self, scrape_id: str) -> RunResult | None:
+        """Save and finish one tile's leads and return its result; None if it has no outcome yet.
+
+        :raises UnsavedLeadsError: If the tile's leads stay unsaved in Redis.
+        :raises ScrapeDeletedError: If the tile was deleted while it ran.
+        """
+        if scrape_id not in self._finished:
+            return None
+        return self._finish_one(scrape_id)
+
+    def run(self, name: str, settings: ScrapeSettings) -> RunResult:
+        carried = self.start()
         scrape_id = self._database.create(
             name, cast(SettingsData, settings.model_dump(by_alias=True, mode="json"))
         )
-        self._flusher.start()
-        self._worker.start()
+        for earlier in carried:
+            self.submit(earlier, 0)
+        self.submit(scrape_id, 0)
         for earlier in carried:
             try:
                 self._wait_for_scrape(earlier)
@@ -171,7 +227,8 @@ class ScrapeSession:
 
     def stop(self) -> None:
         for name, stop in (
-            ("scrape worker", lambda: self._worker.shutdown(wait=1)),
+            ("scrape workers", self._shutdown_workers),
+            ("shared browser", self._shared.close),
             ("flusher", lambda: self._flusher.shutdown(wait=None)),
             ("scrape database", self._database.close),
         ):
@@ -184,6 +241,13 @@ class ScrapeSession:
                 discard_scrape(self._redis, scrape_id)
             except Exception:
                 logger.exception("discarding the deleted scrape %s failed", scrape_id)
+
+    def _shutdown_workers(self) -> None:
+        for worker in self._workers:
+            worker.shutdown()
+        for worker in self._workers:
+            if worker.is_alive():
+                worker.join(1)
 
     def _resume_interrupted(self) -> list[str]:
         resumed, failed = self._database.requeue_interrupted(MAX_RESUMES)
@@ -200,25 +264,31 @@ class ScrapeSession:
         return carried
 
     def _keep_finished(
-        self, scrape_id: str, outcome: RunOutcome, rows: list[LeadRow]
+        self, scrape_id: str, outcome: RunOutcome, rows: list[LeadRow], slot: int
     ) -> None:
         self._finished[scrape_id] = (outcome, rows)
+        self._finished_queue.put((scrape_id, outcome, rows, slot))
 
     def _check_exists(self, scrape_id: str) -> None:
         if self._database.get(scrape_id) is None:
             self._deleted.add(scrape_id)
-            self._worker.cancel(scrape_id)
+            for worker in self._workers:
+                worker.cancel(scrape_id)
             raise ScrapeDeletedError(f"scrape {scrape_id} was deleted while it ran")
+
+    def _check_workers(self, scrape_id: str) -> None:
+        for worker in self._workers:
+            if not worker.is_alive():
+                if worker.failure is not None:
+                    raise worker.failure
+                raise ScrapeWorkerDiedError(
+                    f"the scrape worker stopped while scrape {scrape_id} had no outcome"
+                )
 
     def _wait_for_scrape(self, scrape_id: str) -> None:
         while scrape_id not in self._finished:
             self._check_exists(scrape_id)
-            if not self._worker.is_alive():
-                if self._worker.failure is not None:
-                    raise self._worker.failure
-                raise ScrapeWorkerDiedError(
-                    f"the scrape worker stopped while scrape {scrape_id} had no outcome"
-                )
+            self._check_workers(scrape_id)
             time.sleep(_POLL_SECONDS)
 
     def _drop(self, scrape_id: str) -> None:
@@ -227,42 +297,44 @@ class ScrapeSession:
 
     def _finish(self, carried: list[str], scrape_id: str) -> RunResult:
         ids = [i for i in (*carried, scrape_id) if i in self._finished]
-        self._worker.shutdown(wait=1)
+        self._shutdown_workers()
         self._flusher.shutdown(wait=None)
         result: RunResult | None = None
         for finished_id in ids:
-            outcome, rows = self._finished[finished_id]
-            progress = self._state.get_progress(finished_id)
-            left = self._rows.length(finished_id)
-            if left:
-                logger.warning(
-                    "PostgreSQL did not take %d buffered lead(s) of scrape %s; they stay in Redis and the scrape resumes on the next start",
-                    left,
-                    finished_id,
-                )
-                if finished_id == scrape_id:
-                    raise UnsavedLeadsError(scrape_id, left)
-                continue
-            discard_scrape(self._redis, finished_id)
-            if not self._database.finish(
-                finished_id, outcome.status, outcome.note, progress
-            ):
-                if finished_id == scrape_id:
-                    raise ScrapeDeletedError(
-                        f"scrape {scrape_id} was deleted while it ran"
-                    )
-                continue
             if finished_id == scrape_id:
-                result = RunResult(
-                    scrape_id=scrape_id,
-                    status=outcome.status,
-                    note=outcome.note,
-                    rows=rows,
-                    blocked=bool(progress.get("blocked")),
-                )
+                result = self._finish_one(scrape_id)
+                continue
+            try:
+                self._finish_one(finished_id)
+            except (UnsavedLeadsError, ScrapeDeletedError):
+                continue
         if result is None:
             raise ScrapeWorkerDiedError(f"scrape {scrape_id} ended without an outcome")
         return result
+
+    def _finish_one(self, finished_id: str) -> RunResult:
+        outcome, rows = self._finished[finished_id]
+        progress = self._state.get_progress(finished_id)
+        left = self._rows.length(finished_id)
+        if left:
+            logger.warning(
+                "PostgreSQL did not take %d buffered lead(s) of scrape %s; they stay in Redis and the scrape resumes on the next start",
+                left,
+                finished_id,
+            )
+            raise UnsavedLeadsError(finished_id, left)
+        discard_scrape(self._redis, finished_id)
+        if not self._database.finish(
+            finished_id, outcome.status, outcome.note, progress
+        ):
+            raise ScrapeDeletedError(f"scrape {finished_id} was deleted while it ran")
+        return RunResult(
+            scrape_id=finished_id,
+            status=outcome.status,
+            note=outcome.note,
+            rows=rows,
+            blocked=bool(progress.get("blocked")),
+        )
 
 
 def run_scrape(
@@ -294,6 +366,8 @@ def run_scrape(
         redis or connect(RedisConfig()),
         postgres or TortoiseConfig(),
         known_keys,
+        1,
+        locale=settings.locale_tag,
     )
     try:
         result = session.run(name, settings)

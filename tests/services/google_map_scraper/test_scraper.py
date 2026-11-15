@@ -1,9 +1,14 @@
+import queue
+import threading
+
 import fakeredis
 import pytest
 
 from app.services.google_map_scraper import scraper as scraper_module
 from app.services.google_map_scraper.place_query import PlaceQuery
+from app.services.google_map_scraper.scrape.engine_config import EngineConfig
 from app.services.google_map_scraper.scrape.lead_filter import keep_lead
+from app.services.google_map_scraper.scrape.scrape_run import RunOutcome
 from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus
 from app.services.google_map_scraper.scrape.scrape_types import RunResult
 from app.services.google_map_scraper.scraper import (
@@ -330,3 +335,113 @@ def test_a_postgres_error_stops_the_keyword_loop(monkeypatch, redis):
     with pytest.raises(ScrapeDatabaseError):
         PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert calls == ["cafes"]
+
+
+class _FakeDatabase:
+    def __init__(self, *_):
+        self.finished = []
+
+    def requeue_interrupted(self, max_resumes):
+        return 0, 0
+
+    def pending_ids(self):
+        return []
+
+    def get(self, scrape_id):
+        return {"ID": scrape_id}
+
+    def finish(self, scrape_id, status, note, progress):
+        self.finished.append(scrape_id)
+        return True
+
+    def close(self):
+        pass
+
+
+class _FakeFlusher:
+    def __init__(self, *_, **__):
+        pass
+
+    def start(self):
+        pass
+
+    def shutdown(self, wait=None):
+        pass
+
+
+class _FakeWorker(threading.Thread):
+    """Reports each id it is assigned as finished with no leads."""
+
+    def __init__(
+        self,
+        database,
+        redis,
+        headless=True,
+        known_keys=frozenset(),
+        on_finished=None,
+        assignments=None,
+        browser=None,
+        proxy_slot=0,
+    ):
+        super().__init__(daemon=True)
+        self.failure = None
+        self._assignments = assignments
+        self._on_finished = on_finished
+        self._stopped = threading.Event()
+
+    def run(self):
+        while not self._stopped.is_set():
+            try:
+                scrape_id = self._assignments.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            self._on_finished(scrape_id, RunOutcome(ScrapeStatus.OK, ""), [])
+
+    def cancel(self, scrape_id):
+        pass
+
+    def shutdown(self, wait=0):
+        self._stopped.set()
+        if wait and self.is_alive():
+            self.join(wait)
+
+
+class _SessionEnv:
+    def __init__(self, monkeypatch, redis):
+        monkeypatch.setattr(scraper_module, "ScrapeDatabase", _FakeDatabase)
+        monkeypatch.setattr(scraper_module, "Flusher", _FakeFlusher)
+        monkeypatch.setattr(scraper_module, "ScrapeWorker", _FakeWorker)
+        self._redis = redis
+        self.sessions = []
+
+    def session(self, slots):
+        session = scraper_module.ScrapeSession(
+            EngineConfig(),
+            self._redis,
+            None,
+            frozenset(),
+            slots,
+            locale="en-US",
+        )
+        self.sessions.append(session)
+        return session
+
+
+@pytest.fixture
+def fake_session_env(monkeypatch, redis):
+    env = _SessionEnv(monkeypatch, redis)
+    yield env
+    for session in env.sessions:
+        session.stop()
+
+
+def test_session_runs_each_submitted_tile_on_its_slot(fake_session_env):
+    session = fake_session_env.session(slots=2)
+    session.start()
+    session.submit("tile-a", 0)
+    session.submit("tile-b", 1)
+    finished = {
+        session.next_finished(timeout=2)[0],
+        session.next_finished(timeout=2)[0],
+    }
+    assert finished == {"tile-a", "tile-b"}
