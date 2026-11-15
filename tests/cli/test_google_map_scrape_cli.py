@@ -78,6 +78,17 @@ def test_empty_proxies_value_is_rejected():
         proxy_names(" , ")
 
 
+def test_repeated_proxies_flags_accumulate_and_dedupe(monkeypatch):
+    query = parse(
+        monkeypatch,
+        "--proxies",
+        "http://a:1,http://b:2",
+        "--proxies",
+        "http://a:1,http://c:3",
+    )
+    assert query.proxies == ("http://a:1", "http://b:2", "http://c:3")
+
+
 def test_dry_run_counts_comma_separated_proxies(monkeypatch, capsys):
     import cli.google_map_scrape_cli as cli
 

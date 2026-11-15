@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--proxies",
         dest="proxies",
+        action="extend",
         type=proxy_names,
         metavar="URL,...",
         help="comma-separated proxies for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); the scrapes take turns through the proxies",
@@ -140,6 +141,8 @@ def read_query() -> CliQuery:
     values = {
         k: v for k, v in vars(build_parser().parse_args()).items() if v is not None
     }
+    if values.get("proxies"):
+        values["proxies"] = list(dict.fromkeys(values["proxies"]))
     try:
         return CliQuery.model_validate(values)
     except ValidationError as error:
