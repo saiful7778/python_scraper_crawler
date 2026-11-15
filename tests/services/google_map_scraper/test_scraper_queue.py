@@ -632,3 +632,36 @@ def test_a_lost_chrome_on_a_proxy_run_also_stops_the_run_and_keeps_the_queue(
     assert sorted(kw for kw, _ in env.searched) == ["bakeries", "cafes"]
     assert result.skipped == 2
     assert redis.keys("place_queue:*")
+
+
+def test_no_proxy_deep_scan_sub_tiles_finish_before_the_next_keyword(
+    arrange, redis, capsys
+):
+    counter = itertools.count()
+
+    def behave(kw, slot):
+        return Reply(
+            rows=[row(f"r{next(counter)}") for _ in range(scraper_module.SATURATED)]
+        )
+
+    env = arrange(behave)
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries"], grid=2, deep_scan=True)
+    )
+    lines = _lines(capsys)
+    second = lines.index("▶ Keyword 2/2: bakeries")
+    sub_lines = [
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("▶ Cell ") and line.endswith("m (sub-tile)")
+    ]
+    assert (
+        len([i for i in sub_lines if i < second]) == 16
+    )  # every keyword-1 sub-tile ran first
+    assert (
+        len([i for i in sub_lines if i > second]) == 16
+    )  # then keyword 2's own sub-tiles
+    keywords = [kw for kw, _ in env.searched]
+    assert keywords == ["cafes"] * 20 + ["bakeries"] * 20
+    titles = [r["title"] for r in result.rows]
+    assert len(titles) == 800 and len(set(titles)) == 800

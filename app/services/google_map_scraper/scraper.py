@@ -841,20 +841,27 @@ class _TileRun:
             {**sub, "_sub": True} for sub in build_grid_cells(bbox, 2)
         ]  # one level only: sub-tiles never split again
         first = self._cells_by_keyword[keyword]
-        for offset, sub in enumerate(sub_cells, start=1):
-            self._tiles.push(
-                _new_tile(
-                    tile["name"],
-                    tile["keyword"],
-                    keyword,
-                    _tile_settings(tile["settings"], sub),
-                    tile["bounding_box"],
-                    sub,
-                    first + offset,
-                )
+        new_tiles = [
+            _new_tile(
+                tile["name"],
+                tile["keyword"],
+                keyword,
+                _tile_settings(tile["settings"], sub),
+                tile["bounding_box"],
+                sub,
+                first + offset,
             )
-            self._cells_by_keyword[keyword] += 1
-            self._open_by_keyword[keyword] += 1
+            for offset, sub in enumerate(sub_cells, start=1)
+        ]
+        if self._query.proxies:
+            # with proxies the sub-tiles join the end of the queue
+            for new_tile in new_tiles:
+                self._tiles.push(new_tile)
+        else:
+            # without proxies they run before the next keyword, as the base grid does
+            self._tiles.insert_after_keyword(keyword, new_tiles)
+        self._cells_by_keyword[keyword] += len(new_tiles)
+        self._open_by_keyword[keyword] += len(new_tiles)
         logger.info(
             "cell at Google's cap (%d rows): %d sub-tiles added", rows, len(sub_cells)
         )
