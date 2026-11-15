@@ -1,3 +1,5 @@
+import json
+
 import fakeredis
 import pytest
 
@@ -71,3 +73,55 @@ def test_redis_error_is_a_buffer_error(redis, monkeypatch):
     monkeypatch.setattr(redis, "lindex", boom)
     with pytest.raises(BufferError):
         queue.peek()
+
+
+def test_enqueue_redis_error_is_a_buffer_error(redis, monkeypatch):
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    queue = PlaceJobQueue(redis, _query(), 3600)
+
+    def boom(*args, **kwargs):
+        raise RedisConnectionError("down")
+
+    monkeypatch.setattr(redis, "pipeline", boom)
+    with pytest.raises(BufferError):
+        queue.enqueue(_job())
+
+
+def test_keys_use_the_place_queue_prefix(redis):
+    queue = PlaceJobQueue(redis, _query(), 3600)
+    queue.enqueue(_job())
+    run = run_id(_query())
+    assert redis.exists(f"place_queue:{run}:jobs") == 1
+
+
+def test_enqueue_save_and_complete_keep_the_keys_on_a_ttl(redis):
+    queue = PlaceJobQueue(redis, _query(), 3600)
+    run = run_id(_query())
+    jobs_key = f"place_queue:{run}:jobs"
+    done_key = f"place_queue:{run}:done"
+
+    queue.enqueue(_job("cafe"))
+    assert redis.ttl(jobs_key) > 0
+
+    job = queue.peek()
+    job["next_cell"] = 1
+    queue.save(job)
+    assert redis.ttl(jobs_key) > 0
+
+    queue.complete({"kept": [], "finished": 1, "skipped": 0, "blocked": False})
+    queue.enqueue(_job("bakery"))
+    assert redis.ttl(jobs_key) > 0
+    assert redis.ttl(done_key) > 0
+
+
+def test_save_leaves_the_second_job_untouched(redis):
+    queue = PlaceJobQueue(redis, _query(), 3600)
+    queue.enqueue(_job("cafe"))
+    queue.enqueue(_job("bakery"))
+    job = queue.peek()
+    job["next_cell"] = 5
+    queue.save(job)
+    run = run_id(_query())
+    second = redis.lindex(f"place_queue:{run}:jobs", 1)
+    assert json.loads(second) == _job("bakery")

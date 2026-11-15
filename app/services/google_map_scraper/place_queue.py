@@ -40,8 +40,8 @@ class PlaceJobQueue:
         self._redis = redis
         self._ttl_seconds = ttl_seconds
         run = run_id(query)
-        self._jobs_key = f"place_run:{run}:jobs"
-        self._done_key = f"place_run:{run}:done"
+        self._jobs_key = f"place_queue:{run}:jobs"
+        self._done_key = f"place_queue:{run}:done"
 
     def exists(self) -> bool:
         try:
@@ -51,7 +51,10 @@ class PlaceJobQueue:
 
     def enqueue(self, job: PlaceJob) -> None:
         try:
-            self._redis.rpush(self._jobs_key, json.dumps(job, sort_keys=True))
+            pipe = self._redis.pipeline(transaction=True)
+            pipe.rpush(self._jobs_key, json.dumps(job, sort_keys=True))
+            pipe.expire(self._jobs_key, self._ttl_seconds)
+            pipe.execute()
         except RedisError as error:
             raise BufferError(f"could not enqueue place job: {describe(error)}") from error
 
@@ -64,7 +67,10 @@ class PlaceJobQueue:
 
     def save(self, job: PlaceJob) -> None:
         try:
-            self._redis.lset(self._jobs_key, 0, json.dumps(job, sort_keys=True))
+            pipe = self._redis.pipeline(transaction=True)
+            pipe.lset(self._jobs_key, 0, json.dumps(job, sort_keys=True))
+            pipe.expire(self._jobs_key, self._ttl_seconds)
+            pipe.execute()
         except RedisError as error:
             raise BufferError(f"could not save place job: {describe(error)}") from error
 
