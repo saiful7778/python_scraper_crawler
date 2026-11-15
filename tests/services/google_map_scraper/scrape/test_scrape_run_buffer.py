@@ -163,6 +163,41 @@ class _FakeBrowserSession:
         yield SimpleNamespace(tab=object(), refused=False)
 
 
+class _FakeSharedBrowserSession:
+    def __init__(self):
+        self.kill_calls = 0
+        self.close_calls = 0
+
+    @property
+    def browser(self):
+        return object()
+
+    @property
+    def is_dead(self) -> bool:
+        return False
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def test_attached_run_does_not_kill_the_shared_browser(fake_redis, database):
+    settings = ScrapeSettings(keywords=("bakery",))
+    scrape_id = database.create(
+        "bakery", settings.model_dump(by_alias=True, mode="json")
+    )
+    browser = _FakeSharedBrowserSession()
+    run = ScrapeRun(
+        database, database.get(scrape_id), True, fake_redis, browser=browser
+    )
+    run._on_watchdog()
+    assert browser.kill_calls == 0
+    assert run._stop.is_set()
+    assert run._state.timed_out
+
+
 def test_redis_error_while_buffering_stops_the_scrape(fake_redis, database, monkeypatch):
     settings = ScrapeSettings(keywords=("bakery", "cafe"))
     scrape_id = database.create("bakery", settings.model_dump(by_alias=True, mode="json"))

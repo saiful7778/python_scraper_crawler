@@ -68,8 +68,13 @@ class ScrapeRun:
         headless: bool,
         redis: Redis,
         known_keys: frozenset[str] = frozenset(),
+        browser: BrowserSession | None = None,
     ):
-        """Read the scrape's settings; nothing runs until :meth:`execute`."""
+        """Read the scrape's settings; nothing runs until :meth:`execute`.
+
+        With ``browser``, the run uses that session and leaves its browser
+        alone; otherwise it owns a session of its own.
+        """
         self.scrape_id: str = scrape["ID"]
         self.settings = ScrapeSettings.model_validate(scrape["Data"])
         self._database = database
@@ -81,7 +86,8 @@ class ScrapeRun:
         self._position_base = 0
         self._stop = threading.Event()
         self._pausing = False
-        self._browser = BrowserSession(self.settings.locale_tag, headless)
+        self._attached = browser is not None
+        self._browser = browser or BrowserSession(self.settings.locale_tag, headless)
         self._rotation = ProxyRotation(self.settings.proxies)
         self._state = RunState()
         self._progress: ScrapeProgress | None = None
@@ -315,6 +321,10 @@ class ScrapeRun:
     def _on_watchdog(self) -> None:
         self._state.timed_out = True
         self._stop.set()
+        if self._attached:
+            # A stuck CDP call on a shared browser is only ended by its own
+            # timeout: killing the shared browser would stop sibling tiles.
+            return
         try:
             self._browser.kill()
         except Exception:
