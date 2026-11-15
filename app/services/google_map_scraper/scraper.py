@@ -144,7 +144,7 @@ class ScrapeSession:
         self._finished_queue: queue.Queue[FinishedTile] = queue.Queue()
         self._deleted: set[str] = set()
         self._database = ScrapeDatabase(postgres)
-        self._shared = SharedBrowser(locale, config.headless)
+        self._shared = SharedBrowser(locale, config.headless) if slots > 1 else None
         self._assignments: list[queue.Queue[str]] = []
         self._workers: list[ScrapeWorker] = []
         for slot in range(slots):
@@ -158,8 +158,10 @@ class ScrapeSession:
                     known_keys=known_keys,
                     on_finished=partial(self._keep_finished, slot=slot),
                     assignments=assignments,
-                    browser=BrowserSession(
-                        locale, config.headless, shared=self._shared
+                    browser=(
+                        BrowserSession(locale, config.headless, shared=self._shared)
+                        if self._shared is not None
+                        else None
                     ),
                     proxy_slot=slot,
                 )
@@ -228,7 +230,7 @@ class ScrapeSession:
     def stop(self) -> None:
         for name, stop in (
             ("scrape workers", self._shutdown_workers),
-            ("shared browser", self._shared.close),
+            ("shared browser", lambda: self._shared and self._shared.close()),
             ("flusher", lambda: self._flusher.shutdown(wait=None)),
             ("scrape database", self._database.close),
         ):

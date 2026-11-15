@@ -385,6 +385,7 @@ class _FakeWorker(threading.Thread):
     ):
         super().__init__(daemon=True)
         self.failure = None
+        self.browser = browser
         self._assignments = assignments
         self._on_finished = on_finished
         self._stopped = threading.Event()
@@ -445,3 +446,18 @@ def test_session_runs_each_submitted_tile_on_its_slot(fake_session_env):
         session.next_finished(timeout=2)[0],
     }
     assert finished == {"tile-a", "tile-b"}
+
+
+def test_single_slot_session_gives_its_worker_no_shared_browser(fake_session_env):
+    session = fake_session_env.session(slots=1)
+    assert session._workers[0].browser is None
+
+
+def test_two_slot_session_attaches_every_worker_to_one_shared_browser(
+    fake_session_env,
+):
+    session = fake_session_env.session(slots=2)
+    browsers = [worker.browser for worker in session._workers]
+    assert all(browser is not None for browser in browsers)
+    shared = {browser._shared for browser in browsers}
+    assert len(shared) == 1 and None not in shared
