@@ -97,6 +97,22 @@ def test_a_requeued_tile_keeps_only_the_limit_across_its_attempts(arrange, redis
     assert [r["title"] for r in result.rows] == ["a", "b"]
 
 
+def test_a_requeued_tile_keeps_its_rows_and_its_limit_across_a_restart(arrange, redis):
+    env = arrange(lambda kw, slot: done("c", "d"))
+    query = _query(keywords=["cafes"], proxies=PROXIES, limit=2)
+    queue = PlaceTileQueue(redis, query, 60)
+    tile = _tile("tile-1", "cafes")
+    queue.push(tile)
+    queue.take()
+    queue.requeue(
+        "tile-1",
+        {**tile, "attempts": 1, "kept": [row("a")], "rows": [row("a")]},
+    )
+    result = PlaceScraper(redis).scrape(query)
+    assert env.slots_used_for("cafes") == [0]
+    assert [r["title"] for r in result.rows] == ["a", "c"]
+
+
 def test_rows_found_before_a_block_survive_when_no_slot_can_retry(arrange, redis):
     env = arrange(lambda kw, slot: blocked(kw))
     result = PlaceScraper(redis).scrape(

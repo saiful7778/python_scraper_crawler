@@ -520,8 +520,18 @@ class _TileRun:
             self.skipped += item["skipped"]
             self.blocked = self.blocked or item["blocked"]
         for tile in [*tiles.pending(), *tiles.in_flight()]:
-            self._cells_by_keyword[tile["keyword_index"]] += 1
-            self._open_by_keyword[tile["keyword_index"]] += 1
+            keyword = tile["keyword_index"]
+            self._cells_by_keyword[keyword] += 1
+            self._open_by_keyword[keyword] += 1
+            # A re-queued tile's earlier attempts kept rows the resume must keep.
+            prior_kept = tile.get("kept") or []
+            prior_rows = tile.get("rows") or []
+            self._fresh_keys[keyword] |= _keys(prior_rows)
+            self._kept_keys[keyword] |= _keys(prior_kept)
+            self._rows_by_keyword[keyword] += len(prior_rows)
+            self._kept_by_keyword[keyword] += len(prior_kept)
+            self._kept_by_tile[tile["ID"]] = len(prior_kept)
+            self.kept.extend(prior_kept)
 
     def start(self, carried: list[str]) -> None:
         """Resubmit the in-flight tiles by their scrape ids, and finish carried scrapes no tile owns."""
@@ -676,7 +686,7 @@ class _TileRun:
             if attempts < len(self._query.proxies):
                 # Keep what this attempt found before the block: the run may end
                 # before the tile runs again, and those leads are still real.
-                self._keep(tile, rows)
+                fresh, kept = self._keep(tile, rows)
                 self._persist(scrape_id)
                 proxy = mask_proxy_credentials(self._lanes[slot][0])
                 cause = "was rate-limited" if blocked else "failed"
@@ -685,7 +695,14 @@ class _TileRun:
                 )
                 logger.warning("tile retried on another slot after %s %s", proxy, cause)
                 self._tiles.requeue(
-                    tile["ID"], {**tile, "attempts": attempts, "scrape_id": None}
+                    tile["ID"],
+                    {
+                        **tile,
+                        "attempts": attempts,
+                        "scrape_id": None,
+                        "kept": [*tile.get("kept", []), *kept],
+                        "rows": [*tile.get("rows", []), *fresh],
+                    },
                 )
                 return
             if self._query.proxies:
@@ -700,7 +717,14 @@ class _TileRun:
             else:
                 finished, skipped = 1, 0
             fresh, kept = self._keep(tile, rows)
-            self._settle(tile, fresh, kept, finished, skipped, blocked)
+            self._settle(
+                tile,
+                [*tile.get("rows", []), *fresh],
+                [*tile.get("kept", []), *kept],
+                finished,
+                skipped,
+                blocked,
+            )
             self._report(tile, outcome, rows)
             self._persist(scrape_id)
             self._summarize(keyword, final=True)
@@ -709,13 +733,27 @@ class _TileRun:
         fresh, kept = self._keep(tile, rows)
 
         if outcome.status == ScrapeStatus.FAILED:
-            self._settle(tile, fresh, kept, 0, 1, False)
+            self._settle(
+                tile,
+                [*tile.get("rows", []), *fresh],
+                [*tile.get("kept", []), *kept],
+                0,
+                1,
+                False,
+            )
             self._report(tile, outcome, rows)
             self._persist(scrape_id)
             self._summarize(keyword)
             return
 
-        self._settle(tile, fresh, kept, 1, 0, False)
+        self._settle(
+            tile,
+            [*tile.get("rows", []), *fresh],
+            [*tile.get("kept", []), *kept],
+            1,
+            0,
+            False,
+        )
         self._report(tile, outcome, rows)
         cell = tile["cell"]
         if (

@@ -1,6 +1,6 @@
 import hashlib
 import json
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from redis import Redis
 from redis.exceptions import RedisError
@@ -24,6 +24,10 @@ class PlaceTile(TypedDict):
     cell: GridCell | None
     attempts: int
     scrape_id: str | None
+    kept: NotRequired[
+        list[LeadRow]
+    ]  # rows kept by earlier attempts of a re-queued tile
+    rows: NotRequired[list[LeadRow]]  # deduped rows of those earlier attempts
 
 
 class DoneTile(TypedDict):
