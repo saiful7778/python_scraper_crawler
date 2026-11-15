@@ -1,16 +1,18 @@
-"""Scrapes the keywords in one city, as a single scrape or a grid of scrapes, and stores the leads."""
+"""Scrapes the keywords in one city as tiles across proxy slots, and stores the leads."""
 
 import queue
 import threading
 import time
+from dataclasses import dataclass
 from functools import partial
 from typing import cast
+from uuid import uuid4
 
 from redis import Redis
 from redis.exceptions import RedisError
 
 from app.repositories import GoogleMapProfileRepository, LeadRepository
-from app.services.browser import BrowserSession, CDPError, SharedBrowser
+from app.services.browser import BrowserSession, SharedBrowser
 from app.services.buffer.client import BufferError, connect
 from app.services.buffer.discard import discard_scrape
 from app.services.buffer.flusher import Flusher
@@ -18,7 +20,9 @@ from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteQueue
 from app.utils.errors import ScraperError, describe
+from app.utils.failure_messages import is_connection_lost, is_proxy_failure
 from app.utils.logger import get_logger
+from app.utils.proxies import mask_proxy_credentials
 from config.redis import RedisConfig
 from config.tortoise import TortoiseConfig
 
@@ -31,12 +35,12 @@ from .google_map.geo import (
     is_in_bounding_box,
 )
 from .place_query import PlaceQuery
-from .place_queue import DoneKeyword, PlaceJob, PlaceJobQueue
+from .place_queue import PlaceTile, PlaceTileQueue
 from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
 from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
-from .scrape.scrape_database import ScrapeDatabase, ScrapeDatabaseError
+from .scrape.scrape_database import ScrapeDatabase
 from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
 from .scrape.scrape_run import RunOutcome
 from .scrape.scrape_settings import ScrapeSettings
@@ -50,6 +54,7 @@ logger = get_logger(__name__)
 SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
 
 _POLL_SECONDS = 1
+_EXISTENCE_POLLS = 5  # idle polls between checks that the queued scrapes still exist
 
 
 class BoundingBoxError(ScraperError):
@@ -206,6 +211,21 @@ class ScrapeSession:
             return None
         return self._finish_one(scrape_id)
 
+    def create(self, name: str, settings: SettingsData) -> str:
+        """Store a new pending scrape and return its id; a worker runs it once submitted."""
+        return self._database.create(name, settings)
+
+    def proxies_of(self, scrape_id: str) -> tuple[str, ...] | None:
+        """The proxies a stored scrape was created with; None if the scrape does not exist."""
+        record = self._database.get(scrape_id)
+        if record is None:
+            return None
+        return tuple(record["Data"].get("proxies", ()))
+
+    def check_workers(self) -> None:
+        """Raise if a worker stopped while scrapes are still waiting for an outcome."""
+        self._check_workers("a queued scrape")
+
     def run(self, name: str, settings: ScrapeSettings) -> RunResult:
         carried = self.start()
         scrape_id = self._database.create(
@@ -278,19 +298,19 @@ class ScrapeSession:
                 worker.cancel(scrape_id)
             raise ScrapeDeletedError(f"scrape {scrape_id} was deleted while it ran")
 
-    def _check_workers(self, scrape_id: str) -> None:
+    def _check_workers(self, waiting: str) -> None:
         for worker in self._workers:
             if not worker.is_alive():
                 if worker.failure is not None:
                     raise worker.failure
                 raise ScrapeWorkerDiedError(
-                    f"the scrape worker stopped while scrape {scrape_id} had no outcome"
+                    f"the scrape worker stopped while {waiting} had no outcome"
                 )
 
     def _wait_for_scrape(self, scrape_id: str) -> None:
         while scrape_id not in self._finished:
             self._check_exists(scrape_id)
-            self._check_workers(scrape_id)
+            self._check_workers(f"scrape {scrape_id}")
             time.sleep(_POLL_SECONDS)
 
     def _drop(self, scrape_id: str) -> None:
@@ -388,13 +408,336 @@ def run_scrape(
         session.stop()
 
 
+def _new_tile(
+    name: str,
+    keyword: str,
+    settings: SettingsData,
+    bounding_box: BoundingBox | None,
+    cell: GridCell | None,
+) -> PlaceTile:
+    return {
+        "ID": uuid4().hex,
+        "keyword": keyword,
+        "name": name,
+        "settings": settings,
+        "bounding_box": bounding_box,
+        "cell": cell,
+        "attempts": 0,
+        "scrape_id": None,
+    }
+
+
+def _tile_settings(settings: SettingsData, cell: GridCell) -> SettingsData:
+    """The settings of a tile at a grid cell: its centre and zoom replace the city's."""
+    scraped = ScrapeSettings.model_validate(settings).model_copy(
+        update={
+            "latitude": float(cell["lat"]),
+            "longitude": float(cell["lon"]),
+            "zoom": cell["zoom"],
+        }
+    )
+    return cast(SettingsData, scraped.model_dump(by_alias=True, mode="json"))
+
+
+@dataclass
+class _Flight:
+    """A scrape submitted to a slot: its tile, or None for a carried scrape no tile owns."""
+
+    tile: PlaceTile | None
+    slot: int
+
+
+class _TileRun:
+    """Feeds the tile queue to the session's slots and folds each finished tile into the run.
+
+    A slot runs one scrape at a time, so one proxy runs one tile at a time. A tile
+    that its proxy blocks or fails on goes back to the front of the queue and runs
+    on another slot; the slot that failed takes no more tiles.
+    """
+
+    def __init__(
+        self,
+        query: PlaceQuery,
+        session: ScrapeSession,
+        tiles: PlaceTileQueue,
+        known_keys: frozenset[str],
+        lanes: list[tuple[str, ...]],
+        cancel: threading.Event,
+    ):
+        self._query = query
+        self._session = session
+        self._tiles = tiles
+        self._lanes = lanes
+        self._cancel = cancel
+        self._flights: dict[str, _Flight] = {}
+        self._load = [0] * len(lanes)
+        self._retired: set[int] = set()
+        done = tiles.done()
+        self.kept: list[LeadRow] = [row for item in done for row in item["kept"]]
+        self._seen = set(known_keys) | {
+            key for row in self.kept for key in lead_keys(row)
+        }
+        self.finished = sum(item["finished"] for item in done)
+        self.skipped = sum(item["skipped"] for item in done)
+        self.blocked = any(item["blocked"] for item in done)
+        self.stopped = False
+
+    def start(self, carried: list[str]) -> None:
+        """Resubmit the in-flight tiles by their scrape ids, and discard carried scrapes no tile owns."""
+        orphans = list(carried)
+        for tile in self._tiles.in_flight():
+            scrape_id = tile["scrape_id"]
+            if scrape_id is None or scrape_id not in orphans:
+                logger.info(
+                    "tile %s was in flight without a live scrape; it runs again",
+                    tile["ID"],
+                )
+                self._tiles.requeue(tile["ID"], {**tile, "scrape_id": None})
+                continue
+            orphans.remove(scrape_id)
+            self._submit(scrape_id, self._slot_for(scrape_id), tile)
+        for scrape_id in orphans:
+            logger.warning(
+                "scrape %s matches no queued tile; it is finished and its leads are discarded",
+                scrape_id,
+            )
+            self._submit(scrape_id, self._slot_for(scrape_id), None)
+
+    def run(self) -> None:
+        """Run tiles until the queue is empty, every slot is retired, or the run stops."""
+        try:
+            self._fill()
+            self._drain()
+        except KeyboardInterrupt:
+            self._cancel.set()
+            print("⏸ Finishing the tiles in flight, press Ctrl-C again to quit")
+            self._drain()
+            raise
+
+    def _drain(self) -> None:
+        idle = 0
+        while self._flights:
+            item = self._session.next_finished(_POLL_SECONDS)
+            if item is None:
+                self._session.check_workers()
+                idle += 1
+                if idle % _EXISTENCE_POLLS == 0 and self._drop_deleted():
+                    self._fill()
+                continue
+            self._handle(item)
+            self._fill()
+
+    def _drop_deleted(self) -> bool:
+        """Stop waiting for flights whose scrape was deleted, since no worker reports them. True if any."""
+        dropped = False
+        for scrape_id, flight in list(self._flights.items()):
+            if self._session.proxies_of(scrape_id) is not None:
+                continue
+            del self._flights[scrape_id]
+            self._load[flight.slot] -= 1
+            dropped = True
+            logger.info("scrape %s was deleted while it was queued", scrape_id)
+            if flight.tile is not None:
+                print("\n⚠ keyword skipped: the scrape was deleted while it was queued")
+                self._finish_tile(
+                    flight.tile, [], [], finished=0, skipped=1, blocked=False
+                )
+                self.skipped += 1
+        return dropped
+
+    def _slot_for(self, scrape_id: str) -> int:
+        proxies = self._session.proxies_of(scrape_id) or ()
+        return self._lanes.index(proxies) if proxies in self._lanes else 0
+
+    def _fill(self) -> None:
+        for slot in range(len(self._lanes)):
+            if self._cancel.is_set() or self.stopped:
+                return
+            if slot in self._retired or self._load[slot]:
+                continue
+            tile = self._tiles.take()
+            if tile is None:
+                return
+            self._start_tile(tile, slot)
+
+    def _start_tile(self, tile: PlaceTile, slot: int) -> None:
+        lane = self._lanes[slot]
+        settings = cast(SettingsData, {**tile["settings"], "proxies": lane})
+        scrape_id = self._session.create(tile["name"], settings)
+        self._tiles.mark_scrape(tile["ID"], scrape_id)
+        cell = tile["cell"]
+        if cell is None:
+            print(
+                f"▶ Scraping {tile['keyword']}"
+                + (f" through {mask_proxy_credentials(lane[0])}" if lane else "")
+            )
+        else:
+            sub_tag = " (sub-tile)" if cell.get("_sub") else ""
+            print(
+                f"▶ Cell @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
+                + (f" through {mask_proxy_credentials(lane[0])}" if lane else "")
+            )
+        self._submit(scrape_id, slot, {**tile, "scrape_id": scrape_id})
+
+    def _submit(self, scrape_id: str, slot: int, tile: PlaceTile | None) -> None:
+        self._session.submit(scrape_id, slot)
+        self._flights[scrape_id] = _Flight(tile, slot)
+        self._load[slot] += 1
+
+    def _handle(self, item: FinishedTile) -> None:
+        scrape_id, outcome, rows, slot = item
+        flight = self._flights.pop(scrape_id, None)
+        if flight is None:
+            logger.info(
+                "scrape %s reported after it was dropped; its leads are not kept",
+                scrape_id,
+            )
+            return
+        self._load[slot] -= 1
+        if flight.tile is None:
+            self._discard(scrape_id)
+            return
+        tile = flight.tile
+        try:
+            result = self._session.finish(scrape_id)
+        except ScrapeDeletedError as error:
+            print(f"\n⚠ keyword skipped: {describe(error)}")
+            logger.warning("tile scrape deleted: %s", describe(error))
+            self._finish_tile(tile, [], [], finished=0, skipped=1, blocked=False)
+            self.skipped += 1
+            return
+        if result is None:
+            raise ScrapeWorkerDiedError(f"scrape {scrape_id} ended without an outcome")
+
+        blocked = result.blocked
+        proxy_failed = (
+            bool(self._lanes[slot])
+            and not blocked
+            and outcome.status == ScrapeStatus.FAILED
+            and is_proxy_failure(outcome.note)
+        )
+        fresh = dedupe_rows(rows, frozenset(self._seen))
+        kept = finalize_rows(fresh, self._query, _box(tile["bounding_box"]))
+        self.kept.extend(kept)
+        self._seen.update(key for row in kept for key in lead_keys(row))
+
+        if is_connection_lost(outcome.note):
+            # The browser is shared, so every slot is affected: stop, keep the tile in flight
+            self.stopped = True
+            self.skipped += 1
+            print(f"\n✗ Stopped: Chrome connection lost ({outcome.note})")
+            logger.warning("tile stopped on a lost Chrome connection: %s", outcome.note)
+            return
+
+        if blocked or proxy_failed:
+            self._retired.add(slot)
+            attempts = tile["attempts"] + 1
+            proxy = (
+                mask_proxy_credentials(self._lanes[slot][0])
+                if self._lanes[slot]
+                else "this IP"
+            )
+            cause = "was rate-limited" if blocked else "failed"
+            if attempts < len(self._query.proxies):
+                print(
+                    f"\n⚠ {proxy} {cause}: its tiles stop; this tile runs on another proxy"
+                )
+                logger.warning("tile retried on another slot after %s %s", proxy, cause)
+                self._tiles.requeue(
+                    tile["ID"], {**tile, "attempts": attempts, "scrape_id": None}
+                )
+                return
+            print(
+                f"\n⚠ Stopped: {proxy} {cause}; the tiles after it were not searched."
+            )
+            logger.warning("tile skipped after %d attempt(s): %s", attempts, proxy)
+            self._finish_tile(tile, fresh, kept, finished=0, skipped=1, blocked=blocked)
+            self.skipped += 1
+            self.blocked = self.blocked or blocked
+            return
+
+        if outcome.status == ScrapeStatus.FAILED:
+            self._finish_tile(tile, fresh, kept, finished=0, skipped=1, blocked=False)
+            self.skipped += 1
+            print(f"\n  ⚠ tile skipped: {outcome.note}")
+            return
+
+        self._finish_tile(tile, fresh, kept, finished=1, skipped=0, blocked=False)
+        self.finished += 1
+        if outcome.note:
+            print(f"⚠ {outcome.note}")
+        print(f"tile: {len(rows)} rows, {len(self.kept)} kept so far")
+        cell = tile["cell"]
+        if (
+            self._query.deep_scan
+            and cell is not None
+            and not cell.get("_sub")
+            and len(rows) >= SATURATED
+        ):
+            self._split(tile, cell, len(rows))
+
+    def _split(self, tile: PlaceTile, cell: GridCell, rows: int) -> None:
+        bbox = cast(BoundingBox, tuple(cell["_bbox"]))
+        sub_cells: list[GridCell] = [
+            {**sub, "_sub": True} for sub in build_grid_cells(bbox, 2)
+        ]  # one level only: sub-tiles never split again
+        for sub in sub_cells:
+            self._tiles.push(
+                _new_tile(
+                    tile["name"],
+                    tile["keyword"],
+                    _tile_settings(tile["settings"], sub),
+                    tile["bounding_box"],
+                    sub,
+                )
+            )
+        logger.info(
+            "tile at Google's cap (%d rows): %d sub-tiles added", rows, len(sub_cells)
+        )
+        print(f"! tile is at Google's cap: {len(sub_cells)} sub-tiles added")
+
+    def _finish_tile(
+        self,
+        tile: PlaceTile,
+        fresh: list[LeadRow],
+        kept: list[LeadRow],
+        *,
+        finished: int,
+        skipped: int,
+        blocked: bool,
+    ) -> None:
+        self._tiles.finish(
+            tile["ID"],
+            {
+                "kept": kept,
+                "finished": finished,
+                "skipped": skipped,
+                "blocked": blocked,
+                "rows": fresh,
+            },
+        )
+
+    def _discard(self, scrape_id: str) -> None:
+        try:
+            self._session.finish(scrape_id)
+        except (ScrapeDeletedError, UnsavedLeadsError) as error:
+            logger.warning(
+                "discarded scrape %s was not saved: %s", scrape_id, describe(error)
+            )
+            return
+        logger.info("discarded carried scrape %s", scrape_id)
+
+
+def _box(bounding_box: list[float] | None) -> BoundingBox | None:
+    return None if bounding_box is None else cast(BoundingBox, tuple(bounding_box))
+
+
 class PlaceScraper:
-    """Scrapes the keywords in one city, one queued job per keyword, each as a single scrape or a grid."""
+    """Scrapes the keywords in one city as tiles: one per keyword, or one per grid cell, run across proxy slots."""
 
     def __init__(self, redis: Redis | None = None) -> None:
         self._redis = redis or connect(RedisConfig())
         self._salvage: list[LeadRow] = []
-        self._stop = False
         self._cancel = threading.Event()
 
     @property
@@ -405,29 +748,29 @@ class PlaceScraper:
     def scrape(
         self, query: PlaceQuery, known_keys: frozenset[str] = frozenset()
     ) -> ScrapeResult:
-        """Queue one job per keyword, or resume the queue an earlier run of this query left, and run it.
+        """Queue the tiles of each keyword, or resume the queue an earlier run of this query left, and run them.
 
-        The queue is deleted when the run ends or a rate limit or lost Chrome
-        connection stops it. A crash or an exception leaves it for the next run.
+        The queue is deleted when the run ends or every proxy is stopped. A lost
+        Chrome connection, a crash or an exception leaves it for the next run.
         """
         columns = result_columns(query.engine_settings())
         self._salvage = []
-        queue = PlaceJobQueue(self._redis, query, BUFFER_TTL_SECONDS)
+        tiles = PlaceTileQueue(self._redis, query, BUFFER_TTL_SECONDS)
 
-        if queue.exists():
+        if tiles.exists():
             logger.info("resuming the unfinished place run for %r", query.keywords)
             print("▶ Resuming the unfinished run of this command")
         else:
-            early = self._enqueue_run(query, columns, queue)
+            early = self._enqueue_run(query, columns, tiles)
             if early is not None:
                 return early
 
-        return self._listen(query, known_keys, columns, queue)
+        return self._listen(query, known_keys, columns, tiles)
 
     def _enqueue_run(
-        self, query: PlaceQuery, columns: list[str], queue: PlaceJobQueue
+        self, query: PlaceQuery, columns: list[str], tiles: PlaceTileQueue
     ) -> ScrapeResult | None:
-        """Geocode the city and queue one job per keyword; a result means the run ends here."""
+        """Geocode the city and queue the tiles of every keyword; a result means the run ends here."""
         settings = query.engine_settings()
         place = ", ".join(part for part in (query.city, query.state) if part)
 
@@ -481,358 +824,82 @@ class PlaceScraper:
             for keyword in query.keywords:
                 # the scrape name is what the web UI lists
                 name = f"{keyword} @ {place}"[:80]
-                kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
-                self._scrape_keyword(query, kw_settings, name, bounding_box, queue)
+                self._queue_keyword(query, anchored, keyword, name, bounding_box, tiles)
         except BaseException:
             # a partly queued run must not be resumed as if it were whole
             try:
-                queue.clear()
+                tiles.clear()
             except Exception:
                 logger.exception("clearing the partly queued place run failed")
             raise
         return None
 
-    def _scrape_keyword(
+    def _queue_keyword(
         self,
         query: PlaceQuery,
-        settings: ScrapeSettings,
+        anchored: ScrapeSettings,
+        keyword: str,
         name: str,
         bounding_box: BoundingBox | None,
-        queue: PlaceJobQueue,
+        tiles: PlaceTileQueue,
     ) -> None:
-        """Queue one keyword as a job, with a grid of cells when the query has a grid.
+        """Queue a keyword's tiles: one whole-city tile, or one per grid cell. Tiles start with no proxy.
 
         :raises BufferError: If Redis fails.
         """
+        base = cast(
+            SettingsData,
+            anchored.model_copy(
+                update={"keywords": (keyword,), "proxies": ()}
+            ).model_dump(by_alias=True, mode="json"),
+        )
         cells = (
             build_grid_cells(bounding_box, query.grid)
             if query.grid and bounding_box
             else None
         )
-        job: PlaceJob = {
-            "keyword": settings.keywords[0],
-            "name": name,
-            "settings": cast(
-                SettingsData, settings.model_dump(by_alias=True, mode="json")
-            ),
-            "bounding_box": bounding_box,
-            "cells": cells,
-            "next_cell": 0,
-            "rows": [],
-            "kept": [],
-            "finished": 0,
-            "skipped": 0,
-        }
-        queue.enqueue(job)
+        if cells is None:
+            tiles.push(_new_tile(name, keyword, base, bounding_box, None))
+            return
+        for cell in cells:
+            tiles.push(
+                _new_tile(name, keyword, _tile_settings(base, cell), bounding_box, cell)
+            )
 
     def _listen(
         self,
         query: PlaceQuery,
         known_keys: frozenset[str],
         columns: list[str],
-        queue: PlaceJobQueue,
+        tiles: PlaceTileQueue,
     ) -> ScrapeResult:
-        """Run the queued jobs one at a time, first in first out, until the queue is empty or a job stops the run."""
-        self._stop = False
+        """Run the queued tiles on one slot per proxy, then clear the queue unless a lost Chrome connection stopped the run."""
         self._cancel.clear()
-        total = len(query.keywords)
-        while (job := queue.peek()) is not None:
-            earlier = queue.done()
-            print(f"▶ Keyword {len(earlier) + 1}/{total}: {job['keyword']}")
-            saved = cast(
-                list[LeadRow], [row for item in earlier for row in item["kept"]]
-            )
-            known = known_keys | frozenset(
-                key for row in saved for key in lead_keys(row)
-            )
-            self._salvage = saved
-            done = self._run_job(query, job, queue, known, saved)
-            queue.complete(done)
-            if done["blocked"] or self._stop:
-                break
-
-        results = queue.done()
-        all_kept = cast(
-            list[LeadRow], [row for item in results for row in item["kept"]]
+        lanes = [(proxy,) for proxy in query.proxies] or [()]
+        session = ScrapeSession(
+            EngineConfig(),
+            self._redis,
+            TortoiseConfig(),
+            known_keys,
+            len(lanes),
+            locale=query.locale_tag,
         )
-        finished = sum(item["finished"] for item in results)
-        skipped = sum(item["skipped"] for item in results)
-        blocked = any(item["blocked"] for item in results)
-        queue.clear()
-        logger.info(
-            "keywords done: %d finished, %d skipped, blocked=%s, %d kept",
-            finished,
-            skipped,
-            blocked,
-            len(all_kept),
-        )
-        return ScrapeResult(all_kept, columns, finished, skipped, blocked)
-
-    def _run_job(
-        self,
-        query: PlaceQuery,
-        job: PlaceJob,
-        queue: PlaceJobQueue,
-        known_keys: frozenset[str],
-        saved: list[LeadRow],
-    ) -> DoneKeyword:
-        """Run a job on its own thread, wait for it, and raise what it raised."""
-        outcome: dict[str, DoneKeyword] = {}
-        failure: dict[str, BaseException] = {}
-
-        def target() -> None:
-            try:
-                if job["cells"] is None:
-                    outcome["done"] = self._scrape_single(query, job, known_keys, saved)
-                else:
-                    outcome["done"] = self._scrape_grid(
-                        query, job, queue, known_keys, saved
-                    )
-            except BaseException as error:
-                failure["error"] = error
-
-        thread = threading.Thread(
-            target=target, name=f"place-job-{job['keyword']}", daemon=True
-        )
-        thread.start()
         try:
-            thread.join()
-        except KeyboardInterrupt:
-            # let the cell in flight finish; the job stops before the next one
-            self._cancel.set()
-            print("⏸ Finishing the current cell, press Ctrl-C again to quit")
-            thread.join()
-            raise
-        if "error" in failure:
-            raise failure["error"]
-        return outcome["done"]
+            carried = session.start()
+            run = _TileRun(query, session, tiles, known_keys, lanes, self._cancel)
+            self._salvage = run.kept
+            run.start(carried)
+            run.run()
+        finally:
+            session.stop()
 
-    def _scrape_single(
-        self,
-        query: PlaceQuery,
-        job: PlaceJob,
-        known_keys: frozenset[str],
-        saved: list[LeadRow],
-    ) -> DoneKeyword:
-        """Scrape a job's keyword as one scrape, with no progress saved.
-
-        :raises UnsavedLeadsError: If the scrape's leads stay unsaved in Redis.
-        """
-        if self._cancel.is_set():
-            raise KeyboardInterrupt()
-        settings = ScrapeSettings.model_validate(job["settings"])
-        name = job["name"]
-        print(
-            f"▶ Creating scrape: 1 keyword @ {settings.latitude},{settings.longitude} depth={query.scroll_depth}"
-        )
-        logger.info("single scrape at %s,%s", settings.latitude, settings.longitude)
-        try:
-            result = run_scrape(name, settings, known_keys=known_keys)
-        except ScrapeDeletedError as exc:
-            print(f"\n⚠ keyword skipped: {describe(exc)}")
-            logger.warning("single scrape deleted: %s", describe(exc))
-            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
-        except CDPError as exc:
-            print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
-            logger.exception("single scrape stopped on a lost Chrome connection")
-            self._stop = True
-            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
-        except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
-            raise
-        except Exception as exc:
-            print(f"\n⚠ keyword skipped: {describe(exc)}")
-            logger.exception("single scrape skipped")
-            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
-
-        kept = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
-        self._salvage = saved + kept
+        if not run.stopped:
+            tiles.clear()
         logger.info(
-            "single scrape: %d rows, %d kept after dedupe and filters",
-            len(result.rows),
-            len(kept),
+            "tiles done: %d finished, %d skipped, blocked=%s, %d kept",
+            run.finished,
+            run.skipped,
+            run.blocked,
+            len(run.kept),
         )
-        if result.note:
-            logger.info("single scrape note: %s", result.note)
-            print(f"⚠ {result.note}")
-        if result.status == ScrapeStatus.FAILED:
-            logger.warning("single scrape failed: %s", result.note)
-            print(f"✗ {result.note}")
-            return {
-                "kept": kept,
-                "finished": 0,
-                "skipped": 1,
-                "blocked": result.blocked,
-            }
-        return {
-            "kept": kept,
-            "finished": 1,
-            "skipped": 0,
-            "blocked": result.blocked,
-        }
-
-    def _scrape_grid(
-        self,
-        query: PlaceQuery,
-        job: PlaceJob,
-        queue: PlaceJobQueue,
-        known_keys: frozenset[str],
-        saved: list[LeadRow],
-    ) -> DoneKeyword:
-        """Scrape a job's keyword as a grid of scrapes, saving the job before each cell.
-
-        Each grid tile is limited by its own rows, and tiles dedupe against
-        each other and against ``known_keys``. A job read back from the queue
-        starts at ``next_cell`` with the rows it had then.
-
-        :raises UnsavedLeadsError: If a scrape's leads stay unsaved in Redis.
-        """
-        settings = ScrapeSettings.model_validate(job["settings"])
-        name = job["name"]
-        assert (
-            job["bounding_box"] is not None
-        )  # Grid jobs carry the resolved bounding box.
-        assert job["cells"] is not None
-        south, north, west, east = job["bounding_box"]
-        bounding_box: BoundingBox = (south, north, west, east)
-        cells = cast(
-            list[GridCell],
-            [{**cell, "_bbox": tuple(cell["_bbox"])} for cell in job["cells"]],
-        )
-        deep_scan_note = (
-            " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
-            if query.deep_scan
-            else ""
-        )
-        print(
-            f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, depth={query.scroll_depth}{deep_scan_note}"
-        )
-
-        rows = job["rows"]
-        kept = job["kept"]
-        finished = job["finished"]
-        skipped = job["skipped"]
-        blocked = False
-        lost_chrome = False
-        index = job["next_cell"]
-        self._salvage = saved + kept
-
-        # Sequential on purpose: never run parallel scrapes against Google.
-        while index < len(cells):
-            if self._cancel.is_set():
-                raise KeyboardInterrupt()
-            job.update(
-                next_cell=index,
-                rows=job["rows"],
-                kept=kept,
-                finished=finished,
-                skipped=skipped,
-                cells=cells,
-            )
-            queue.save(job)
-            cell = cells[index]
-            index += 1
-            sub_tag = " (sub-tile)" if cell.get("_sub") else ""
-            print(
-                f"▶ Cell {index}/{len(cells)} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
-            )
-            cell_settings = settings.model_copy(
-                update={
-                    "latitude": float(cell["lat"]),
-                    "longitude": float(cell["lon"]),
-                    "zoom": cell["zoom"],
-                }
-            )
-
-            logger.debug(
-                "cell %d/%d: lat=%s lon=%s zoom=%s radius=%sm",
-                index,
-                len(cells),
-                cell["lat"],
-                cell["lon"],
-                cell["zoom"],
-                cell["radius"],
-            )
-            try:
-                result = run_scrape(name, cell_settings, known_keys=known_keys)
-            except CDPError as exc:
-                # The browser connection is gone; every later cell would fail the same way.
-                print(
-                    f"\n✗ Stopped at cell {index}/{len(cells)}: Chrome connection lost ({describe(exc)})"
-                )
-                logger.exception("cell %d stopped on a lost Chrome connection", index)
-                skipped += 1
-                lost_chrome = True
-                break
-            except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
-                raise
-            except Exception as exc:
-                print(f"\n⚠ cell {index}/{len(cells)} skipped: {describe(exc)}")
-                logger.exception("cell %d skipped", index)
-                skipped += 1
-                continue
-
-            # known_keys may already hold the leads this job saved before it was resumed
-            seen = known_keys | frozenset(key for row in rows for key in lead_keys(row))
-            fresh = dedupe_rows(result.rows, seen)
-            rows.extend(fresh)
-            kept.extend(finalize_rows(fresh, query, bounding_box))
-            self._salvage = saved + kept
-            if result.blocked:
-                blocked = True
-                logger.warning(
-                    "rate-limited at cell %d; the cells after it are not searched",
-                    index,
-                )
-                print(
-                    f"\n⚠ Stopped at cell {index}/{len(cells)}: Google rate-limited this IP; the cells after it were not searched."
-                )
-                break
-            if result.status == ScrapeStatus.FAILED:
-                print(f"\n  ⚠ cell {index}/{len(cells)} skipped: {result.note}")
-                skipped += 1
-                continue
-
-            finished += 1
-            if result.note:
-                print(f"⚠ cell {index}/{len(cells)}: {result.note}")
-            print(
-                f"cell {index}/{len(cells)}: {len(result.rows)} rows, {len(kept)} kept so far"
-            )
-
-            if (
-                query.deep_scan
-                and not cell.get("_sub")
-                and len(result.rows) >= SATURATED
-            ):
-                sub_cells: list[GridCell] = [
-                    {**cell, "_sub": True}
-                    for cell in build_grid_cells(cell["_bbox"], 2)
-                ]
-                logger.info(
-                    "cell %d is at Google's cap (%d rows): %d sub-tiles added",
-                    index,
-                    len(result.rows),
-                    len(sub_cells),
-                )
-                cells.extend(sub_cells)  # one level only: sub-tiles never split again
-                print(
-                    f"! cell {index} is at Google's cap: {len(sub_cells)} sub-tiles added, {len(cells)} cells now"
-                )
-
-        logger.info(
-            "grid done: %d finished, %d skipped, blocked=%s, %d unique rows, %d kept",
-            finished,
-            skipped,
-            blocked,
-            len(rows),
-            len(kept),
-        )
-        print(f"{len(rows)} unique rows, {len(kept)} after the city box and filters")
-
-        self._stop = self._stop or blocked or lost_chrome
-        return {
-            "kept": kept,
-            "finished": finished,
-            "skipped": skipped,
-            "blocked": blocked,
-        }
+        return ScrapeResult(run.kept, columns, run.finished, run.skipped, run.blocked)
