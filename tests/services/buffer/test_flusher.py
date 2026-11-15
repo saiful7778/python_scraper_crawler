@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 import pytest
 from asyncpg.exceptions import ConnectionDoesNotExistError
@@ -133,7 +132,7 @@ def test_shutdown_without_limit_waits_for_a_slow_final_save(rows, state):
     saved = []
 
     async def slow_save(row, scrape_id):
-        time.sleep(0.3)
+        await asyncio.sleep(0.3)
         saved.append(row["id"])
 
     rows.append("s1", [{"id": "a"}])
@@ -290,16 +289,21 @@ def test_flush_retries_a_row_once_after_the_server_closes_the_connection(
     assert rows.length("s1") == 0
 
 
-def test_connection_is_closed_after_each_flush(tmp_path, rows, state):
+def test_connection_stays_open_between_flushes(tmp_path, rows, state):
     config = sqlite_config(tmp_path / "leads.db")
     in_database(config, generate_schemas=True)
     rows.append("s1", [{"title": "A"}])
     flusher = Flusher(rows, state, save_row=Saved(), crawl_sink=None, config=config)
     try:
         assert flusher.flush_once() == 1
-        assert flusher._context is None
+        first = flusher._context
+        assert first is not None
+        rows.append("s1", [{"title": "B"}])
+        assert flusher.flush_once() == 1
+        assert flusher._context is first
     finally:
         flusher.shutdown()
+    assert flusher._context is None
 
 
 def test_dropped_connection_is_replaced_by_a_new_one(tmp_path, rows, state):

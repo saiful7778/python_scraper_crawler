@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from functools import partial
@@ -32,6 +33,8 @@ _KEPT_COLUMNS = frozenset({"id", "created_at"})
 CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
 
 SaveRow = Callable[[LeadRow, str], Awaitable[None]]
+#: Saves rows in order and returns how many were saved from the start.
+SaveRows = Callable[[list[LeadRow], str], Awaitable[int]]
 #: Stores one finished website snapshot. It raises when the snapshot cannot be
 #: stored yet; the flusher then keeps the website in Redis for the next tick.
 CrawlSink = Callable[[WebsiteSnapshot], Awaitable[None]]
@@ -90,11 +93,15 @@ class Flusher(threading.Thread):
         interval: float = FLUSH_SECONDS,
         config: TortoiseConfig | None = None,
         crawl_buffer: RedisCrawlBuffer | None = None,
+        prepare_batch: Callable[[list[LeadRow]], None] | None = None,
+        save_rows: SaveRows | None = None,
     ):
         super().__init__(name="buffer-flusher", daemon=True)
         self._rows = rows
         self._state = state
         self._save_row = save_row
+        self._save_rows = save_rows
+        self._prepare_batch = prepare_batch
         self._crawl_sink = crawl_sink
         self._crawl_buffer = crawl_buffer
         self._interval = interval
@@ -105,21 +112,32 @@ class Flusher(threading.Thread):
 
     def flush_once(self) -> int:
         saved = 0
-        try:
-            for scrape_id in self._state.active_ids():
-                batch = self._rows.peek(scrape_id, BATCH_SIZE)
-                if not batch:
-                    continue
-                self._state.refresh_ttl(scrape_id)
-                count = self._loop.run_until_complete(
-                    self._save_batch(batch, scrape_id)
+        for scrape_id in self._state.active_ids():
+            batch = self._rows.peek(scrape_id, BATCH_SIZE)
+            if not batch:
+                continue
+            self._state.refresh_ttl(scrape_id)
+            if self._prepare_batch is not None:
+                prepare_started = time.monotonic()
+                self._prepare_batch(batch)
+                logger.info(
+                    "flusher: prepared %d buffered row(s) in %.2f s",
+                    len(batch),
+                    time.monotonic() - prepare_started,
                 )
-                if count:
-                    self._rows.trim(scrape_id, count)
-                saved += count
-            self._flush_crawls()
-        finally:
-            self._loop.run_until_complete(self._drop_context())
+            save_started = time.monotonic()
+            count = self._loop.run_until_complete(self._save_batch(batch, scrape_id))
+            logger.info(
+                "flusher: saved %d of %d buffered row(s) for scrape %s in %.2f s",
+                count,
+                len(batch),
+                scrape_id,
+                time.monotonic() - save_started,
+            )
+            if count:
+                self._rows.trim(scrape_id, count)
+            saved += count
+        self._flush_crawls()
         if saved:
             logger.debug("flushed %d buffered lead row(s)", saved)
         return saved
@@ -182,6 +200,8 @@ class Flusher(threading.Thread):
             crawl_buffer.release_website(website_id)
 
     async def _save_batch(self, batch: list[LeadRow], scrape_id: str) -> int:
+        if self._save_rows is not None:
+            return await self._save_batch_at_once(batch, scrape_id)
         saved = 0
         for row in batch:
             try:
@@ -196,6 +216,15 @@ class Flusher(threading.Thread):
                 break
             saved += 1
         return saved
+
+    async def _save_batch_at_once(self, batch: list[LeadRow], scrape_id: str) -> int:
+        save_rows = self._save_rows
+        assert save_rows is not None
+        try:
+            return await self._in_context(lambda: save_rows(batch, scrape_id))
+        except CONNECTION_LOST:
+            await self._drop_context()
+            return await self._in_context(lambda: save_rows(batch, scrape_id))
 
     async def _save_in_context(self, row: LeadRow, scrape_id: str) -> None:
         try:
@@ -215,16 +244,15 @@ class Flusher(threading.Thread):
                 "closing the lost PostgreSQL connection failed: %s", describe(error)
             )
 
-    async def _in_context(self, work: Callable[[], Awaitable[None]]) -> None:
+    async def _in_context[T](self, work: Callable[[], Awaitable[T]]) -> T:
         if self._config is None:
-            await work()
-            return
+            return await work()
         from tortoise.context import _current_context
 
         context = await self._open(self._config)
         token = _current_context.set(context)
         try:
-            await work()
+            return await work()
         finally:
             _current_context.reset(token)
 
@@ -260,4 +288,5 @@ class Flusher(threading.Thread):
                 "closing the PostgreSQL connection failed: %s", describe(error)
             )
         finally:
+            self._context = None
             self._loop.close()
