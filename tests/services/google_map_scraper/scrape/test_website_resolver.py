@@ -65,9 +65,7 @@ def test_non_public_host_is_never_used(monkeypatch) -> None:
     )
     seen: list[str] = []
     answers = {"https://a.com/": 200}
-    assert (
-        resolve_website("a.com", transport=_transport(answers, seen)) == "a.com"
-    )
+    assert resolve_website("a.com", transport=_transport(answers, seen)) == "a.com"
     assert seen == []
 
 
@@ -86,3 +84,27 @@ def test_head_refused_falls_back_to_get() -> None:
         resolve_website("https://a.com", transport=httpx.MockTransport(handler))
         == "https://a.com/"
     )
+
+
+def test_each_raw_website_is_resolved_once_per_scrape(monkeypatch):
+    from app.services.google_map_scraper.scrape import website_resolver
+
+    calls = []
+
+    def fake(raw):
+        calls.append(raw)
+        return f"https://{raw}/"
+
+    monkeypatch.setattr(website_resolver, "resolve_website", fake)
+    resolutions = website_resolver.WebsiteResolutions()
+    first = [{"website": "a.com"}, {"website": "b.com"}, {"website": "a.com"}]
+    resolutions(first)
+    again = [{"website": "a.com"}]
+    resolutions(again)
+    assert [row["website"] for row in first] == [
+        "https://a.com/",
+        "https://b.com/",
+        "https://a.com/",
+    ]
+    assert again == [{"website": "https://a.com/"}]
+    assert sorted(calls) == ["a.com", "b.com"]

@@ -39,6 +39,7 @@ from .scrape.scrape_settings import ScrapeSettings
 from .scrape.scrape_status import ScrapeStatus
 from .scrape.scrape_types import LeadRow, RunResult, ScrapeResult, SettingsData
 from .scrape.scrape_worker import ScrapeWorker
+from .scrape.website_resolver import WebsiteResolutions
 
 logger = get_logger(__name__)
 
@@ -135,12 +136,15 @@ class ScrapeSession:
             known_keys=known_keys,
             on_finished=self._keep_finished,
         )
+        profiles = GoogleMapProfileRepository(LeadRepository())
         self._flusher = Flusher(
             self._rows,
             self._state,
-            save_row=GoogleMapProfileRepository(LeadRepository()).save_row,
+            save_row=profiles.save_row,
             crawl_sink=None,
             config=postgres,
+            prepare_batch=WebsiteResolutions(),
+            save_rows=profiles.save_rows,
         )
 
     def run(self, name: str, settings: ScrapeSettings) -> RunResult:

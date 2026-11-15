@@ -25,7 +25,6 @@ from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_status import ScrapeStage, ScrapeStatus
 from .scrape_types import LeadRow, ScrapeRecord
-from .website_resolver import resolve_website
 
 logger = get_logger(__name__)
 
@@ -208,7 +207,6 @@ class ScrapeRun:
                     continue
                 if not self._known.add_if_new(self.scrape_id, row):
                     continue
-                row["website"] = resolve_website(row["website"])
                 accepted.append(row)
             if accepted:
                 self._rows.append(self.scrape_id, accepted)

@@ -1,6 +1,7 @@
 """Find the address that works for a listing's website, while the scrape runs."""
 
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -8,7 +9,12 @@ from app.utils.logger import get_logger
 from app.utils.network_guard import resolves_only_to_public_addresses
 from app.utils.url_utils import website_candidates
 
+from .scrape_types import LeadRow
+
 logger = get_logger(__name__)
+
+#: Websites of one batch are resolved in parallel; each one can take several 8 s timeouts.
+_WEBSITE_WORKERS = 32
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -73,6 +79,30 @@ def _probe(client: httpx.Client, url: str) -> httpx.Response:
     except httpx.TransportError:
         pass
     return client.get(url)
+
+
+class WebsiteResolutions:
+    """Replaces each row's website with the address that works.
+
+    Remembers the answer for each raw website, so a lead buffered again by the
+    review pass is not looked up a second time. Use one instance per scrape.
+    """
+
+    def __init__(self) -> None:
+        self._resolved: dict[str, str] = {}
+
+    def __call__(self, rows: list[LeadRow]) -> None:
+        missing = list(
+            dict.fromkeys(
+                row["website"] for row in rows if row["website"] not in self._resolved
+            )
+        )
+        if missing:
+            with ThreadPoolExecutor(max_workers=_WEBSITE_WORKERS) as pool:
+                for raw, resolved in zip(missing, pool.map(resolve_website, missing)):
+                    self._resolved[raw] = resolved
+        for row in rows:
+            row["website"] = self._resolved[row["website"]]
 
 
 def _is_public(url: str, cache: dict[str, bool]) -> bool:

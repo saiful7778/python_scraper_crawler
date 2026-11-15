@@ -34,7 +34,7 @@ def database(postgres):
 @pytest.fixture(autouse=True)
 def offline_websites(monkeypatch):
     monkeypatch.setattr(
-        "app.services.google_map_scraper.scrape.scrape_run.resolve_website",
+        "app.services.google_map_scraper.scrape.website_resolver.resolve_website",
         lambda raw: raw,
     )
 
