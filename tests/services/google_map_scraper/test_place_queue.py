@@ -16,6 +16,8 @@ def _tile(tile_id="tile-1", keyword="cafe", **overrides) -> dict:
     return {
         "ID": tile_id,
         "keyword": keyword,
+        "keyword_index": 1,
+        "cell_index": None,
         "name": keyword,
         "settings": {"keywords": [keyword], "proxies": []},
         "bounding_box": None,
@@ -28,6 +30,7 @@ def _tile(tile_id="tile-1", keyword="cafe", **overrides) -> dict:
 
 def _done(**overrides) -> dict:
     return {
+        "keyword_index": 1,
         "kept": [],
         "finished": 1,
         "skipped": 0,

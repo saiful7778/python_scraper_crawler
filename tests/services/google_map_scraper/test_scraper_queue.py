@@ -17,6 +17,7 @@ from tests.services.google_map_scraper.tile_fakes import (
     TileEnv,
     blocked,
     done,
+    failed,
     lost_chrome,
     proxy_failure,
     row,
@@ -36,14 +37,26 @@ def _geocode(place, with_bbox=False, country=None):
     return (1.0, 2.0)
 
 
-def _tile(tile_id, keyword, **overrides) -> dict:
+def _cell() -> dict:
+    return {
+        "lat": "0.25",
+        "lon": "0.25",
+        "radius": 100,
+        "zoom": 15,
+        "_bbox": [0.0, 0.5, 0.0, 0.5],
+    }
+
+
+def _tile(tile_id, keyword, cell_index=None, **overrides) -> dict:
     return {
         "ID": tile_id,
         "keyword": keyword,
+        "keyword_index": 1,
+        "cell_index": cell_index,
         "name": keyword,
         "settings": {"keywords": [keyword], "proxies": []},
         "bounding_box": None,
-        "cell": None,
+        "cell": None if cell_index is None else _cell(),
         "attempts": 0,
         "scrape_id": None,
         **overrides,
@@ -124,6 +137,7 @@ def test_resume_submits_in_flight_scrape_ids_and_does_not_rerun_done_tiles(
     queue.finish(
         "tile-0",
         {
+            "keyword_index": 1,
             "kept": [row("x")],
             "finished": 1,
             "skipped": 0,
@@ -185,6 +199,7 @@ def test_rows_of_tiles_done_before_a_resume_dedupe_against_new_tiles(arrange, re
     queue.finish(
         "tile-0",
         {
+            "keyword_index": 1,
             "kept": [row("dup")],
             "finished": 1,
             "skipped": 0,
@@ -409,4 +424,211 @@ def test_the_connection_flag_alone_stops_the_run_and_keeps_the_queue(arrange, re
     result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert [kw for kw, _ in env.searched] == ["cafes"]
     assert result.skipped == 1
+    assert redis.keys("place_queue:*")
+
+
+def _lines(capsys) -> list[str]:
+    return capsys.readouterr().out.splitlines()
+
+
+def test_the_no_proxy_single_keyword_run_prints_the_base_lines(arrange, redis, capsys):
+    arrange(lambda kw, slot: done("a"))
+    query = _query(keywords=["cafes"])
+    PlaceScraper(redis).scrape(query)
+    lines = _lines(capsys)
+    assert "▶ Keyword 1/1: cafes" in lines
+    assert f"▶ Creating scrape: 1 keyword @ 1.0,2.0 depth={query.scroll_depth}" in lines
+
+
+def test_the_no_proxy_grid_run_prints_the_base_lines(arrange, redis, capsys):
+    counter = itertools.count()
+    arrange(lambda kw, slot: done(f"t{next(counter)}"))
+    query = _query(keywords=["cafes"], grid=2)
+    PlaceScraper(redis).scrape(query)
+    lines = _lines(capsys)
+    assert "▶ Keyword 1/1: cafes" in lines
+    assert f"▶ Grid 2x2: 4 scrapes, one at a time, depth={query.scroll_depth}" in lines
+    assert any(
+        line.startswith("▶ Cell 1/4 @ ") and line.endswith("m") for line in lines
+    )
+    assert "cell 1/4: 1 rows, 1 kept so far" in lines
+    assert "cell 4/4: 1 rows, 4 kept so far" in lines
+    assert "4 unique rows, 4 after the city box and filters" in lines
+
+
+def test_the_no_proxy_deep_scan_prints_the_base_header_and_cap_line(
+    arrange, redis, capsys
+):
+    counter = itertools.count()
+
+    def behave(kw, slot):
+        return Reply(
+            rows=[row(f"r{next(counter)}") for _ in range(scraper_module.SATURATED)]
+        )
+
+    arrange(behave)
+    query = _query(keywords=["cafes"], grid=2, deep_scan=True)
+    PlaceScraper(redis).scrape(query)
+    lines = _lines(capsys)
+    assert (
+        f"▶ Grid 2x2: 4 scrapes, one at a time, depth={query.scroll_depth} (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
+        in lines
+    )
+    assert "! cell 1 is at Google's cap: 4 sub-tiles added, 8 cells now" in lines
+    assert "cell 2/8: 20 rows, 40 kept so far" in lines
+    assert any(
+        line.startswith("▶ Cell 5/20 @ ") and line.endswith("m (sub-tile)")
+        for line in lines
+    )
+
+
+def test_the_no_proxy_lost_chrome_and_blocked_cells_print_the_base_lines(
+    arrange, redis, capsys
+):
+    arrange(lambda kw, slot: lost_chrome())
+    PlaceScraper(redis).scrape(_query(keywords=["cafes"], grid=2))
+    lines = _lines(capsys)
+    assert (
+        "✗ Stopped at cell 1/4: Chrome connection lost (CDPError: navigate: connection lost: gone)"
+        in lines
+    )
+    assert "0 unique rows, 0 after the city box and filters" in lines
+
+
+def test_the_no_proxy_blocked_cell_and_failed_cell_print_the_base_lines(
+    arrange, redis, capsys
+):
+    arrange(lambda kw, slot: blocked())
+    PlaceScraper(redis).scrape(_query(keywords=["cafes"], grid=2))
+    assert (
+        "\n".join(_lines(capsys)).count(
+            "⚠ Stopped at cell 1/4: Google rate-limited this IP; the cells after it were not searched."
+        )
+        == 1
+    )
+
+    arrange(lambda kw, slot: failed("boom"))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes"], grid=2))
+    assert "  ⚠ cell 1/4 skipped: boom" in _lines(capsys)
+
+
+def test_the_no_proxy_interrupt_prints_the_base_message(arrange, redis, capsys):
+    env = arrange(lambda kw, slot: done("a"))
+    env.interrupt_after = 0
+    with pytest.raises(KeyboardInterrupt):
+        PlaceScraper(redis).scrape(_query(keywords=["cafes"], grid=2))
+    assert "⏸ Finishing the current cell, press Ctrl-C again to quit" in _lines(capsys)
+
+
+def test_the_done_record_is_written_before_the_scrape_is_saved(
+    arrange, redis, monkeypatch
+):
+    from tests.services.google_map_scraper.tile_fakes import TileSession
+
+    query = _query(keywords=["cafes"])
+    seen = []
+    real_finish = TileSession.finish
+
+    def finish_checking_queue(self, scrape_id):
+        seen.append(
+            [
+                item["keyword_index"]
+                for item in PlaceTileQueue(redis, query, 3600).done()
+            ]
+        )
+        return real_finish(self, scrape_id)
+
+    monkeypatch.setattr(TileSession, "finish", finish_checking_queue)
+    arrange(lambda kw, slot: done("a"))
+    PlaceScraper(redis).scrape(query)
+    assert seen == [[1]]
+
+
+def test_a_crash_between_the_done_record_and_the_save_does_not_search_the_tile_again(
+    arrange, redis, monkeypatch
+):
+    from tests.services.google_map_scraper.tile_fakes import TileSession
+
+    query = _query(keywords=["cafes", "bakeries"])
+    real_finish = TileSession.finish
+    crashed = []
+
+    def crash_once(self, scrape_id):
+        if not crashed:
+            crashed.append(scrape_id)
+            raise BufferError("process died before the save")
+        return real_finish(self, scrape_id)
+
+    monkeypatch.setattr(TileSession, "finish", crash_once)
+    arrange(lambda kw, slot: done(kw))
+    with pytest.raises(BufferError):
+        PlaceScraper(redis).scrape(query)
+    monkeypatch.setattr(TileSession, "finish", real_finish)
+
+    # the next start: the crashed scrape is still interrupted, so the session carries it
+    env = arrange(lambda kw, slot: done(kw), carried=crashed)
+    env.scrapes[crashed[0]] = {
+        "name": "cafes",
+        "settings": {"keywords": ["cafes"], "proxies": []},
+    }
+    result = PlaceScraper(redis).scrape(query)
+
+    assert not [
+        sid
+        for sid, s in env.scrapes.items()
+        if sid != crashed[0] and s["settings"]["keywords"] == ["cafes"]
+    ]
+    assert "cafes" in [r["title"] for r in result.rows]
+
+
+def test_a_keyword_dedupes_against_every_row_it_found_not_only_the_kept_ones(
+    arrange, redis
+):
+    replies = [[row("A"), row("B")], [row("B")]]
+    arrange(lambda kw, slot: Reply(rows=replies.pop(0) if replies else []))
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], grid=2, limit=1))
+    assert [r["title"] for r in result.rows] == ["A"]
+
+
+def test_an_earlier_keyword_blocks_only_the_rows_it_kept(arrange, redis):
+    replies = [[row("A"), row("B")], [row("B")]]
+    arrange(lambda kw, slot: Reply(rows=replies.pop(0)))
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"], limit=1))
+    assert [r["title"] for r in result.rows] == ["A", "B"]
+
+
+def test_a_resumed_keyword_dedupes_against_the_rows_its_done_tiles_found(
+    arrange, redis
+):
+    query = _query(keywords=["cafes"], grid=2, limit=1)
+    queue = PlaceTileQueue(redis, query, 3600)
+    queue.push(_tile("tile-0", "cafes", cell_index=1))
+    queue.push(_tile("tile-1", "cafes", cell_index=2))
+    queue.take()
+    queue.finish(
+        "tile-0",
+        {
+            "keyword_index": 1,
+            "kept": [row("A")],
+            "finished": 1,
+            "skipped": 0,
+            "blocked": False,
+            "rows": [row("A"), row("B")],
+        },
+    )
+    arrange(lambda kw, slot: Reply(rows=[row("B")]))
+    result = PlaceScraper(redis).scrape(query)
+    assert [r["title"] for r in result.rows] == ["A"]
+
+
+def test_a_lost_chrome_on_a_proxy_run_also_stops_the_run_and_keeps_the_queue(
+    arrange, redis
+):
+    env = arrange(lambda kw, slot: lost_chrome())
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries", "teas"], proxies=PROXIES)
+    )
+    # the two tiles already in flight stop with the Chrome loss; the third is never taken
+    assert sorted(kw for kw, _ in env.searched) == ["bakeries", "cafes"]
+    assert result.skipped == 2
     assert redis.keys("place_queue:*")

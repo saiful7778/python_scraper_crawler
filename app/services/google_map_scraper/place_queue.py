@@ -16,6 +16,8 @@ from .scrape.scrape_types import LeadRow, SettingsData
 class PlaceTile(TypedDict):
     ID: str
     keyword: str
+    keyword_index: int
+    cell_index: int | None
     name: str
     settings: SettingsData
     bounding_box: BoundingBox | None
@@ -25,6 +27,7 @@ class PlaceTile(TypedDict):
 
 
 class DoneTile(TypedDict):
+    keyword_index: int
     kept: list[LeadRow]
     finished: int
     skipped: int

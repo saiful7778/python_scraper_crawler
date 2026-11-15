@@ -3,6 +3,7 @@
 import queue
 import threading
 import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import partial
 from typing import cast
@@ -411,13 +412,17 @@ def run_scrape(
 def _new_tile(
     name: str,
     keyword: str,
+    keyword_index: int,
     settings: SettingsData,
     bounding_box: BoundingBox | None,
     cell: GridCell | None,
+    cell_index: int | None,
 ) -> PlaceTile:
     return {
         "ID": uuid4().hex,
         "keyword": keyword,
+        "keyword_index": keyword_index,
+        "cell_index": cell_index,
         "name": name,
         "settings": settings,
         "bounding_box": bounding_box,
@@ -439,6 +444,14 @@ def _tile_settings(settings: SettingsData, cell: GridCell) -> SettingsData:
     return cast(SettingsData, scraped.model_dump(by_alias=True, mode="json"))
 
 
+def _box(bounding_box: list[float] | None) -> BoundingBox | None:
+    return None if bounding_box is None else cast(BoundingBox, tuple(bounding_box))
+
+
+def _keys(rows: list[LeadRow]) -> set[str]:
+    return {key for row in rows for key in lead_keys(row)}
+
+
 @dataclass
 class _Flight:
     """A scrape submitted to a slot: its tile, or None for a carried scrape no tile owns."""
@@ -453,6 +466,10 @@ class _TileRun:
     A slot runs one scrape at a time, so one proxy runs one tile at a time. A tile
     that its proxy blocks or fails on goes back to the front of the queue and runs
     on another slot; the slot that failed takes no more tiles.
+
+    Dedupe follows the keyword order: a tile's rows are checked against the known
+    keys, the kept rows of earlier keywords, and the rows already found for its own
+    keyword.
     """
 
     def __init__(
@@ -467,23 +484,41 @@ class _TileRun:
         self._query = query
         self._session = session
         self._tiles = tiles
+        self._known = known_keys
         self._lanes = lanes
         self._cancel = cancel
         self._flights: dict[str, _Flight] = {}
         self._load = [0] * len(lanes)
         self._retired: set[int] = set()
-        done = tiles.done()
-        self.kept: list[LeadRow] = [row for item in done for row in item["kept"]]
-        self._seen = set(known_keys) | {
-            key for row in self.kept for key in lead_keys(row)
-        }
-        self.finished = sum(item["finished"] for item in done)
-        self.skipped = sum(item["skipped"] for item in done)
-        self.blocked = any(item["blocked"] for item in done)
+        self._fresh_keys: dict[int, set[str]] = defaultdict(set)
+        self._kept_keys: dict[int, set[str]] = defaultdict(set)
+        self._rows_by_keyword: Counter[int] = Counter()
+        self._kept_by_keyword: Counter[int] = Counter()
+        self._cells_by_keyword: Counter[int] = Counter()
+        self._open_by_keyword: Counter[int] = Counter()
+        self._summarized: set[int] = set()
+        self.kept: list[LeadRow] = []
+        self.finished = 0
+        self.skipped = 0
+        self.blocked = False
         self.stopped = False
+        for item in tiles.done():
+            keyword = item["keyword_index"]
+            self._cells_by_keyword[keyword] += 1
+            self._fresh_keys[keyword] |= _keys(item["rows"])
+            self._kept_keys[keyword] |= _keys(item["kept"])
+            self._rows_by_keyword[keyword] += len(item["rows"])
+            self._kept_by_keyword[keyword] += len(item["kept"])
+            self.kept.extend(item["kept"])
+            self.finished += item["finished"]
+            self.skipped += item["skipped"]
+            self.blocked = self.blocked or item["blocked"]
+        for tile in [*tiles.pending(), *tiles.in_flight()]:
+            self._cells_by_keyword[tile["keyword_index"]] += 1
+            self._open_by_keyword[tile["keyword_index"]] += 1
 
     def start(self, carried: list[str]) -> None:
-        """Resubmit the in-flight tiles by their scrape ids, and discard carried scrapes no tile owns."""
+        """Resubmit the in-flight tiles by their scrape ids, and finish carried scrapes no tile owns."""
         orphans = list(carried)
         for tile in self._tiles.in_flight():
             scrape_id = tile["scrape_id"]
@@ -498,7 +533,7 @@ class _TileRun:
             self._submit(scrape_id, self._slot_for(scrape_id), tile)
         for scrape_id in orphans:
             logger.warning(
-                "scrape %s matches no queued tile; it is finished and its leads are discarded",
+                "scrape %s matches no queued tile; it is saved to PostgreSQL, and its rows are not part of this run",
                 scrape_id,
             )
             self._submit(scrape_id, self._slot_for(scrape_id), None)
@@ -510,7 +545,7 @@ class _TileRun:
             self._drain()
         except KeyboardInterrupt:
             self._cancel.set()
-            print("⏸ Finishing the tiles in flight, press Ctrl-C again to quit")
+            print("⏸ Finishing the current cell, press Ctrl-C again to quit")
             self._drain()
             raise
 
@@ -538,11 +573,7 @@ class _TileRun:
             dropped = True
             logger.info("scrape %s was deleted while it was queued", scrape_id)
             if flight.tile is not None:
-                print("\n⚠ keyword skipped: the scrape was deleted while it was queued")
-                self._finish_tile(
-                    flight.tile, [], [], finished=0, skipped=1, blocked=False
-                )
-                self.skipped += 1
+                self._deleted(flight.tile, scrape_id)
         return dropped
 
     def _slot_for(self, scrape_id: str) -> int:
@@ -563,20 +594,32 @@ class _TileRun:
     def _start_tile(self, tile: PlaceTile, slot: int) -> None:
         lane = self._lanes[slot]
         settings = cast(SettingsData, {**tile["settings"], "proxies": lane})
-        scrape_id = self._session.create(tile["name"], settings)
-        self._tiles.mark_scrape(tile["ID"], scrape_id)
-        cell = tile["cell"]
-        if cell is None:
+        keyword = tile["keyword_index"]
+        index = tile["cell_index"]
+        if index in (None, 1):
+            print(f"▶ Keyword {keyword}/{len(self._query.keywords)}: {tile['keyword']}")
+        if index is None:
+            scraped = ScrapeSettings.model_validate(tile["settings"])
             print(
-                f"▶ Scraping {tile['keyword']}"
-                + (f" through {mask_proxy_credentials(lane[0])}" if lane else "")
+                f"▶ Creating scrape: 1 keyword @ {scraped.latitude},{scraped.longitude} depth={self._query.scroll_depth}"
             )
         else:
-            sub_tag = " (sub-tile)" if cell.get("_sub") else ""
+            if index == 1:
+                deep_scan_note = (
+                    " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
+                    if self._query.deep_scan
+                    else ""
+                )
+                print(
+                    f"▶ Grid {self._query.grid}x{self._query.grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={self._query.scroll_depth}{deep_scan_note}"
+                )
+            cell = tile["cell"]
+            sub_tag = " (sub-tile)" if cell and cell.get("_sub") else ""
             print(
-                f"▶ Cell @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
-                + (f" through {mask_proxy_credentials(lane[0])}" if lane else "")
+                f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
             )
+        scrape_id = self._session.create(tile["name"], settings)
+        self._tiles.mark_scrape(tile["ID"], scrape_id)
         self._submit(scrape_id, slot, {**tile, "scrape_id": scrape_id})
 
     def _submit(self, scrape_id: str, slot: int, tile: PlaceTile | None) -> None:
@@ -598,47 +641,37 @@ class _TileRun:
             self._discard(scrape_id)
             return
         tile = flight.tile
-        try:
-            result = self._session.finish(scrape_id)
-        except ScrapeDeletedError as error:
-            print(f"\n⚠ keyword skipped: {describe(error)}")
-            logger.warning("tile scrape deleted: %s", describe(error))
-            self._finish_tile(tile, [], [], finished=0, skipped=1, blocked=False)
-            self.skipped += 1
+        keyword = tile["keyword_index"]
+        if self._session.proxies_of(scrape_id) is None:
+            self._deleted(tile, scrape_id)
             return
-        if result is None:
-            raise ScrapeWorkerDiedError(f"scrape {scrape_id} ended without an outcome")
 
-        blocked = result.blocked
+        fresh, kept = self._keep(tile, rows)
+
+        if outcome.connection_lost:
+            # The browser is shared, so every slot is affected: stop. The tile stays
+            # in flight, so the next start runs it again.
+            self._persist(scrape_id)
+            self._report_lost(tile, outcome)
+            self.skipped += 1
+            self.stopped = True
+            self._summarize(keyword, final=True)
+            return
+
+        blocked = outcome.blocked
         proxy_failed = (
             bool(self._lanes[slot])
             and not blocked
             and outcome.status == ScrapeStatus.FAILED
             and is_proxy_failure(outcome.note)
         )
-        fresh = dedupe_rows(rows, frozenset(self._seen))
-        kept = finalize_rows(fresh, self._query, _box(tile["bounding_box"]))
-        self.kept.extend(kept)
-        self._seen.update(key for row in kept for key in lead_keys(row))
-
-        if outcome.connection_lost:
-            # The browser is shared, so every slot is affected: stop, keep the tile in flight
-            self.stopped = True
-            self.skipped += 1
-            print(f"\n✗ Stopped: Chrome connection lost ({outcome.note})")
-            logger.warning("tile stopped on a lost Chrome connection: %s", outcome.note)
-            return
-
         if blocked or proxy_failed:
             self._retired.add(slot)
             attempts = tile["attempts"] + 1
-            proxy = (
-                mask_proxy_credentials(self._lanes[slot][0])
-                if self._lanes[slot]
-                else "this IP"
-            )
-            cause = "was rate-limited" if blocked else "failed"
             if attempts < len(self._query.proxies):
+                self._persist(scrape_id)
+                proxy = mask_proxy_credentials(self._lanes[slot][0])
+                cause = "was rate-limited" if blocked else "failed"
                 print(
                     f"\n⚠ {proxy} {cause}: its tiles stop; this tile runs on another proxy"
                 )
@@ -647,26 +680,32 @@ class _TileRun:
                     tile["ID"], {**tile, "attempts": attempts, "scrape_id": None}
                 )
                 return
-            print(
-                f"\n⚠ Stopped: {proxy} {cause}; the tiles after it were not searched."
-            )
-            logger.warning("tile skipped after %d attempt(s): %s", attempts, proxy)
-            self._finish_tile(tile, fresh, kept, finished=0, skipped=1, blocked=blocked)
-            self.skipped += 1
-            self.blocked = self.blocked or blocked
+            if self._query.proxies:
+                finished, skipped = 0, 1
+            elif tile["cell"] is not None:
+                finished, skipped = (
+                    0,
+                    0,
+                )  # without proxies a blocked grid cell counts neither
+            elif outcome.status == ScrapeStatus.FAILED:
+                finished, skipped = 0, 1
+            else:
+                finished, skipped = 1, 0
+            self._settle(tile, fresh, kept, finished, skipped, blocked)
+            self._report(tile, outcome, rows)
+            self._persist(scrape_id)
+            self._summarize(keyword, final=True)
             return
 
         if outcome.status == ScrapeStatus.FAILED:
-            self._finish_tile(tile, fresh, kept, finished=0, skipped=1, blocked=False)
-            self.skipped += 1
-            print(f"\n  ⚠ tile skipped: {outcome.note}")
+            self._settle(tile, fresh, kept, 0, 1, False)
+            self._report(tile, outcome, rows)
+            self._persist(scrape_id)
+            self._summarize(keyword)
             return
 
-        self._finish_tile(tile, fresh, kept, finished=1, skipped=0, blocked=False)
-        self.finished += 1
-        if outcome.note:
-            print(f"⚠ {outcome.note}")
-        print(f"tile: {len(rows)} rows, {len(self.kept)} kept so far")
+        self._settle(tile, fresh, kept, 1, 0, False)
+        self._report(tile, outcome, rows)
         cell = tile["cell"]
         if (
             self._query.deep_scan
@@ -675,40 +714,42 @@ class _TileRun:
             and len(rows) >= SATURATED
         ):
             self._split(tile, cell, len(rows))
+        self._persist(scrape_id)
+        self._summarize(keyword)
 
-    def _split(self, tile: PlaceTile, cell: GridCell, rows: int) -> None:
-        bbox = cast(BoundingBox, tuple(cell["_bbox"]))
-        sub_cells: list[GridCell] = [
-            {**sub, "_sub": True} for sub in build_grid_cells(bbox, 2)
-        ]  # one level only: sub-tiles never split again
-        for sub in sub_cells:
-            self._tiles.push(
-                _new_tile(
-                    tile["name"],
-                    tile["keyword"],
-                    _tile_settings(tile["settings"], sub),
-                    tile["bounding_box"],
-                    sub,
-                )
-            )
-        logger.info(
-            "tile at Google's cap (%d rows): %d sub-tiles added", rows, len(sub_cells)
-        )
-        print(f"! tile is at Google's cap: {len(sub_cells)} sub-tiles added")
+    def _keep(
+        self, tile: PlaceTile, rows: list[LeadRow]
+    ) -> tuple[list[LeadRow], list[LeadRow]]:
+        """Dedupe a tile's rows and apply the filters and limit; returns (deduped rows, kept rows)."""
+        keyword = tile["keyword_index"]
+        seen = set(self._known)
+        for earlier, keys in self._kept_keys.items():
+            if earlier < keyword:
+                seen |= keys
+        seen |= self._fresh_keys[keyword]
+        fresh = dedupe_rows(rows, frozenset(seen))
+        kept = finalize_rows(fresh, self._query, _box(tile["bounding_box"]))
+        self._fresh_keys[keyword] |= _keys(fresh)
+        self._kept_keys[keyword] |= _keys(kept)
+        self._rows_by_keyword[keyword] += len(fresh)
+        self._kept_by_keyword[keyword] += len(kept)
+        self.kept.extend(kept)
+        return fresh, kept
 
-    def _finish_tile(
+    def _settle(
         self,
         tile: PlaceTile,
         fresh: list[LeadRow],
         kept: list[LeadRow],
-        *,
         finished: int,
         skipped: int,
         blocked: bool,
     ) -> None:
+        """Record a tile's result in the queue's done list, before its scrape is saved to PostgreSQL."""
         self._tiles.finish(
             tile["ID"],
             {
+                "keyword_index": tile["keyword_index"],
                 "kept": kept,
                 "finished": finished,
                 "skipped": skipped,
@@ -716,20 +757,122 @@ class _TileRun:
                 "rows": fresh,
             },
         )
+        self.finished += finished
+        self.skipped += skipped
+        self.blocked = self.blocked or blocked
+        self._open_by_keyword[tile["keyword_index"]] -= 1
+
+    def _persist(self, scrape_id: str) -> None:
+        """Save a tile's scrape to PostgreSQL. Its result is already in the queue."""
+        try:
+            self._session.finish(scrape_id)
+        except ScrapeDeletedError as error:
+            logger.warning(
+                "scrape %s was deleted before it was saved: %s",
+                scrape_id,
+                describe(error),
+            )
+
+    def _deleted(self, tile: PlaceTile, scrape_id: str) -> None:
+        error = ScrapeDeletedError(f"scrape {scrape_id} was deleted while it ran")
+        if tile["cell"] is None:
+            print(f"\n⚠ keyword skipped: {describe(error)}")
+        else:
+            print(
+                f"\n⚠ cell {tile['cell_index']}/{self._cells_by_keyword[tile['keyword_index']]} skipped: {describe(error)}"
+            )
+        logger.warning("tile scrape deleted: %s", describe(error))
+        self._settle(tile, [], [], 0, 1, False)
+        self._summarize(tile["keyword_index"])
+
+    def _report(
+        self, tile: PlaceTile, outcome: RunOutcome, rows: list[LeadRow]
+    ) -> None:
+        """Print a finished tile's result the way the single-scrape and grid runs always did."""
+        if tile["cell"] is None:
+            if outcome.note:
+                print(f"⚠ {outcome.note}")
+            if outcome.status == ScrapeStatus.FAILED:
+                print(f"✗ {outcome.note}")
+            return
+        keyword = tile["keyword_index"]
+        index = tile["cell_index"]
+        total = self._cells_by_keyword[keyword]
+        if outcome.blocked:
+            print(
+                f"\n⚠ Stopped at cell {index}/{total}: Google rate-limited this IP; the cells after it were not searched."
+            )
+            return
+        if outcome.status == ScrapeStatus.FAILED:
+            print(f"\n  ⚠ cell {index}/{total} skipped: {outcome.note}")
+            return
+        if outcome.note:
+            print(f"⚠ cell {index}/{total}: {outcome.note}")
+        print(
+            f"cell {index}/{total}: {len(rows)} rows, {self._kept_by_keyword[keyword]} kept so far"
+        )
+
+    def _report_lost(self, tile: PlaceTile, outcome: RunOutcome) -> None:
+        logger.warning("tile stopped on a lost Chrome connection: %s", outcome.note)
+        if tile["cell"] is None:
+            print(f"\n✗ Stopped: Chrome connection lost ({outcome.note})")
+        else:
+            index = tile["cell_index"]
+            total = self._cells_by_keyword[tile["keyword_index"]]
+            print(
+                f"\n✗ Stopped at cell {index}/{total}: Chrome connection lost ({outcome.note})"
+            )
+
+    def _summarize(self, keyword: int, final: bool = False) -> None:
+        """Print a grid keyword's totals once its last tile is settled, or at once when the run stops on it."""
+        if not self._query.grid or keyword in self._summarized:
+            return
+        if not final and self._open_by_keyword[keyword]:
+            return
+        self._summarized.add(keyword)
+        print(
+            f"{self._rows_by_keyword[keyword]} unique rows, {self._kept_by_keyword[keyword]} after the city box and filters"
+        )
+
+    def _split(self, tile: PlaceTile, cell: GridCell, rows: int) -> None:
+        keyword = tile["keyword_index"]
+        bbox = cast(BoundingBox, tuple(cell["_bbox"]))
+        sub_cells: list[GridCell] = [
+            {**sub, "_sub": True} for sub in build_grid_cells(bbox, 2)
+        ]  # one level only: sub-tiles never split again
+        first = self._cells_by_keyword[keyword]
+        for offset, sub in enumerate(sub_cells, start=1):
+            self._tiles.push(
+                _new_tile(
+                    tile["name"],
+                    tile["keyword"],
+                    keyword,
+                    _tile_settings(tile["settings"], sub),
+                    tile["bounding_box"],
+                    sub,
+                    first + offset,
+                )
+            )
+            self._cells_by_keyword[keyword] += 1
+            self._open_by_keyword[keyword] += 1
+        logger.info(
+            "cell at Google's cap (%d rows): %d sub-tiles added", rows, len(sub_cells)
+        )
+        print(
+            f"! cell {tile['cell_index']} is at Google's cap: {len(sub_cells)} sub-tiles added, {self._cells_by_keyword[keyword]} cells now"
+        )
 
     def _discard(self, scrape_id: str) -> None:
         try:
             self._session.finish(scrape_id)
         except (ScrapeDeletedError, UnsavedLeadsError) as error:
             logger.warning(
-                "discarded scrape %s was not saved: %s", scrape_id, describe(error)
+                "carried scrape %s was not saved: %s", scrape_id, describe(error)
             )
             return
-        logger.info("discarded carried scrape %s", scrape_id)
-
-
-def _box(bounding_box: list[float] | None) -> BoundingBox | None:
-    return None if bounding_box is None else cast(BoundingBox, tuple(bounding_box))
+        logger.info(
+            "carried scrape %s was saved; its rows are not part of this run", scrape_id
+        )
 
 
 class PlaceScraper:
@@ -821,10 +964,12 @@ class PlaceScraper:
             update={"latitude": float(lat), "longitude": float(lon)}
         )
         try:
-            for keyword in query.keywords:
+            for keyword_index, keyword in enumerate(query.keywords, start=1):
                 # the scrape name is what the web UI lists
                 name = f"{keyword} @ {place}"[:80]
-                self._queue_keyword(query, anchored, keyword, name, bounding_box, tiles)
+                self._queue_keyword(
+                    query, anchored, keyword, keyword_index, name, bounding_box, tiles
+                )
         except BaseException:
             # a partly queued run must not be resumed as if it were whole
             try:
@@ -839,6 +984,7 @@ class PlaceScraper:
         query: PlaceQuery,
         anchored: ScrapeSettings,
         keyword: str,
+        keyword_index: int,
         name: str,
         bounding_box: BoundingBox | None,
         tiles: PlaceTileQueue,
@@ -859,11 +1005,21 @@ class PlaceScraper:
             else None
         )
         if cells is None:
-            tiles.push(_new_tile(name, keyword, base, bounding_box, None))
-            return
-        for cell in cells:
             tiles.push(
-                _new_tile(name, keyword, _tile_settings(base, cell), bounding_box, cell)
+                _new_tile(name, keyword, keyword_index, base, bounding_box, None, None)
+            )
+            return
+        for index, cell in enumerate(cells, start=1):
+            tiles.push(
+                _new_tile(
+                    name,
+                    keyword,
+                    keyword_index,
+                    _tile_settings(base, cell),
+                    bounding_box,
+                    cell,
+                    index,
+                )
             )
 
     def _listen(

@@ -132,8 +132,13 @@ class TileSession:
 
     def proxies_of(self, scrape_id: str):
         record = self._env.scrapes.get(scrape_id)
-        if record is None or scrape_id in self._env.deleted:
-            return None
+        reply = self._env.replies.get(scrape_id)
+        if (
+            record is None
+            or scrape_id in self._env.deleted
+            or (reply and reply.deleted)
+        ):
+            return None  # a deleted scrape has no row, so it has no proxies
         return tuple(record["settings"]["proxies"])
 
     def submit(self, scrape_id: str, slot: int) -> None:
