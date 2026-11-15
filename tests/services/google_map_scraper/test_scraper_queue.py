@@ -665,3 +665,34 @@ def test_no_proxy_deep_scan_sub_tiles_finish_before_the_next_keyword(
     assert keywords == ["cafes"] * 20 + ["bakeries"] * 20
     titles = [r["title"] for r in result.rows]
     assert len(titles) == 800 and len(set(titles)) == 800
+
+
+def test_a_proxy_run_dedupes_against_every_kept_row_when_a_later_keyword_finishes_first(
+    arrange, redis
+):
+    env = arrange(lambda kw, slot: done("shared"))
+    env.deliver_last_first = True
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries"], proxies=PROXIES)
+    )
+    assert [kw for kw, _ in env.searched] == ["bakeries", "cafes"]
+    assert [r["title"] for r in result.rows] == ["shared"]
+
+
+def test_the_done_record_is_written_before_a_blocked_tile_is_saved(
+    arrange, redis, monkeypatch
+):
+    from tests.services.google_map_scraper.tile_fakes import TileSession
+
+    query = _query(keywords=["cafes"])
+    seen = []
+    real_finish = TileSession.finish
+
+    def finish_checking_queue(self, scrape_id):
+        seen.append(len(PlaceTileQueue(redis, query, 3600).done()))
+        return real_finish(self, scrape_id)
+
+    monkeypatch.setattr(TileSession, "finish", finish_checking_queue)
+    arrange(lambda kw, slot: blocked("a"))
+    PlaceScraper(redis).scrape(query)
+    assert seen == [1]

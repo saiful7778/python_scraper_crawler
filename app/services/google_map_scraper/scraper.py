@@ -723,9 +723,8 @@ class _TileRun:
         """Dedupe a tile's rows and apply the filters and limit; returns (deduped rows, kept rows)."""
         keyword = tile["keyword_index"]
         seen = set(self._known)
-        for earlier, keys in self._kept_keys.items():
-            if earlier < keyword:
-                seen |= keys
+        for keys in self._kept_keys.values():
+            seen |= keys
         seen |= self._fresh_keys[keyword]
         fresh = dedupe_rows(rows, frozenset(seen))
         kept = finalize_rows(fresh, self._query, _box(tile["bounding_box"]))

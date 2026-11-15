@@ -85,6 +85,9 @@ class TileEnv:
         self.searched: list[tuple[str, int]] = []
         self.finished: list[str] = []
         self.interrupt_after: int | None = None
+        self.deliver_last_first = (
+            False  # finish the tile submitted last, as a faster proxy would
+        )
         self.delivered = 0
         self.slot_counts: list[int] = []
         self.stopped = 0
@@ -156,8 +159,9 @@ class TileSession:
         if env.interrupt_after is not None and env.delivered >= env.interrupt_after:
             env.interrupt_after = None
             raise KeyboardInterrupt()
-        self._queue.remove(live[0])
-        scrape_id, slot = live[0]
+        pick = live[-1] if env.deliver_last_first else live[0]
+        self._queue.remove(pick)
+        scrape_id, slot = pick
         keyword = env._keyword(scrape_id)
         env.searched.append((keyword, slot))
         reply = env.behave(keyword, slot)
