@@ -97,12 +97,16 @@ class ScrapeWorker(threading.Thread):
                 self._stopped.wait(_RETRY_PAUSE_SECONDS)
 
     def _next_assignment(self) -> str | None:
-        """The next assigned scrape id, or None when none arrives within the poll time."""
+        """The next assigned scrape id; None on timeout or once the worker is stopping."""
         assert self._assignments is not None
         try:
-            return self._assignments.get(timeout=_IDLE_POLL_SECONDS)
+            scrape_id = self._assignments.get(timeout=_IDLE_POLL_SECONDS)
         except queue.Empty:
             return None
+        if self._stopped.is_set():
+            self._assignments.put(scrape_id)
+            return None
+        return scrape_id
 
     def cancel(self, scrape_id: str) -> None:
         """Stop the running scrape if it is ``scrape_id`` (used when it is deleted)."""

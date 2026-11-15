@@ -87,3 +87,17 @@ def test_assigned_worker_skips_an_id_that_is_no_longer_pending(
     wait_until(lambda: "tile-1" in fake_db.refused_seen)
     worker.shutdown(wait=2)
     assert fake_run_factory == []
+
+
+def test_assigned_worker_does_not_claim_an_id_received_after_shutdown(
+    fake_db, fake_run_factory
+):
+    ids = queue.Queue()
+    worker = ScrapeWorker(fake_db, redis=None, assignments=ids)
+    worker.start()
+    worker.shutdown()
+    ids.put("tile-1")
+    worker.join(7)
+    assert fake_db.claimed == []
+    assert fake_run_factory == []
+    assert ids.get_nowait() == "tile-1"
