@@ -499,6 +499,7 @@ class _TileRun:
         self._kept_keys: dict[int, set[str]] = defaultdict(set)
         self._rows_by_keyword: Counter[int] = Counter()
         self._kept_by_keyword: Counter[int] = Counter()
+        self._kept_by_tile: Counter[str] = Counter()
         self._cells_by_keyword: Counter[int] = Counter()
         self._open_by_keyword: Counter[int] = Counter()
         self._summarized: set[int] = set()
@@ -673,6 +674,9 @@ class _TileRun:
             self._retired.add(slot)
             attempts = tile["attempts"] + 1
             if attempts < len(self._query.proxies):
+                # Keep what this attempt found before the block: the run may end
+                # before the tile runs again, and those leads are still real.
+                self._keep(tile, rows)
                 self._persist(scrape_id)
                 proxy = mask_proxy_credentials(self._lanes[slot][0])
                 cause = "was rate-limited" if blocked else "failed"
@@ -735,6 +739,11 @@ class _TileRun:
         seen |= self._fresh_keys[keyword]
         fresh = dedupe_rows(rows, frozenset(seen))
         kept = finalize_rows(fresh, self._query, _box(tile["bounding_box"]))
+        if self._query.limit is not None:
+            # A retried tile keeps at most its one limit across all attempts.
+            room = max(0, self._query.limit - self._kept_by_tile[tile["ID"]])
+            kept = kept[:room]
+        self._kept_by_tile[tile["ID"]] += len(kept)
         self._fresh_keys[keyword] |= _keys(fresh)
         self._kept_keys[keyword] |= _keys(kept)
         self._rows_by_keyword[keyword] += len(fresh)
