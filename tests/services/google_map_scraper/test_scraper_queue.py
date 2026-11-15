@@ -398,3 +398,15 @@ def test_a_tile_deleted_before_its_worker_claims_it_is_skipped_and_the_run_ends(
     assert result.skipped == 1
     assert [r["title"] for r in result.rows] == ["bakeries"]
     assert not redis.keys("place_queue:*")
+
+
+def test_the_connection_flag_alone_stops_the_run_and_keeps_the_queue(arrange, redis):
+    env = arrange(
+        lambda kw, slot: Reply(
+            status=ScrapeStatus.FAILED, note="boom", connection_lost=True
+        )
+    )
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
+    assert [kw for kw, _ in env.searched] == ["cafes"]
+    assert result.skipped == 1
+    assert redis.keys("place_queue:*")

@@ -24,6 +24,7 @@ class Reply:
     note: str = ""
     rows: list[LeadRow] = field(default_factory=list)
     blocked: bool = False
+    connection_lost: bool = False
     deleted: bool = False
     unsaved: bool = False
 
@@ -57,7 +58,9 @@ def proxy_failure() -> Reply:
 
 def lost_chrome() -> Reply:
     return Reply(
-        status=ScrapeStatus.FAILED, note="CDPError: navigate: connection lost: gone"
+        status=ScrapeStatus.FAILED,
+        note="CDPError: navigate: connection lost: gone",
+        connection_lost=True,
     )
 
 
@@ -155,7 +158,13 @@ class TileSession:
         reply = env.behave(keyword, slot)
         env.replies[scrape_id] = reply
         env.delivered += 1
-        return scrape_id, RunOutcome(reply.status, reply.note), reply.rows, slot
+        outcome = RunOutcome(
+            reply.status,
+            reply.note,
+            blocked=reply.blocked,
+            connection_lost=reply.connection_lost,
+        )
+        return scrape_id, outcome, reply.rows, slot
 
     def finish(self, scrape_id: str) -> RunResult | None:
         env = self._env

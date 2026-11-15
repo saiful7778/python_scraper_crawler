@@ -31,10 +31,17 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class RunOutcome:
-    """How a run ended; the runner writes it to PostgreSQL once the crawl is done."""
+    """How a run ended; the runner writes it to PostgreSQL once the crawl is done.
+
+    ``connection_lost`` is set when the Chrome this run used lost its connection,
+    which affects every run sharing that Chrome. ``blocked`` is set when Google
+    rate-limited the run.
+    """
 
     status: str
     note: str
+    blocked: bool = False
+    connection_lost: bool = False
 
 
 def _latest_copies(rows: list[LeadRow]) -> list[LeadRow]:
@@ -92,6 +99,8 @@ class ScrapeRun:
         self._state = RunState()
         self._progress: ScrapeProgress | None = None
         self._deadline = 0.0
+        self._killed_by_watchdog = False
+        self._connection_lost = False
 
     def cancel(self) -> None:
         """Stop the run because its scrape was deleted."""
@@ -188,6 +197,7 @@ class ScrapeRun:
             logger.warning("scrape %s: %s", self.scrape_id, describe(error))
         finally:
             watchdog.cancel()
+            self._connection_lost = self._connection_lost or self._chrome_lost()
             self._browser.close()
 
         if self._pausing and self._database.get(self.scrape_id) is not None:
@@ -301,7 +311,12 @@ class ScrapeRun:
             retries=state.retries,
         )
         self._progress.save()
-        self.outcome = RunOutcome(status, note)
+        self.outcome = RunOutcome(
+            status,
+            note,
+            blocked=state.blocked,
+            connection_lost=self._connection_lost,
+        )
         logger.info(
             "scrape %s %s: %s leads%s",
             self.scrape_id,
@@ -318,6 +333,18 @@ class ScrapeRun:
         timer.start()
         return timer
 
+    def _chrome_lost(self) -> bool:
+        """True when the Chrome this run started has a closed connection.
+
+        A proxy error or a CDP timeout on a live connection does not count, and
+        neither does a browser the watchdog killed on purpose.
+        """
+        return (
+            self._browser.browser is not None
+            and self._browser.is_dead
+            and not self._killed_by_watchdog
+        )
+
     def _on_watchdog(self) -> None:
         self._state.timed_out = True
         self._stop.set()
@@ -325,6 +352,7 @@ class ScrapeRun:
             # A stuck CDP call on a shared browser is only ended by its own
             # timeout: killing the shared browser would stop sibling tiles.
             return
+        self._killed_by_watchdog = True
         try:
             self._browser.kill()
         except Exception:

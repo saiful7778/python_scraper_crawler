@@ -20,7 +20,7 @@ from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteQueue
 from app.utils.errors import ScraperError, describe
-from app.utils.failure_messages import is_connection_lost, is_proxy_failure
+from app.utils.failure_messages import is_proxy_failure
 from app.utils.logger import get_logger
 from app.utils.proxies import mask_proxy_credentials
 from config.redis import RedisConfig
@@ -621,7 +621,7 @@ class _TileRun:
         self.kept.extend(kept)
         self._seen.update(key for row in kept for key in lead_keys(row))
 
-        if is_connection_lost(outcome.note):
+        if outcome.connection_lost:
             # The browser is shared, so every slot is affected: stop, keep the tile in flight
             self.stopped = True
             self.skipped += 1
