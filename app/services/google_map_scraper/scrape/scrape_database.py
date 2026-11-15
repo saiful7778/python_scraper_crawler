@@ -68,6 +68,10 @@ class ScrapeDatabase:
             "claiming a scrape", self._repository.claim_oldest_pending()
         )
 
+    def claim(self, scrape_id: str) -> ScrapeRecord | None:
+        """Mark this pending scrape as working and return it; None if it is not pending."""
+        return self._call("claiming a scrape", self._repository.claim_by_id(scrape_id))
+
     def set_status(self, scrape_id: str, status: str, error: str = "") -> None:
         self._call(
             "saving the scrape status",

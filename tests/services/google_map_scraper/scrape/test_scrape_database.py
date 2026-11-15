@@ -26,6 +26,13 @@ def test_a_created_scrape_is_pending_and_can_be_claimed_once(database):
     assert database.claim_next_pending() is None
 
 
+def test_claim_takes_one_pending_scrape_by_id(database):
+    scrape_id = database.create("tile", SETTINGS)
+    first = database.claim(scrape_id)
+    assert first is not None and first["Status"] == ScrapeStatus.WORKING
+    assert database.claim(scrape_id) is None
+
+
 def test_finish_stores_status_note_and_progress(database):
     scrape_id = database.create("cafe", SETTINGS)
 

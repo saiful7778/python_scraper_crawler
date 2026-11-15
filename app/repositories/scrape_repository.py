@@ -73,6 +73,19 @@ class ScrapeRepository(BaseRepository):
             await scrape.save(update_fields=["status", "updated_at"])
         return self._to_record(scrape)
 
+    async def claim_by_id(self, scrape_id: UUID | str) -> ScrapeRecord | None:
+        async with in_transaction():
+            scrape = (
+                await self._model.filter(id=scrape_id, status=ScrapeStatus.PENDING)
+                .select_for_update()
+                .first()
+            )
+            if scrape is None:
+                return None
+            scrape.status = ScrapeStatus.WORKING
+            await scrape.save(update_fields=["status", "updated_at"])
+        return self._to_record(scrape)
+
     async def list_all(self) -> list[ScrapeRecord]:
         scrapes = await self._model.all().order_by("-created_order")
         return [self._to_record(scrape) for scrape in scrapes]
