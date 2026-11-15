@@ -835,7 +835,9 @@ class _TileRun:
                 f"\n⚠ cell {tile['cell_index']}/{self._cells_by_keyword[tile['keyword_index']]} skipped: {describe(error)}"
             )
         logger.warning("tile scrape deleted: %s", describe(error))
-        self._settle(tile, [], [], 0, 1, False)
+        self._settle(
+            tile, list(tile.get("rows", [])), list(tile.get("kept", [])), 0, 1, False
+        )
         self._summarize(tile["keyword_index"])
 
     def _report(
