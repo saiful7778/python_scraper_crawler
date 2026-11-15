@@ -512,6 +512,7 @@ class PlaceScraper:
         except KeyboardInterrupt:
             # let the cell in flight finish; the job stops before the next one
             self._cancel.set()
+            print("⏸ Finishing the current cell, press Ctrl-C again to quit")
             thread.join()
             raise
         if "error" in failure:
@@ -670,9 +671,11 @@ class PlaceScraper:
                 skipped += 1
                 continue
 
-            before = len(rows)
-            rows = dedupe_rows(rows + result.rows, known_keys)
-            kept.extend(finalize_rows(rows[before:], query, bounding_box))
+            # known_keys may already hold the leads this job saved before it was resumed
+            seen = known_keys | frozenset(key for row in rows for key in lead_keys(row))
+            fresh = dedupe_rows(result.rows, seen)
+            rows.extend(fresh)
+            kept.extend(finalize_rows(fresh, query, bounding_box))
             self._salvage = saved + kept
             if result.blocked:
                 blocked = True

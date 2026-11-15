@@ -159,7 +159,7 @@ def test_ctrl_c_stops_the_job_before_the_next_cell_and_keeps_the_queue(monkeypat
     assert len(scraper.salvage_rows) == 1
 
 
-def test_a_listener_interrupt_sets_the_cancel_event_and_waits_for_the_job(monkeypatch, redis):
+def test_a_listener_interrupt_sets_the_cancel_event_and_waits_for_the_job(monkeypatch, redis, capsys):
     import threading
 
     scraper = PlaceScraper(redis)
@@ -191,6 +191,7 @@ def test_a_listener_interrupt_sets_the_cancel_event_and_waits_for_the_job(monkey
     with pytest.raises(KeyboardInterrupt):
         scraper.scrape(_query(grid=2, keywords=["cafes"]))
     assert scraper._cancel.is_set()
+    assert "press Ctrl-C again to quit" in capsys.readouterr().out
     assert len(calls) == 1  # the job stopped at its next cell instead of running on
     assert redis.keys("place_queue:*")
 
@@ -228,3 +229,36 @@ def test_a_failed_clear_after_a_failed_enqueue_keeps_the_original_error(monkeypa
     monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
     with pytest.raises(BufferError, match="enqueue down"):
         PlaceScraper(redis).scrape(_query(keywords=["cafes"]))
+
+
+def test_a_resumed_grid_keeps_its_saved_rows_when_known_keys_already_hold_them(monkeypatch, redis):
+    from app.services.google_map_scraper.scrape.dedupe import lead_keys
+
+    saved = _row(title="saved", place_id="p-saved", latitude=0.5, longitude=0.5)
+    fresh = _row(title="fresh", place_id="p-fresh", latitude=0.5, longitude=0.5)
+    calls = []
+
+    def first_run(name, settings, **_):
+        calls.append(settings.latitude)
+        if len(calls) == 2:
+            raise BufferError("redis down")
+        return RunResult("id", ScrapeStatus.OK, "", [saved], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", first_run)
+    monkeypatch.setattr(scraper_module, "get_geocode", _grid_geocode)
+    with pytest.raises(BufferError):
+        PlaceScraper(redis).scrape(_query(grid=2, keywords=["cafes"]))
+
+    calls.clear()
+
+    def second_run(name, settings, **_):
+        calls.append(settings.latitude)
+        # the cell in flight finds the saved lead again, plus a new one
+        return RunResult("id", ScrapeStatus.OK, "", [saved, fresh] if len(calls) == 1 else [], False)
+
+    monkeypatch.setattr(scraper_module, "run_scrape", second_run)
+    # PostgreSQL already holds the lead the interrupted run saved
+    result = PlaceScraper(redis).scrape(
+        _query(grid=2, keywords=["cafes"]), frozenset(lead_keys(saved))
+    )
+    assert [row["title"] for row in result.rows] == ["saved", "fresh"]

@@ -108,6 +108,8 @@ def test_enqueue_save_and_complete_keep_the_keys_on_a_ttl(redis):
     job["next_cell"] = 1
     queue.save(job)
     assert redis.ttl(jobs_key) > 0
+    if redis.exists(done_key):
+        assert redis.ttl(done_key) > 0
 
     queue.complete({"kept": [], "finished": 1, "skipped": 0, "blocked": False})
     queue.enqueue(_job("bakery"))
@@ -125,3 +127,14 @@ def test_save_leaves_the_second_job_untouched(redis):
     run = run_id(_query())
     second = redis.lindex(f"place_queue:{run}:jobs", 1)
     assert json.loads(second) == _job("bakery")
+
+
+def test_save_refreshes_the_ttl_of_the_done_list(redis):
+    queue = PlaceJobQueue(redis, _query(), 3600)
+    done_key = f"place_queue:{run_id(_query())}:done"
+    queue.enqueue(_job("cafe"))
+    queue.enqueue(_job("bakery"))
+    queue.complete({"kept": [], "finished": 1, "skipped": 0, "blocked": False})
+    redis.expire(done_key, 5)
+    queue.save(queue.peek())
+    assert redis.ttl(done_key) > 5

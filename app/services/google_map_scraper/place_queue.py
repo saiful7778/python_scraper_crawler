@@ -70,6 +70,7 @@ class PlaceJobQueue:
             pipe = self._redis.pipeline(transaction=True)
             pipe.lset(self._jobs_key, 0, json.dumps(job, sort_keys=True))
             pipe.expire(self._jobs_key, self._ttl_seconds)
+            pipe.expire(self._done_key, self._ttl_seconds)
             pipe.execute()
         except RedisError as error:
             raise BufferError(f"could not save place job: {describe(error)}") from error
