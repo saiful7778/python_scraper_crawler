@@ -65,6 +65,31 @@ def test_flush_with_nothing_buffered_saves_nothing(rows, state, make_flusher):
     assert make_flusher(rows, Saved()).flush_once() == 0
 
 
+def test_flush_scrape_saves_one_scrape_and_leaves_the_others(rows, state, make_flusher):
+    rows.append("s1", [{"title": "A"}])
+    rows.append("s2", [{"title": "B"}])
+    save = Saved()
+    assert make_flusher(rows, save).flush_scrape("s1") == 1
+    assert save.calls == [("s1", "A")]
+    assert rows.length("s1") == 0
+    assert rows.length("s2") == 1
+
+
+def test_flush_scrape_saves_more_than_one_batch(rows, state, make_flusher):
+    rows.append("s1", [{"title": str(i)} for i in range(501)])
+    flusher = make_flusher(rows, Saved())
+    assert flusher.flush_scrape("s1") == 501
+    assert rows.length("s1") == 0
+
+
+def test_flush_scrape_keeps_the_failed_row_and_the_rest(rows, state, make_flusher):
+    rows.append("s1", [{"title": "A"}, {"title": "B"}, {"title": "C"}])
+    save = Saved(fail_on={"B"})
+    flusher = make_flusher(rows, save)
+    assert flusher.flush_scrape("s1") == 1
+    assert [row["title"] for row in rows.read_all("s1")] == ["B", "C"]
+
+
 def test_failed_flush_keeps_rows_for_next_tick(rows, state, make_flusher):
     rows.append("s1", [{"title": "A"}])
     flusher = make_flusher(rows, Saved(fail_on={"A"}))

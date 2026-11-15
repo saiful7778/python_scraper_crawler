@@ -205,11 +205,15 @@ class ScrapeSession:
     def finish(self, scrape_id: str) -> RunResult | None:
         """Save and finish one tile's leads and return its result; None if it has no outcome yet.
 
+        The flusher may still be behind on this scrape, so its rows are saved now
+        rather than waiting for the next flush tick.
+
         :raises UnsavedLeadsError: If the tile's leads stay unsaved in Redis.
         :raises ScrapeDeletedError: If the tile was deleted while it ran.
         """
         if scrape_id not in self._finished:
             return None
+        self._flusher.flush_scrape(scrape_id)
         return self._finish_one(scrape_id)
 
     def create(self, name: str, settings: SettingsData) -> str:

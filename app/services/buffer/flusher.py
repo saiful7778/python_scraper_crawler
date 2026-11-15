@@ -109,13 +109,39 @@ class Flusher(threading.Thread):
         self._context: TortoiseContext | None = None
         self._loop = asyncio.new_event_loop()
         self._stop_requested = threading.Event()
+        #: One loop and one connection serve every caller, so a scrape is saved by
+        #: one thread at a time: the flusher thread or a scrape finishing its tile.
+        self._lock = threading.Lock()
 
     def flush_once(self) -> int:
         saved = 0
         for scrape_id in self._state.active_ids():
+            saved += self._flush_scrape(scrape_id)
+        with self._lock:
+            self._flush_crawls()
+        if saved:
+            logger.debug("flushed %d buffered lead row(s)", saved)
+        return saved
+
+    def flush_scrape(self, scrape_id: str) -> int:
+        """Save every buffered row of one scrape now; returns how many were saved.
+
+        A scrape finishing its tile calls this, so its rows do not wait behind the
+        other scrapes of the run. A row that fails stops the save and stays in
+        Redis with the rows after it.
+        """
+        saved = 0
+        while True:
+            count = self._flush_scrape(scrape_id)
+            saved += count
+            if count < BATCH_SIZE:
+                return saved
+
+    def _flush_scrape(self, scrape_id: str) -> int:
+        with self._lock:
             batch = self._rows.peek(scrape_id, BATCH_SIZE)
             if not batch:
-                continue
+                return 0
             self._state.refresh_ttl(scrape_id)
             if self._prepare_batch is not None:
                 prepare_started = time.monotonic()
@@ -136,11 +162,7 @@ class Flusher(threading.Thread):
             )
             if count:
                 self._rows.trim(scrape_id, count)
-            saved += count
-        self._flush_crawls()
-        if saved:
-            logger.debug("flushed %d buffered lead row(s)", saved)
-        return saved
+            return count
 
     def run(self) -> None:
         try:
@@ -185,9 +207,7 @@ class Flusher(threading.Thread):
                 crawl_buffer.release_website(website_id)
                 continue
             try:
-                self._loop.run_until_complete(
-                    self._in_context(partial(sink, snapshot))
-                )
+                self._loop.run_until_complete(self._in_context(partial(sink, snapshot)))
             except Exception as error:
                 logger.error(
                     "saving the crawl of website %s failed; it stays in Redis: %s",

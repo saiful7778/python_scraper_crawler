@@ -4,6 +4,9 @@ import threading
 import fakeredis
 import pytest
 
+from app.services.buffer.flusher import Flusher
+from app.services.buffer.row_buffer import RowBuffer
+from app.services.buffer.scrape_state import ScrapeState
 from app.services.google_map_scraper import scraper as scraper_module
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.engine_config import EngineConfig
@@ -112,6 +115,51 @@ def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch, redis):
     with pytest.raises(UnsavedLeadsError):
         PlaceScraper(redis).scrape(_query(grid=2))
     assert len(env.searched) == 1
+
+
+class _RecordingDatabase:
+    def __init__(self):
+        self.finished: list[str] = []
+
+    def finish(self, scrape_id, status, note, progress):
+        self.finished.append(scrape_id)
+        return True
+
+
+def test_finish_saves_the_tiles_rows_before_it_checks_that_they_are_saved(redis):
+    scrape_id = "tile-1"
+    state = ScrapeState(redis, 3600)
+    rows = RowBuffer(redis, 3600)
+    state.create(scrape_id, {})
+    rows.append(scrape_id, [{"title": "A"}])
+    saved: list[tuple[str, str]] = []
+
+    async def save(row, saved_id):
+        saved.append((saved_id, row["title"]))
+
+    flusher = Flusher(rows, state, save_row=save, crawl_sink=None)
+    database = _RecordingDatabase()
+    session = scraper_module.ScrapeSession.__new__(scraper_module.ScrapeSession)
+    session._finished = {
+        scrape_id: (
+            RunOutcome(ScrapeStatus.OK, "", blocked=False, connection_lost=False),
+            [{"title": "A"}],
+        )
+    }
+    session._state = state
+    session._rows = rows
+    session._database = database
+    session._redis = redis
+    session._flusher = flusher
+    try:
+        result = session.finish(scrape_id)
+    finally:
+        flusher.shutdown()
+
+    assert result is not None
+    assert saved == [(scrape_id, "A")]
+    assert rows.length(scrape_id) == 0
+    assert database.finished == [scrape_id]
 
 
 def test_each_keyword_is_its_own_scrape(monkeypatch, redis):
