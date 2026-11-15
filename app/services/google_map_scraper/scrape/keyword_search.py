@@ -333,6 +333,7 @@ class KeywordSearch:
         self, leads: Sequence[PlaceLink | PlaceRecord], batches: int
     ) -> None:
         """Accept leads not yet seen, including those no streamed batch carried."""
+        callback_started = time.monotonic()
         try:
             for lead in leads:
                 if not self._has_room():
@@ -346,6 +347,7 @@ class KeywordSearch:
         except BufferError:
             self._stop.set()
             raise
+        progress_started = time.monotonic()
         self._progress.save(
             percent=search_percent(
                 self._index,
@@ -353,6 +355,13 @@ class KeywordSearch:
                 self._settings.scroll_depth,
                 len(self._settings.keywords),
             )
+        )
+        logger.info(
+            "batch callback: %d lead(s) for batch %d took %.2f s (progress save %.3f s)",
+            len(leads),
+            batches,
+            time.monotonic() - callback_started,
+            time.monotonic() - progress_started,
         )
 
     def _note_skipped_keywords(self) -> None:

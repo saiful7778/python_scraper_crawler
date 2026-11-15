@@ -74,7 +74,16 @@ class ReviewPass:
                             f"reviews read for {position} of {len(todo)} leads: ran out of time"
                         )
                         break
+                    panel_started = time.monotonic()
                     body = fetch_lead_panel_json(tab, self._panel_url(row))
+                    logger.info(
+                        "reviews: panel %d/%d for %s took %.2f s (%s)",
+                        position + 1,
+                        len(todo),
+                        row.get("title", ""),
+                        time.monotonic() - panel_started,
+                        "empty" if not body else "read",
+                    )
                     if "/sorry/" in (tab.get_url() or ""):
                         logger.warning(
                             "reviews: Google's unusual-traffic page after %d panel(s)",

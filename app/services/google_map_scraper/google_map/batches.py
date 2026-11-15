@@ -9,6 +9,7 @@ the newly parsed rows.
 """
 
 import queue
+import time
 from typing import Final
 
 from app.services.browser import BrowserTab, CDPError
@@ -62,6 +63,8 @@ class BatchResponseReader:
         self._pending: dict[str, int] = {}
         # Batch requests the page has sent and Google has not answered yet.
         self._inflight: set[str] = set()
+        # requestId -> monotonic time the page asked, for the latency log.
+        self._sent_at: dict[str, float] = {}
         #: Batch requests the page sent in all.
         self.asked: int = 0
         #: Batches successfully read and parsed.
@@ -109,11 +112,13 @@ class BatchResponseReader:
                 # requestWillBeSent: the page asked Google for the next batch.
                 if BATCH_URL_PATTERN.match(message["request"].get("url", "")):
                     self._inflight.add(request_id)
+                    self._sent_at[request_id] = time.monotonic()
                     self.asked += 1
                 continue
             if "errorText" in message:
                 # loadingFailed: no answer is coming for this one.
                 self._inflight.discard(request_id)
+                self._sent_at.pop(request_id, None)
                 continue
             response: Params = message.get("response", {})
             if not BATCH_URL_PATTERN.match(response.get("url", "")):
@@ -121,8 +126,21 @@ class BatchResponseReader:
             self._inflight.discard(request_id)
             if response.get("status") == 429:
                 self.limited += 1
+                logger.info(
+                    "batch %s: Google answered 429 after %.2f s",
+                    request_id,
+                    self._age(request_id),
+                )
+                self._sent_at.pop(request_id, None)
             elif "json" in (response.get("mimeType") or ""):
                 self._pending[request_id] = 0
+                logger.info(
+                    "batch %s: response headers after %.2f s",
+                    request_id,
+                    self._age(request_id),
+                )
+            else:
+                self._sent_at.pop(request_id, None)
 
         rows: list[PlaceRecord] = []
         for request_id in list(self._pending):
@@ -138,6 +156,7 @@ class BatchResponseReader:
                 # Not finished yet; retry next time, for about 10 s.
                 if self._pending[request_id] > _MAX_BODY_READ_TRIES:
                     del self._pending[request_id]
+                    self._sent_at.pop(request_id, None)
                     self.dropped += 1
                     logger.warning(
                         "dropped batch %s after %d tries; last error: %s",
@@ -147,6 +166,8 @@ class BatchResponseReader:
                     )
                 continue
             del self._pending[request_id]
+            age = self._age(request_id)
+            self._sent_at.pop(request_id, None)
             try:
                 body = response_text(reply, request_id)
             except CDPError as error:
@@ -154,8 +175,21 @@ class BatchResponseReader:
                 logger.warning("dropped batch %s: %s", request_id, describe(error))
                 continue
             self.count += 1
+            parse_started = time.monotonic()
             rows += parse_place_list(body)
+            logger.info(
+                "batch %s: body read at %.2f s after the request, parsed in %.3f s, %d chars",
+                request_id,
+                age,
+                time.monotonic() - parse_started,
+                len(body),
+            )
         return rows
+
+    def _age(self, request_id: str) -> float:
+        """Seconds since the page asked for this batch, or 0 if unknown."""
+        sent = self._sent_at.get(request_id)
+        return time.monotonic() - sent if sent is not None else 0.0
 
     def close(self) -> None:
         """Unsubscribe from the three Network events; a failure is logged and the rest still run."""
