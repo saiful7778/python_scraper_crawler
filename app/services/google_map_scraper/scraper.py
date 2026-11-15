@@ -652,8 +652,6 @@ class _TileRun:
             self._deleted(tile, scrape_id)
             return
 
-        fresh, kept = self._keep(tile, rows)
-
         if outcome.connection_lost:
             # The browser is shared, so every slot is affected: stop. The tile stays
             # in flight, so the next start runs it again.
@@ -697,11 +695,14 @@ class _TileRun:
                 finished, skipped = 0, 1
             else:
                 finished, skipped = 1, 0
+            fresh, kept = self._keep(tile, rows)
             self._settle(tile, fresh, kept, finished, skipped, blocked)
             self._report(tile, outcome, rows)
             self._persist(scrape_id)
             self._summarize(keyword, final=True)
             return
+
+        fresh, kept = self._keep(tile, rows)
 
         if outcome.status == ScrapeStatus.FAILED:
             self._settle(tile, fresh, kept, 0, 1, False)

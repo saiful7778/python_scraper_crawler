@@ -86,6 +86,17 @@ def test_a_rate_limited_tile_is_requeued_and_runs_on_a_healthy_slot(arrange, red
     assert result.finished == 1 and result.blocked is False
 
 
+def test_a_requeued_tile_keeps_only_the_limit_from_its_last_attempt(arrange, redis):
+    env = arrange(
+        lambda kw, slot: blocked("a", "b") if slot == 0 else done("a", "b", "c")
+    )
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes"], proxies=PROXIES, limit=2)
+    )
+    assert env.slots_used_for("cafes") == [0, 1]
+    assert [r["title"] for r in result.rows] == ["a", "b"]
+
+
 def test_a_tile_never_runs_on_another_slots_proxy(arrange, redis):
     env = arrange(lambda kw, slot: proxy_failure() if slot == 0 else done(kw))
     PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"], proxies=PROXIES))
