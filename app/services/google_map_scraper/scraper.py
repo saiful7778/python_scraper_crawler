@@ -436,9 +436,11 @@ class PlaceScraper:
         job: PlaceJob = {
             "keyword": settings.keywords[0],
             "name": name,
-            "settings": settings.model_dump(by_alias=True, mode="json"),
-            "bounding_box": list(bounding_box) if bounding_box else None,
-            "cells": cast(list[dict] | None, cells),
+            "settings": cast(
+                SettingsData, settings.model_dump(by_alias=True, mode="json")
+            ),
+            "bounding_box": bounding_box,
+            "cells": cells,
             "next_cell": 0,
             "rows": [],
             "kept": [],
@@ -629,8 +631,8 @@ class PlaceScraper:
             f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, depth={query.scroll_depth}{deep_scan_note}"
         )
 
-        rows = cast(list[LeadRow], job["rows"])
-        kept = cast(list[LeadRow], job["kept"])
+        rows = job["rows"]
+        kept = job["kept"]
         finished = job["finished"]
         skipped = job["skipped"]
         blocked = False
@@ -644,11 +646,11 @@ class PlaceScraper:
                 raise KeyboardInterrupt()
             job.update(
                 next_cell=index,
-                rows=rows,
+                rows=job["rows"],
                 kept=kept,
                 finished=finished,
                 skipped=skipped,
-                cells=cast(list[dict], cells),
+                cells=cells,
             )
             queue.save(job)
             cell = cells[index]

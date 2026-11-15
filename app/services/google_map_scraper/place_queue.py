@@ -8,15 +8,16 @@ from redis.exceptions import RedisError
 from app.services.buffer.client import BufferError
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.utils.errors import describe
-from .scrape.scrape_types import LeadRow
+from .scrape.scrape_types import LeadRow, SettingsData
+from .google_map.geo import GridCell, BoundingBox
 
 
 class PlaceJob(TypedDict):
     keyword: str
     name: str
-    settings: dict
-    bounding_box: list[float] | None
-    cells: list[dict] | None
+    settings: SettingsData
+    bounding_box: BoundingBox | None
+    cells: list[GridCell] | None
     next_cell: int
     rows: list[LeadRow]
     kept: list[LeadRow]
