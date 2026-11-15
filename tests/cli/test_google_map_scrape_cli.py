@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 import pytest
@@ -59,3 +60,37 @@ def test_keywords_drop_blanks_and_repeats(monkeypatch: pytest.MonkeyPatch) -> No
         "coffee shops",
         "bakeries",
     ]
+
+
+def test_proxies_split_on_commas_and_drop_blanks_and_repeats():
+    from cli.google_map_scrape_cli import proxy_names
+
+    assert proxy_names(" http://a:1 , http://b:2,,http://a:1 ") == [
+        "http://a:1",
+        "http://b:2",
+    ]
+
+
+def test_empty_proxies_value_is_rejected():
+    from cli.google_map_scrape_cli import proxy_names
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        proxy_names(" , ")
+
+
+def test_dry_run_counts_comma_separated_proxies(monkeypatch, capsys):
+    import cli.google_map_scrape_cli as cli
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--proxies",
+            "http://a:1,http://b:2",
+            "--dry-run",
+        ],
+    )
+    cli.main()
+    assert "Proxies: 2" in capsys.readouterr().out
