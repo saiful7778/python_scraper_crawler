@@ -1,6 +1,10 @@
 import hashlib
 import json
 from typing import cast
+from uuid import UUID
+
+from asyncpg import InterfaceError
+from asyncpg.exceptions import PostgresConnectionError
 
 from app.constant import SOCIALS
 from app.models import (
@@ -13,9 +17,16 @@ from app.models import (
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.utils.errors import describe
+from app.utils.logger import get_logger
 
 from .base import BaseRepository
 from .lead_repository import LeadRepository, website_domain
+
+logger = get_logger(__name__)
+
+#: Errors meaning the PostgreSQL connection is gone; the caller reconnects and retries.
+CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
 
 PROFILE_TEXT_FIELDS = (
     "input_id",
@@ -129,6 +140,7 @@ class GoogleMapProfileRepository(BaseRepository):
         self._leads = leads
         self._model = GoogleMapProfileModel
         self._counters = {}
+        self._keyword_ids: dict[str, UUID] = {}
 
     async def _next_global_counter(self):
         value = self._counters.get(self._model)
@@ -155,14 +167,39 @@ class GoogleMapProfileRepository(BaseRepository):
         ]
 
     async def save_row(self, row: LeadRow, scrape_id: str) -> None:
+        profile = await self._save_parent(row)
+        await self._save_children([(row, profile)], scrape_id)
+
+    async def save_rows(self, rows: list[LeadRow], scrape_id: str) -> int:
+        """Save rows in order and return how many were saved from the start.
+
+        Each lead and profile is saved one by one, because a row can match one
+        stored earlier in the same batch. The keywords, hours, images and reviews
+        of all saved rows are then written in one bulk insert per table. A row
+        that fails stops the batch; the rows before it are kept.
+        """
+        saved: list[tuple[LeadRow, object]] = []
+        for row in rows:
+            try:
+                saved.append((row, await self._save_parent(row)))
+            except CONNECTION_LOST:
+                raise
+            except Exception as error:
+                logger.error(
+                    "saving a lead of scrape %s failed; it and the rows after it stay in Redis: %s",
+                    scrape_id,
+                    describe(error),
+                    exc_info=error,
+                )
+                break
+        await self._save_children(saved, scrape_id)
+        return len(saved)
+
+    async def _save_parent(self, row: LeadRow):
         existing = await self._find_profile(row)
         lead = await self._save_lead(row, existing)
         await self._leads.add_children(lead, _children(row))
-        profile = await self._save_profile(row, lead, existing)
-        await self._save_keyword(profile, row, scrape_id)
-        await self._save_hours(profile, row)
-        await self._save_images(profile, row)
-        await self._save_reviews(profile, row)
+        return await self._save_profile(row, lead, existing)
 
     async def _find_profile(self, row: LeadRow):
         place_id = row.get("place_id")
@@ -199,60 +236,50 @@ class GoogleMapProfileRepository(BaseRepository):
         await profile.save()
         return profile
 
-    async def _save_keyword(self, profile, row: LeadRow, scrape_id: str) -> None:
-        name = row.get("input_id", "").strip()
-        if not name:
-            return
-        keyword, _ = await KeywordModel.get_or_create(
-            name_key=name.lower(),
-            defaults={"name": name},
-        )
-        await self.insert_ignoring_conflicts(
-            GoogleMapKeyword,
-            [
-                GoogleMapKeyword(
-                    google_map_id=profile.id,
-                    keyword_id=keyword.id,
-                    scrape_id=scrape_id,
-                )
-            ],
-        )
+    async def _keyword_id(self, name: str) -> UUID:
+        key = name.lower()
+        keyword_id = self._keyword_ids.get(key)
+        if keyword_id is None:
+            keyword, _ = await KeywordModel.get_or_create(
+                name_key=key,
+                defaults={"name": name},
+            )
+            keyword_id = self._keyword_ids[key] = keyword.id
+        return keyword_id
 
-    async def _save_hours(self, profile, row: LeadRow) -> None:
-        spans = _hour_spans(_json(row.get("open_hours", "")))
-        await self.insert_ignoring_conflicts(
-            GoogleMapProfileHourModel,
-            [
+    async def _save_children(
+        self, saved: list[tuple[LeadRow, object]], scrape_id: str
+    ) -> None:
+        keywords: list[GoogleMapKeyword] = []
+        hours: list[GoogleMapProfileHourModel] = []
+        images: list[GoogleMapProfileImageModel] = []
+        reviews: list[GoogleMapProfileReviewModel] = []
+        for row, profile in saved:
+            name = row.get("input_id", "").strip()
+            if name:
+                keywords.append(
+                    GoogleMapKeyword(
+                        google_map_id=profile.id,
+                        keyword_id=await self._keyword_id(name),
+                        scrape_id=scrape_id,
+                    )
+                )
+            hours += [
                 GoogleMapProfileHourModel(
                     google_map_id=profile.id, day=day, position=position, span=span
                 )
-                for day, position, span in spans
-            ],
-        )
-
-    async def _save_images(self, profile, row: LeadRow) -> None:
-        images = [
-            image
-            for image in _list(row.get("images", ""))
-            if isinstance(image, dict) and image.get("image")
-        ]
-        await self.insert_ignoring_conflicts(
-            GoogleMapProfileImageModel,
-            [
+                for day, position, span in _hour_spans(_json(row.get("open_hours", "")))
+            ]
+            images += [
                 GoogleMapProfileImageModel(
                     google_map_id=profile.id,
                     url=image["image"],
                     title=image.get("title") or None,
                 )
-                for image in images
-            ],
-        )
-
-    async def _save_reviews(self, profile, row: LeadRow) -> None:
-        reviews = [r for r in _list(row.get("user_reviews", "")) if isinstance(r, dict)]
-        await self.insert_ignoring_conflicts(
-            GoogleMapProfileReviewModel,
-            [
+                for image in _list(row.get("images", ""))
+                if isinstance(image, dict) and image.get("image")
+            ]
+            reviews += [
                 GoogleMapProfileReviewModel(
                     google_map_id=profile.id,
                     rating=review.get("Rating"),
@@ -260,9 +287,13 @@ class GoogleMapProfileRepository(BaseRepository):
                     description=review.get("Description") or None,
                     content_hash=review_hash(review),
                 )
-                for review in reviews
-            ],
-        )
+                for review in _list(row.get("user_reviews", ""))
+                if isinstance(review, dict)
+            ]
+        await self.insert_ignoring_conflicts(GoogleMapKeyword, keywords)
+        await self.insert_ignoring_conflicts(GoogleMapProfileHourModel, hours)
+        await self.insert_ignoring_conflicts(GoogleMapProfileImageModel, images)
+        await self.insert_ignoring_conflicts(GoogleMapProfileReviewModel, reviews)
 
     async def _linked_lead(self, profile):
         if profile is None:

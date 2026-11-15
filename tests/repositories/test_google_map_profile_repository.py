@@ -46,8 +46,12 @@ async def test_saving_a_row_without_place_id_twice_creates_one_profile_and_lead(
 
 
 async def test_a_second_business_on_a_taken_domain_gets_its_own_lead(db, repo):
-    await repo.save_row({"place_id": "p1", "title": "Cafe A", "website": "https://a.com"}, "s1")
-    await repo.save_row({"place_id": "p2", "title": "Cafe B", "website": "https://a.com"}, "s1")
+    await repo.save_row(
+        {"place_id": "p1", "title": "Cafe A", "website": "https://a.com"}, "s1"
+    )
+    await repo.save_row(
+        {"place_id": "p2", "title": "Cafe B", "website": "https://a.com"}, "s1"
+    )
     assert await LeadModel.all().count() == 2
     assert await GoogleMapProfileModel.filter(lead__website_domain=None).count() == 1
 
@@ -112,3 +116,58 @@ async def test_saving_a_row_stores_one_hour_per_time_range(db, repo):
         ("Monday", 1, "6 PM-9 PM"),
         ("Tuesday", 0, "Closed"),
     ]
+
+
+async def test_save_rows_writes_every_row_and_its_children(db, repo):
+    rows = [
+        {
+            "place_id": "p1",
+            "title": "Cafe A",
+            "input_id": "coffee",
+            "open_hours": json.dumps({"Mon": ["9-5"]}),
+            "images": json.dumps([{"image": "https://img/1.jpg", "title": "front"}]),
+            "user_reviews": json.dumps([{"Rating": 5, "Description": "great"}]),
+        },
+        {"place_id": "p2", "title": "Cafe B", "input_id": "coffee"},
+    ]
+    assert await repo.save_rows(rows, scrape_id="s1") == 2
+    assert await GoogleMapProfileModel.all().count() == 2
+    assert await GoogleMapKeyword.all().count() == 2
+    assert await KeywordModel.filter(name_key="coffee").count() == 1
+    assert await GoogleMapProfileHourModel.all().count() == 1
+    assert await GoogleMapProfileImageModel.all().count() == 1
+    assert await GoogleMapProfileReviewModel.all().count() == 1
+
+
+async def test_save_rows_twice_creates_nothing_new(db, repo):
+    rows = [
+        {"place_id": "p1", "title": "Cafe A", "input_id": "coffee"},
+        {"place_id": "p2", "title": "Cafe B", "input_id": "coffee"},
+    ]
+    await repo.save_rows(rows, scrape_id="s1")
+    await repo.save_rows(rows, scrape_id="s1")
+    assert await GoogleMapProfileModel.all().count() == 2
+    assert await GoogleMapKeyword.all().count() == 2
+    assert await LeadModel.all().count() == 2
+
+
+async def test_save_rows_keeps_the_rows_before_a_failing_one(db, repo):
+    rows = [
+        {"place_id": "p1", "title": "Cafe A"},
+        {"place_id": "p2", "title": "Cafe B", "cid": "7"},
+        {"place_id": "p3", "title": None, "website": None},
+    ]
+    real = repo._save_parent
+    calls = []
+
+    async def failing_on_second(row):
+        calls.append(row["place_id"])
+        if row["place_id"] == "p2":
+            raise ValueError("bad row")
+        return await real(row)
+
+    repo._save_parent = failing_on_second
+    assert await repo.save_rows(rows, scrape_id="s1") == 1
+    assert calls == ["p1", "p2"]
+    assert await GoogleMapProfileModel.filter(place_id="p1").count() == 1
+    assert await GoogleMapProfileModel.filter(place_id="p2").count() == 0
