@@ -319,6 +319,7 @@ class PlaceScraper:
         self._redis = redis or connect(RedisConfig())
         self._salvage: list[LeadRow] = []
         self._stop = False
+        self._cancel = threading.Event()
 
     @property
     def salvage_rows(self) -> list[LeadRow]:
@@ -398,11 +399,15 @@ class PlaceScraper:
         anchored = settings.model_copy(
             update={"latitude": float(lat), "longitude": float(lon)}
         )
-        for keyword in query.keywords:
-            # the scrape name is what the web UI lists
-            name = f"{keyword} @ {place}"[:80]
-            kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
-            self._scrape_keyword(query, kw_settings, name, bounding_box, queue)
+        try:
+            for keyword in query.keywords:
+                # the scrape name is what the web UI lists
+                name = f"{keyword} @ {place}"[:80]
+                kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
+                self._scrape_keyword(query, kw_settings, name, bounding_box, queue)
+        except BaseException:
+            queue.clear()  # a partly queued run must not be resumed as if it were whole
+            raise
         return None
 
     def _scrape_keyword(
@@ -441,6 +446,7 @@ class PlaceScraper:
     ) -> ScrapeResult:
         """Run the queued jobs one at a time, first in first out, until the queue is empty or a job stops the run."""
         self._stop = False
+        self._cancel.clear()
         total = len(query.keywords)
         while (job := queue.peek()) is not None:
             earlier = queue.done()
@@ -497,7 +503,13 @@ class PlaceScraper:
             target=target, name=f"place-job-{job['keyword']}", daemon=True
         )
         thread.start()
-        thread.join()
+        try:
+            thread.join()
+        except KeyboardInterrupt:
+            # let the cell in flight finish; the job stops before the next one
+            self._cancel.set()
+            thread.join()
+            raise
         if "error" in failure:
             raise failure["error"]
         return outcome["done"]
@@ -513,6 +525,8 @@ class PlaceScraper:
 
         :raises UnsavedLeadsError: If the scrape's leads stay unsaved in Redis.
         """
+        if self._cancel.is_set():
+            raise KeyboardInterrupt()
         settings = ScrapeSettings.model_validate(job["settings"])
         name = job["name"]
         print(
@@ -599,6 +613,8 @@ class PlaceScraper:
 
         # Sequential on purpose: never run parallel scrapes against Google.
         while index < len(cells):
+            if self._cancel.is_set():
+                raise KeyboardInterrupt()
             job.update(
                 next_cell=index,
                 rows=rows,
