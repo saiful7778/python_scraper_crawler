@@ -76,13 +76,13 @@ def test_finalize_rows_applies_the_limit():
 
 
 def test_final_flush_has_no_time_limit():
-    import app.services.google_map_scraper.scraper as scraper
+    from app.services.google_map_scraper import scraper
 
     assert not hasattr(scraper, "_FINAL_FLUSH_SECONDS")
 
 
 def test_grid_stops_when_a_tiles_leads_stay_unsaved(monkeypatch):
-    import app.services.google_map_scraper.scraper as scraper
+    from app.services.google_map_scraper import scraper
     from app.services.google_map_scraper.scraper import PlaceScraper, UnsavedLeadsError
 
     calls = []
