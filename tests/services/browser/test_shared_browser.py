@@ -15,11 +15,13 @@ def fake_browser_cls(monkeypatch: pytest.MonkeyPatch):
     class FakeBrowser:
         created = 0
         last = None
+        kill_error: Exception | None = None
 
         def __init__(self, lang, headless):
             type(self).created += 1
             type(self).last = self
             self.cdp = FakeCDP()
+            self.killed = False
 
         @property
         def closed(self) -> bool:
@@ -29,6 +31,9 @@ def fake_browser_cls(monkeypatch: pytest.MonkeyPatch):
             self.cdp.closed = True
 
         def kill(self) -> None:
+            self.killed = True
+            if type(self).kill_error is not None:
+                raise type(self).kill_error
             self.cdp.closed = True
 
     monkeypatch.setattr(shared_browser, "Browser", FakeBrowser)
@@ -37,24 +42,58 @@ def fake_browser_cls(monkeypatch: pytest.MonkeyPatch):
 
 def test_shared_browser_starts_one_browser_for_two_sessions(fake_browser_cls):
     shared = SharedBrowser("en", True)
-    a, b = BrowserSession("en", True, shared=shared), BrowserSession("en", True, shared=shared)
-    a.start(); b.start()
+    a = BrowserSession("en", True, shared=shared)
+    b = BrowserSession("en", True, shared=shared)
+    a.start()
+    b.start()
     assert fake_browser_cls.created == 1
     assert a.browser is b.browser
 
 
 def test_closing_one_attached_session_keeps_the_browser_for_the_other(fake_browser_cls):
     shared = SharedBrowser("en", True)
-    a, b = BrowserSession("en", True, shared=shared), BrowserSession("en", True, shared=shared)
-    a.start(); b.start()
-    a.close(); a.kill()
-    assert b.browser is not None and not b.browser.closed
+    a = BrowserSession("en", True, shared=shared)
+    b = BrowserSession("en", True, shared=shared)
+    a.start()
+    b.start()
+    a.close()
+    a.kill()
+    assert b.browser is not None
+    assert not b.browser.closed
 
 
 def test_restart_after_a_crash_starts_one_new_browser(fake_browser_cls):
     shared = SharedBrowser("en", True)
-    a, b = BrowserSession("en", True, shared=shared), BrowserSession("en", True, shared=shared)
-    a.start(); b.start()
+    a = BrowserSession("en", True, shared=shared)
+    b = BrowserSession("en", True, shared=shared)
+    a.start()
+    b.start()
     fake_browser_cls.last.cdp.closed = True
-    a.restart(); b.restart()
+    a.restart()
+    b.restart()
+    assert fake_browser_cls.created == 2
+
+
+def test_restart_kills_the_old_browser_before_replacing_it(fake_browser_cls):
+    shared = SharedBrowser("en", True)
+    a = BrowserSession("en", True, shared=shared)
+    a.start()
+    old = a.browser
+    old.cdp.closed = True
+    a.restart()
+    assert old.killed
+    assert a.browser is not old
+    assert fake_browser_cls.created == 2
+
+
+def test_restart_still_replaces_the_browser_when_kill_fails(fake_browser_cls):
+    fake_browser_cls.kill_error = OSError("already gone")
+    shared = SharedBrowser("en", True)
+    a = BrowserSession("en", True, shared=shared)
+    a.start()
+    old = a.browser
+    old.cdp.closed = True
+    a.restart()
+    assert old.killed
+    assert a.browser is not old
     assert fake_browser_cls.created == 2

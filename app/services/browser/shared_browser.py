@@ -2,10 +2,15 @@
 
 import threading
 
+from app.utils.logger import get_logger
+
 from .browser import Browser
 
+logger = get_logger(__name__)
 
-def _is_dead(browser: Browser | None) -> bool:
+
+def browser_is_dead(browser: Browser | None) -> bool:
+    """True when there is no browser or its connection has closed."""
     return bool(browser is None or browser.cdp is None or browser.cdp.closed)
 
 
@@ -26,17 +31,21 @@ class SharedBrowser:
     def ensure(self) -> Browser:
         """Start the shared browser if none is running and return it."""
         with self._lock:
-            if _is_dead(self._browser):
-                self._browser = Browser(lang=self._locale, headless=self._headless)
+            if browser_is_dead(self._browser):
+                self._replace(self._browser)
             return self._browser
 
     def restart_if_dead(self, seen: Browser | None) -> Browser:
         """Replace the browser the caller saw die, unless a sibling already did."""
         with self._lock:
             current = self._browser
-            if current is not None and current is not seen and not _is_dead(current):
+            if (
+                current is not None
+                and current is not seen
+                and not browser_is_dead(current)
+            ):
                 return current
-            self._browser = Browser(lang=self._locale, headless=self._headless)
+            self._replace(current)
             return self._browser
 
     def close(self) -> None:
@@ -47,3 +56,16 @@ class SharedBrowser:
                     self._browser.close()
                 finally:
                     self._browser = None
+
+    def _replace(self, old: Browser | None) -> None:
+        """Kill ``old`` so its process is not orphaned, then launch a new browser."""
+        self._browser = None
+        if old is not None:
+            try:
+                old.kill()
+            except Exception:
+                logger.warning("could not kill the dead shared browser", exc_info=True)
+        self._browser = self._launch()
+
+    def _launch(self) -> Browser:
+        return Browser(lang=self._locale, headless=self._headless)
