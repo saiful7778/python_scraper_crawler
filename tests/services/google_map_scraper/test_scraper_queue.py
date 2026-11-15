@@ -164,18 +164,25 @@ def test_a_listener_interrupt_sets_the_cancel_event_and_waits_for_the_job(monkey
 
     scraper = PlaceScraper(redis)
     real_join = threading.Thread.join
+    gate = threading.Event()
+    started = threading.Event()
     interrupted = []
+    calls = []
 
     def join_once_interrupted(self, timeout=None):
-        if self.name.startswith("place-job-") and not interrupted:
-            interrupted.append(True)
-            raise KeyboardInterrupt()
+        if self.name.startswith("place-job-"):
+            if not interrupted:
+                interrupted.append(True)
+                assert started.wait(timeout=5)  # the first cell is in flight
+                raise KeyboardInterrupt()
+            assert scraper._cancel.is_set()
+            gate.set()  # the first cell may only finish after the cancel is set
         return real_join(self, timeout)
-
-    calls = []
 
     def fake_run(name, settings, **_):
         calls.append(settings.latitude)
+        started.set()
+        assert gate.wait(timeout=5)
         return RunResult("id", ScrapeStatus.OK, "", [], False)
 
     monkeypatch.setattr(threading.Thread, "join", join_once_interrupted)
@@ -184,7 +191,7 @@ def test_a_listener_interrupt_sets_the_cancel_event_and_waits_for_the_job(monkey
     with pytest.raises(KeyboardInterrupt):
         scraper.scrape(_query(grid=2, keywords=["cafes"]))
     assert scraper._cancel.is_set()
-    assert len(calls) <= 1  # the job stopped at its next cell instead of running on
+    assert len(calls) == 1  # the job stopped at its next cell instead of running on
     assert redis.keys("place_queue:*")
 
 
@@ -205,3 +212,19 @@ def test_a_failed_enqueue_leaves_no_queue(monkeypatch, redis):
     with pytest.raises(BufferError):
         PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert not redis.keys("place_queue:*")
+
+
+def test_a_failed_clear_after_a_failed_enqueue_keeps_the_original_error(monkeypatch, redis):
+    from app.services.google_map_scraper.place_queue import PlaceJobQueue
+
+    def enqueue_fails(self, job):
+        raise BufferError("enqueue down")
+
+    def clear_fails(self):
+        raise BufferError("clear down")
+
+    monkeypatch.setattr(PlaceJobQueue, "enqueue", enqueue_fails)
+    monkeypatch.setattr(PlaceJobQueue, "clear", clear_fails)
+    monkeypatch.setattr(scraper_module, "get_geocode", lambda *a, **k: (1.0, 2.0))
+    with pytest.raises(BufferError, match="enqueue down"):
+        PlaceScraper(redis).scrape(_query(keywords=["cafes"]))

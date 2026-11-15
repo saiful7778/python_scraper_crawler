@@ -406,7 +406,11 @@ class PlaceScraper:
                 kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
                 self._scrape_keyword(query, kw_settings, name, bounding_box, queue)
         except BaseException:
-            queue.clear()  # a partly queued run must not be resumed as if it were whole
+            # a partly queued run must not be resumed as if it were whole
+            try:
+                queue.clear()
+            except Exception:
+                logger.exception("clearing the partly queued place run failed")
             raise
         return None
 
