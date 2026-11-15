@@ -97,3 +97,20 @@ def test_restart_still_replaces_the_browser_when_kill_fails(fake_browser_cls):
     assert old.killed
     assert a.browser is not old
     assert fake_browser_cls.created == 2
+
+
+def test_a_sibling_opens_its_tab_on_the_browser_another_session_restarted(
+    fake_browser_cls,
+):
+    shared = SharedBrowser("en", True)
+    a = BrowserSession("en", True, shared=shared)
+    b = BrowserSession("en", True, shared=shared)
+    a.start()
+    b.start()
+    dead = fake_browser_cls.last
+    dead.cdp.closed = True
+    a.restart()
+    fresh = fake_browser_cls.last
+    assert fresh is not dead
+    assert b.is_dead is False
+    assert b.open_tab(None)._browser is fresh

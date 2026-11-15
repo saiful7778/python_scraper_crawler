@@ -50,10 +50,16 @@ class BrowserSession:
         self.start()
 
     def open_tab(self, proxy: str | None) -> ProxyTab:
-        """Return a :class:`ProxyTab` for ``proxy`` in this browser."""
-        if self._browser is None:
+        """Return a :class:`ProxyTab` for ``proxy`` in this browser.
+
+        In shared mode a sibling may have restarted the browser, so the tab is
+        opened on the current one and this session re-attaches to it.
+        """
+        browser = self.browser
+        if browser is None:
             raise BrowserError("cannot open a tab: the browser is not started")
-        return ProxyTab(self._browser, proxy)
+        self._browser = browser
+        return ProxyTab(browser, proxy)
 
     def kill(self) -> None:
         """Kill the Browser process at once, for a watchdog or shutdown."""
