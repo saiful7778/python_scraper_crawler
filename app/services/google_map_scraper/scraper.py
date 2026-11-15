@@ -378,7 +378,9 @@ class PlaceScraper:
                     return _no_bounding_box(query)
                 bounding_box = parse_bounding_box(place, raw_box)
                 south, north, west, east = bounding_box
-                print(f"\t→ bbox S{south} N{north} W{west} E{east}, {query.grid}x{query.grid} tiles")
+                print(
+                    f"\t→ bbox S{south} N{north} W{west} E{east}, {query.grid}x{query.grid} tiles"
+                )
                 logger.info("geocoded %r: %dx%d grid", place, query.grid, query.grid)
             else:
                 found_point = get_geocode(place, country=query.country)
@@ -426,7 +428,11 @@ class PlaceScraper:
 
         :raises BufferError: If Redis fails.
         """
-        cells = build_grid_cells(bounding_box, query.grid) if query.grid and bounding_box else None
+        cells = (
+            build_grid_cells(bounding_box, query.grid)
+            if query.grid and bounding_box
+            else None
+        )
         job: PlaceJob = {
             "keyword": settings.keywords[0],
             "name": name,
@@ -458,7 +464,9 @@ class PlaceScraper:
             saved = cast(
                 list[LeadRow], [row for item in earlier for row in item["kept"]]
             )
-            known = known_keys | frozenset(key for row in saved for key in lead_keys(row))
+            known = known_keys | frozenset(
+                key for row in saved for key in lead_keys(row)
+            )
             self._salvage = saved
             done = self._run_job(query, job, queue, known, saved)
             queue.complete(done)
@@ -466,7 +474,9 @@ class PlaceScraper:
                 break
 
         results = queue.done()
-        all_kept = cast(list[LeadRow], [row for item in results for row in item["kept"]])
+        all_kept = cast(
+            list[LeadRow], [row for item in results for row in item["kept"]]
+        )
         finished = sum(item["finished"] for item in results)
         skipped = sum(item["skipped"] for item in results)
         blocked = any(item["blocked"] for item in results)
@@ -569,8 +579,18 @@ class PlaceScraper:
         if result.status == ScrapeStatus.FAILED:
             logger.warning("single scrape failed: %s", result.note)
             print(f"✗ {result.note}")
-            return {"kept": kept, "finished": 0, "skipped": 1, "blocked": result.blocked}
-        return {"kept": kept, "finished": 1, "skipped": 0, "blocked": result.blocked}
+            return {
+                "kept": kept,
+                "finished": 0,
+                "skipped": 1,
+                "blocked": result.blocked,
+            }
+        return {
+            "kept": kept,
+            "finished": 1,
+            "skipped": 0,
+            "blocked": result.blocked,
+        }
 
     def _scrape_grid(
         self,
@@ -590,7 +610,9 @@ class PlaceScraper:
         """
         settings = ScrapeSettings.model_validate(job["settings"])
         name = job["name"]
-        assert job["bounding_box"] is not None  # Grid jobs carry the resolved bounding box.
+        assert (
+            job["bounding_box"] is not None
+        )  # Grid jobs carry the resolved bounding box.
         assert job["cells"] is not None
         south, north, west, east = job["bounding_box"]
         bounding_box: BoundingBox = (south, north, west, east)
@@ -731,7 +753,7 @@ class PlaceScraper:
 
         self._stop = self._stop or blocked or lost_chrome
         return {
-            "kept": cast(list[dict], kept),
+            "kept": kept,
             "finished": finished,
             "skipped": skipped,
             "blocked": blocked,

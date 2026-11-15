@@ -8,6 +8,7 @@ from redis.exceptions import RedisError
 from app.services.buffer.client import BufferError
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.utils.errors import describe
+from .scrape.scrape_types import LeadRow
 
 
 class PlaceJob(TypedDict):
@@ -17,14 +18,14 @@ class PlaceJob(TypedDict):
     bounding_box: list[float] | None
     cells: list[dict] | None
     next_cell: int
-    rows: list[dict]
-    kept: list[dict]
+    rows: list[LeadRow]
+    kept: list[LeadRow]
     finished: int
     skipped: int
 
 
 class DoneKeyword(TypedDict):
-    kept: list[dict]
+    kept: list[LeadRow]
     finished: int
     skipped: int
     blocked: bool
@@ -47,7 +48,9 @@ class PlaceJobQueue:
         try:
             return bool(self._redis.exists(self._jobs_key, self._done_key))
         except RedisError as error:
-            raise BufferError(f"could not check place run: {describe(error)}") from error
+            raise BufferError(
+                f"could not check place run: {describe(error)}"
+            ) from error
 
     def enqueue(self, job: PlaceJob) -> None:
         try:
@@ -56,7 +59,9 @@ class PlaceJobQueue:
             pipe.expire(self._jobs_key, self._ttl_seconds)
             pipe.execute()
         except RedisError as error:
-            raise BufferError(f"could not enqueue place job: {describe(error)}") from error
+            raise BufferError(
+                f"could not enqueue place job: {describe(error)}"
+            ) from error
 
     def peek(self) -> PlaceJob | None:
         try:
@@ -84,16 +89,24 @@ class PlaceJobQueue:
             pipe.expire(self._jobs_key, self._ttl_seconds)
             pipe.execute()
         except RedisError as error:
-            raise BufferError(f"could not complete place job: {describe(error)}") from error
+            raise BufferError(
+                f"could not complete place job: {describe(error)}"
+            ) from error
 
     def done(self) -> list[DoneKeyword]:
         try:
-            return [json.loads(raw) for raw in self._redis.lrange(self._done_key, 0, -1)]
+            return [
+                json.loads(raw) for raw in self._redis.lrange(self._done_key, 0, -1)
+            ]
         except RedisError as error:
-            raise BufferError(f"could not read finished place jobs: {describe(error)}") from error
+            raise BufferError(
+                f"could not read finished place jobs: {describe(error)}"
+            ) from error
 
     def clear(self) -> None:
         try:
             self._redis.delete(self._jobs_key, self._done_key)
         except RedisError as error:
-            raise BufferError(f"could not clear place run: {describe(error)}") from error
+            raise BufferError(
+                f"could not clear place run: {describe(error)}"
+            ) from error
