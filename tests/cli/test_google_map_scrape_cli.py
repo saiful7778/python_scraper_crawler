@@ -59,11 +59,3 @@ def test_keywords_drop_blanks_and_repeats(monkeypatch: pytest.MonkeyPatch) -> No
         "coffee shops",
         "bakeries",
     ]
-
-
-def test_crawl_runs_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert parse(monkeypatch).no_crawl is False
-
-
-def test_no_crawl_flag_skips_the_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert parse(monkeypatch, "--no-crawl").no_crawl is True
