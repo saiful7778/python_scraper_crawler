@@ -1,5 +1,6 @@
 """Scrapes the keywords in one city, as a single scrape or a grid of scrapes, and stores the leads."""
 
+import threading
 import time
 from typing import cast
 
@@ -27,6 +28,7 @@ from .google_map.geo import (
     get_geocode,
     is_in_bounding_box,
 )
+from .place_queue import DoneKeyword, PlaceJob, PlaceJobQueue
 from .place_query import PlaceQuery
 from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
@@ -311,10 +313,13 @@ def run_scrape(
 
 
 class PlaceScraper:
-    """Scrapes the keywords in one city, one scrape per keyword, each as a single scrape or a grid."""
+    """Scrapes the keywords in one city, one queued job per keyword, each as a single scrape or a grid."""
 
-    def __init__(self) -> None:
+    def __init__(self, redis: Redis | None = None) -> None:
+        self._redis = redis or connect(RedisConfig())
         self._salvage: list[LeadRow] = []
+        self._stop = False
+        self._cancel = threading.Event()
 
     @property
     def salvage_rows(self) -> list[LeadRow]:
@@ -324,10 +329,30 @@ class PlaceScraper:
     def scrape(
         self, query: PlaceQuery, known_keys: frozenset[str] = frozenset()
     ) -> ScrapeResult:
-        settings = query.engine_settings()
-        columns = result_columns(settings)
-        self._salvage = []
+        """Queue one job per keyword, or resume the queue an earlier run of this query left, and run it.
 
+        The queue is deleted when the run ends or a rate limit or lost Chrome
+        connection stops it. A crash or an exception leaves it for the next run.
+        """
+        columns = result_columns(query.engine_settings())
+        self._salvage = []
+        queue = PlaceJobQueue(self._redis, query, BUFFER_TTL_SECONDS)
+
+        if queue.exists():
+            logger.info("resuming the unfinished place run for %r", query.keywords)
+            print("▶ Resuming the unfinished run of this command")
+        else:
+            early = self._enqueue_run(query, columns, queue)
+            if early is not None:
+                return early
+
+        return self._listen(query, known_keys, columns, queue)
+
+    def _enqueue_run(
+        self, query: PlaceQuery, columns: list[str], queue: PlaceJobQueue
+    ) -> ScrapeResult | None:
+        """Geocode the city and queue one job per keyword; a result means the run ends here."""
+        settings = query.engine_settings()
         place = ", ".join(part for part in (query.city, query.state) if part)
 
         logger.info(
@@ -374,29 +399,78 @@ class PlaceScraper:
         anchored = settings.model_copy(
             update={"latitude": float(lat), "longitude": float(lon)}
         )
+        try:
+            for keyword in query.keywords:
+                # the scrape name is what the web UI lists
+                name = f"{keyword} @ {place}"[:80]
+                kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
+                self._scrape_keyword(query, kw_settings, name, bounding_box, queue)
+        except BaseException:
+            # a partly queued run must not be resumed as if it were whole
+            try:
+                queue.clear()
+            except Exception:
+                logger.exception("clearing the partly queued place run failed")
+            raise
+        return None
 
-        all_kept: list[LeadRow] = []
-        known = known_keys
-        finished = skipped = 0
-        blocked = False
+    def _scrape_keyword(
+        self,
+        query: PlaceQuery,
+        settings: ScrapeSettings,
+        name: str,
+        bounding_box: BoundingBox | None,
+        queue: PlaceJobQueue,
+    ) -> None:
+        """Queue one keyword as a job, with a grid of cells when the query has a grid.
+
+        :raises BufferError: If Redis fails.
+        """
+        cells = build_grid_cells(bounding_box, query.grid) if query.grid and bounding_box else None
+        job: PlaceJob = {
+            "keyword": settings.keywords[0],
+            "name": name,
+            "settings": settings.model_dump(by_alias=True, mode="json"),
+            "bounding_box": list(bounding_box) if bounding_box else None,
+            "cells": cast(list[dict] | None, cells),
+            "next_cell": 0,
+            "rows": [],
+            "kept": [],
+            "finished": 0,
+            "skipped": 0,
+        }
+        queue.enqueue(job)
+
+    def _listen(
+        self,
+        query: PlaceQuery,
+        known_keys: frozenset[str],
+        columns: list[str],
+        queue: PlaceJobQueue,
+    ) -> ScrapeResult:
+        """Run the queued jobs one at a time, first in first out, until the queue is empty or a job stops the run."""
+        self._stop = False
+        self._cancel.clear()
         total = len(query.keywords)
-
-        for number, keyword in enumerate(query.keywords, 1):
-            print(f"▶ Keyword {number}/{total}: {keyword}")
-            # the scrape name is what the web UI lists
-            name = f"{keyword} @ {place}"[:80]
-            kw_settings = anchored.model_copy(update={"keywords": (keyword,)})
-            kept, kw_finished, kw_skipped, kw_blocked, stop = self._scrape_keyword(
-                query, kw_settings, name, bounding_box, known, all_kept
+        while (job := queue.peek()) is not None:
+            earlier = queue.done()
+            print(f"▶ Keyword {len(earlier) + 1}/{total}: {job['keyword']}")
+            saved = cast(
+                list[LeadRow], [row for item in earlier for row in item["kept"]]
             )
-            all_kept.extend(kept)
-            known = known | frozenset(key for row in kept for key in lead_keys(row))
-            finished += kw_finished
-            skipped += kw_skipped
-            blocked = blocked or kw_blocked
-            if stop:
+            known = known_keys | frozenset(key for row in saved for key in lead_keys(row))
+            self._salvage = saved
+            done = self._run_job(query, job, queue, known, saved)
+            queue.complete(done)
+            if done["blocked"] or self._stop:
                 break
 
+        results = queue.done()
+        all_kept = cast(list[LeadRow], [row for item in results for row in item["kept"]])
+        finished = sum(item["finished"] for item in results)
+        skipped = sum(item["skipped"] for item in results)
+        blocked = any(item["blocked"] for item in results)
+        queue.clear()
         logger.info(
             "keywords done: %d finished, %d skipped, blocked=%s, %d kept",
             finished,
@@ -406,65 +480,124 @@ class PlaceScraper:
         )
         return ScrapeResult(all_kept, columns, finished, skipped, blocked)
 
-    def _scrape_keyword(
+    def _run_job(
         self,
         query: PlaceQuery,
-        settings: ScrapeSettings,
-        name: str,
-        bounding_box: BoundingBox | None,
+        job: PlaceJob,
+        queue: PlaceJobQueue,
         known_keys: frozenset[str],
         saved: list[LeadRow],
-    ) -> tuple[list[LeadRow], int, int, bool, bool]:
-        """Scrape one keyword, as a single scrape or as a grid of scrapes.
+    ) -> DoneKeyword:
+        """Run a job on its own thread, wait for it, and raise what it raised."""
+        outcome: dict[str, DoneKeyword] = {}
+        failure: dict[str, BaseException] = {}
 
-        Returns the kept rows, the finished and skipped counts, whether Google
-        rate-limited the keyword, and whether the run must stop after it.
-        ``saved`` holds the rows of the keywords before this one, for salvage.
+        def target() -> None:
+            try:
+                if job["cells"] is None:
+                    outcome["done"] = self._scrape_single(query, job, known_keys, saved)
+                else:
+                    outcome["done"] = self._scrape_grid(
+                        query, job, queue, known_keys, saved
+                    )
+            except BaseException as error:
+                failure["error"] = error
+
+        thread = threading.Thread(
+            target=target, name=f"place-job-{job['keyword']}", daemon=True
+        )
+        thread.start()
+        try:
+            thread.join()
+        except KeyboardInterrupt:
+            # let the cell in flight finish; the job stops before the next one
+            self._cancel.set()
+            print("⏸ Finishing the current cell, press Ctrl-C again to quit")
+            thread.join()
+            raise
+        if "error" in failure:
+            raise failure["error"]
+        return outcome["done"]
+
+    def _scrape_single(
+        self,
+        query: PlaceQuery,
+        job: PlaceJob,
+        known_keys: frozenset[str],
+        saved: list[LeadRow],
+    ) -> DoneKeyword:
+        """Scrape a job's keyword as one scrape, with no progress saved.
+
+        :raises UnsavedLeadsError: If the scrape's leads stay unsaved in Redis.
+        """
+        if self._cancel.is_set():
+            raise KeyboardInterrupt()
+        settings = ScrapeSettings.model_validate(job["settings"])
+        name = job["name"]
+        print(
+            f"▶ Creating scrape: 1 keyword @ {settings.latitude},{settings.longitude} depth={query.scroll_depth}"
+        )
+        logger.info("single scrape at %s,%s", settings.latitude, settings.longitude)
+        try:
+            result = run_scrape(name, settings, known_keys=known_keys)
+        except ScrapeDeletedError as exc:
+            print(f"\n⚠ keyword skipped: {describe(exc)}")
+            logger.warning("single scrape deleted: %s", describe(exc))
+            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
+        except CDPError as exc:
+            print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
+            logger.exception("single scrape stopped on a lost Chrome connection")
+            self._stop = True
+            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
+        except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
+            raise
+        except Exception as exc:
+            print(f"\n⚠ keyword skipped: {describe(exc)}")
+            logger.exception("single scrape skipped")
+            return {"kept": [], "finished": 0, "skipped": 1, "blocked": False}
+
+        kept = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
+        self._salvage = saved + kept
+        logger.info(
+            "single scrape: %d rows, %d kept after dedupe and filters",
+            len(result.rows),
+            len(kept),
+        )
+        if result.note:
+            logger.info("single scrape note: %s", result.note)
+            print(f"⚠ {result.note}")
+        if result.status == ScrapeStatus.FAILED:
+            logger.warning("single scrape failed: %s", result.note)
+            print(f"✗ {result.note}")
+            return {"kept": kept, "finished": 0, "skipped": 1, "blocked": result.blocked}
+        return {"kept": kept, "finished": 1, "skipped": 0, "blocked": result.blocked}
+
+    def _scrape_grid(
+        self,
+        query: PlaceQuery,
+        job: PlaceJob,
+        queue: PlaceJobQueue,
+        known_keys: frozenset[str],
+        saved: list[LeadRow],
+    ) -> DoneKeyword:
+        """Scrape a job's keyword as a grid of scrapes, saving the job before each cell.
+
         Each grid tile is limited by its own rows, and tiles dedupe against
-        each other and against ``known_keys``.
+        each other and against ``known_keys``. A job read back from the queue
+        starts at ``next_cell`` with the rows it had then.
 
         :raises UnsavedLeadsError: If a scrape's leads stay unsaved in Redis.
         """
-        if not query.grid:
-            print(
-                f"▶ Creating scrape: 1 keyword @ {settings.latitude},{settings.longitude} depth={query.scroll_depth}"
-            )
-            logger.info("single scrape at %s,%s", settings.latitude, settings.longitude)
-            try:
-                result = run_scrape(name, settings, known_keys=known_keys)
-            except ScrapeDeletedError as exc:
-                print(f"\n⚠ keyword skipped: {describe(exc)}")
-                logger.warning("single scrape deleted: %s", describe(exc))
-                return [], 0, 1, False, False
-            except CDPError as exc:
-                print(f"\n✗ Stopped: Chrome connection lost ({describe(exc)})")
-                logger.exception("single scrape stopped on a lost Chrome connection")
-                return [], 0, 1, False, True
-            except (BufferError, ScrapeDatabaseError, UnsavedLeadsError):
-                raise
-            except Exception as exc:
-                print(f"\n⚠ keyword skipped: {describe(exc)}")
-                logger.exception("single scrape skipped")
-                return [], 0, 1, False, False
-
-            kept = finalize_rows(dedupe_rows(result.rows, known_keys), query, None)
-            self._salvage = saved + kept
-            logger.info(
-                "single scrape: %d rows, %d kept after dedupe and filters",
-                len(result.rows),
-                len(kept),
-            )
-            if result.note:
-                logger.info("single scrape note: %s", result.note)
-                print(f"⚠ {result.note}")
-            if result.status == ScrapeStatus.FAILED:
-                logger.warning("single scrape failed: %s", result.note)
-                print(f"✗ {result.note}")
-                return kept, 0, 1, result.blocked, result.blocked
-            return kept, 1, 0, result.blocked, result.blocked
-
-        assert bounding_box is not None  # Grid queries require a resolved bounding box.
-        cells = build_grid_cells(bounding_box, query.grid)
+        settings = ScrapeSettings.model_validate(job["settings"])
+        name = job["name"]
+        assert job["bounding_box"] is not None  # Grid jobs carry the resolved bounding box.
+        assert job["cells"] is not None
+        south, north, west, east = job["bounding_box"]
+        bounding_box: BoundingBox = (south, north, west, east)
+        cells = cast(
+            list[GridCell],
+            [{**cell, "_bbox": tuple(cell["_bbox"])} for cell in job["cells"]],
+        )
         deep_scan_note = (
             " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
             if query.deep_scan
@@ -474,15 +607,28 @@ class PlaceScraper:
             f"▶ Grid {query.grid}x{query.grid}: {len(cells)} scrapes, one at a time, depth={query.scroll_depth}{deep_scan_note}"
         )
 
-        rows: list[LeadRow] = []
-        kept: list[LeadRow] = []
-        finished = skipped = 0
+        rows = cast(list[LeadRow], job["rows"])
+        kept = cast(list[LeadRow], job["kept"])
+        finished = job["finished"]
+        skipped = job["skipped"]
         blocked = False
         lost_chrome = False
-        index = 0
+        index = job["next_cell"]
+        self._salvage = saved + kept
 
         # Sequential on purpose: never run parallel scrapes against Google.
         while index < len(cells):
+            if self._cancel.is_set():
+                raise KeyboardInterrupt()
+            job.update(
+                next_cell=index,
+                rows=rows,
+                kept=kept,
+                finished=finished,
+                skipped=skipped,
+                cells=cast(list[dict], cells),
+            )
+            queue.save(job)
             cell = cells[index]
             index += 1
             sub_tag = " (sub-tile)" if cell.get("_sub") else ""
@@ -525,9 +671,11 @@ class PlaceScraper:
                 skipped += 1
                 continue
 
-            before = len(rows)
-            rows = dedupe_rows(rows + result.rows, known_keys)
-            kept.extend(finalize_rows(rows[before:], query, bounding_box))
+            # known_keys may already hold the leads this job saved before it was resumed
+            seen = known_keys | frozenset(key for row in rows for key in lead_keys(row))
+            fresh = dedupe_rows(result.rows, seen)
+            rows.extend(fresh)
+            kept.extend(finalize_rows(fresh, query, bounding_box))
             self._salvage = saved + kept
             if result.blocked:
                 blocked = True
@@ -581,4 +729,10 @@ class PlaceScraper:
         )
         print(f"{len(rows)} unique rows, {len(kept)} after the city box and filters")
 
-        return kept, finished, skipped, blocked, blocked or lost_chrome
+        self._stop = self._stop or blocked or lost_chrome
+        return {
+            "kept": cast(list[dict], kept),
+            "finished": finished,
+            "skipped": skipped,
+            "blocked": blocked,
+        }
