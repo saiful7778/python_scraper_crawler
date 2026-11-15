@@ -6,8 +6,8 @@ or touches PostgreSQL.
 """
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from app.services.google_map_scraper.scrape.scrape_run import RunOutcome
 from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus

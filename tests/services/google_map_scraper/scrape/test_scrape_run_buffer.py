@@ -198,9 +198,13 @@ def test_attached_run_does_not_kill_the_shared_browser(fake_redis, database):
     assert run._state.timed_out
 
 
-def test_redis_error_while_buffering_stops_the_scrape(fake_redis, database, monkeypatch):
+def test_redis_error_while_buffering_stops_the_scrape(
+    fake_redis, database, monkeypatch
+):
     settings = ScrapeSettings(keywords=("bakery", "cafe"))
-    scrape_id = database.create("bakery", settings.model_dump(by_alias=True, mode="json"))
+    scrape_id = database.create(
+        "bakery", settings.model_dump(by_alias=True, mode="json")
+    )
     run = ScrapeRun(database, database.get(scrape_id), True, fake_redis)
     collected = []
 

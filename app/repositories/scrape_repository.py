@@ -145,9 +145,7 @@ class ScrapeRepository(BaseRepository):
                 else:
                     scrape.resumes += 1
                     scrape.status = ScrapeStatus.PENDING
-                    await scrape.save(
-                        update_fields=["status", "resumes", "updated_at"]
-                    )
+                    await scrape.save(update_fields=["status", "resumes", "updated_at"])
                     resumed += 1
         return resumed, failed
 

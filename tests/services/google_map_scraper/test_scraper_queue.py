@@ -94,6 +94,14 @@ def test_a_tile_never_runs_on_another_slots_proxy(arrange, redis):
         assert tuple(env.settings_of(scrape_id)["proxies"]) == (PROXIES[slot],)
 
 
+def test_no_proxies_means_one_slot_without_proxy(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
+    assert env.slot_counts == [1]
+    assert env.submitted
+    assert all(tuple(env.settings_of(sid)["proxies"]) == () for sid, _ in env.submitted)
+
+
 def test_a_proxy_failure_stops_only_its_own_slot(arrange, redis):
     env = arrange(lambda kw, slot: proxy_failure() if slot == 0 else done("b"))
     result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], proxies=PROXIES))

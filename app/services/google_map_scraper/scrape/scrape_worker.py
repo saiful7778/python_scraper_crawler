@@ -150,7 +150,9 @@ class ScrapeWorker(threading.Thread):
         if run.outcome is not None:
             self._report(scrape, run.outcome, run)
 
-    def _report(self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun) -> None:
+    def _report(
+        self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun
+    ) -> None:
         logger.info(
             "scrape %s reported as %s with %d leads",
             scrape["ID"],
