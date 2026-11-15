@@ -16,6 +16,7 @@ from .cdp_error import CDPError
 from .downloader import download_headless_shell
 from .locator import ensure_engine_home, locate_chrome_binary, prune_stale_profiles
 from .proxy import ProxyAuthenticator, split_proxy_url
+from .shared_browser import SharedBrowser
 from .tab import BrowserTab, ProxyTab
 from .website import (
     RenderResult,
@@ -37,6 +38,7 @@ __all__ = [
     "ProxyTab",
     "RenderResult",
     "RenderStatus",
+    "SharedBrowser",
     "WebSocketClient",
     "WebSocketError",
     "check_renderer_available",

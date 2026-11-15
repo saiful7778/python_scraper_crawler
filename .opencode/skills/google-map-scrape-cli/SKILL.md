@@ -53,7 +53,7 @@ When the process exits, read the log for the `✗`, `⚠`, and final lead count 
 | `--grid N` | Split the city into N×N tiles, max 10, one scrape each, deduped. Gets past Google's ~120-result cap per search. |
 | `--deep-scan` | Runs the grid (3×3 unless `--grid` is set), then splits every tile that hits Google's cap (about 20 rows) into 4 smaller tiles. Up to 5× the tiles. Slow. Use only for whole-city runs. |
 | `--website-depth 1` | The only accepted value. Crawls the website for emails, socials, and tech. Any other value is rejected. |
-| `--proxy URL` | Repeatable. `http://[user:pass@]host:port`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. Scrapes take turns through the proxies. |
+| `--proxies URL,URL,...` | Comma-separated. Each entry is `http://[user:pass@]host:port`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. One tile runs per proxy at a time, so more proxies mean more tiles in parallel. |
 | `--has-phone`, `--has-website` | Keep only rows that have that field. |
 | `--limit N` | Stop at N rows. |
 | `--format csv\|json` | Default `csv`. CSV is UTF-8 with a BOM, so Excel opens it cleanly. |
@@ -67,7 +67,7 @@ When the process exits, read the log for the `✗`, `⚠`, and final lead count 
 - After scraping, leads are saved to the database, then written to the output file.
 - If the database save fails entirely, the CLI exits **without writing the file**. Individual rows that fail print `⚠ N lead(s) could not be saved` and the file is still written.
 - Ctrl-C writes the leads found so far to the output file, but does **not** save them to the database.
-- `⚠ Google rate-limited this IP`: rows found before the block are kept. Add `--proxy` and retry later.
+- `⚠ Google rate-limited this IP`: rows found before the block are kept. Add `--proxies` and retry later.
 - `⚠ N scrape(s) skipped`: see the `⚠` lines above for the reason.
 - `✗ No scrape finished`: the reason is in the `✗` line above it.
 

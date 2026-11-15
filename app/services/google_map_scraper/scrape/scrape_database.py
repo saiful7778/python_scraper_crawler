@@ -64,9 +64,11 @@ class ScrapeDatabase:
 
     def claim_next_pending(self) -> ScrapeRecord | None:
         """Mark the oldest pending scrape as working and return it."""
-        return self._call(
-            "claiming a scrape", self._repository.claim_oldest_pending()
-        )
+        return self._call("claiming a scrape", self._repository.claim_oldest_pending())
+
+    def claim(self, scrape_id: str) -> ScrapeRecord | None:
+        """Mark this pending scrape as working and return it; None if it is not pending."""
+        return self._call("claiming a scrape", self._repository.claim_by_id(scrape_id))
 
     def set_status(self, scrape_id: str, status: str, error: str = "") -> None:
         self._call(
@@ -110,7 +112,9 @@ class ScrapeDatabase:
         try:
             self._loop.call_soon_threadsafe(self._loop.stop)
         except RuntimeError as error:
-            logger.warning("the scrape database loop was already closed: %s", describe(error))
+            logger.warning(
+                "the scrape database loop was already closed: %s", describe(error)
+            )
         self._thread.join(_CLOSE_TIMEOUT_SECONDS)
         if self._thread.is_alive():
             logger.warning(

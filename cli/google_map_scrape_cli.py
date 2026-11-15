@@ -17,7 +17,7 @@ from config.tortoise import TORTOISE_ORM
 
 logger = get_logger(__name__)
 
-FLAG_NAMES = {"proxies": "--proxy"}
+FLAG_NAMES = {"proxies": "--proxies"}
 
 
 class CliQuery(PlaceQuery):
@@ -58,6 +58,10 @@ def keyword_names(text: str) -> list[str]:
     return comma_list(text, "keyword")
 
 
+def proxy_names(text: str) -> list[str]:
+    return comma_list(text, "proxy")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Scrape Google Maps business listings.")
     ap.add_argument(
@@ -76,11 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="country to search in, 2 letters (e.g. us, de, br)",
     )
     ap.add_argument(
-        "--proxy",
+        "--proxies",
         dest="proxies",
-        action="append",
-        metavar="URL",
-        help="proxy for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); repeatable: the scrapes take turns through the proxies",
+        action="extend",
+        type=proxy_names,
+        metavar="URL,...",
+        help="comma-separated proxies for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); the scrapes take turns through the proxies",
     )
     ap.add_argument("--depth", type=int, default=5)
     ap.add_argument(
@@ -136,6 +141,8 @@ def read_query() -> CliQuery:
     values = {
         k: v for k, v in vars(build_parser().parse_args()).items() if v is not None
     }
+    if values.get("proxies"):
+        values["proxies"] = list(dict.fromkeys(values["proxies"]))
     try:
         return CliQuery.model_validate(values)
     except ValidationError as error:

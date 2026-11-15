@@ -1,10 +1,12 @@
 """The background thread that claims pending scrapes and runs them one at a time."""
 
+import queue
 import threading
 from collections.abc import Callable
 
 from redis import Redis
 
+from app.services.browser import BrowserSession
 from app.services.buffer.client import BufferError
 from app.utils.errors import describe
 from app.utils.logger import get_logger
@@ -27,6 +29,9 @@ def _reason(error: Exception) -> str:
 class ScrapeWorker(threading.Thread):
     """Claims the oldest pending scrape, runs it, and repeats until shut down.
 
+    With ``assignments``, the worker runs only the scrape ids taken from that queue,
+    each on ``browser``, instead of claiming the oldest pending scrape.
+
     A Redis or PostgreSQL failure stops the worker and is kept in :attr:`failure`
     for the runner to raise; the scrape keeps its Redis data and resumes later.
     """
@@ -38,6 +43,9 @@ class ScrapeWorker(threading.Thread):
         headless: bool = True,
         known_keys: frozenset[str] = frozenset(),
         on_finished: Callable[[str, RunOutcome, list[LeadRow]], None] | None = None,
+        assignments: queue.Queue[str] | None = None,
+        browser: BrowserSession | None = None,
+        proxy_slot: int = 0,
     ):
         """Create the worker thread; call :meth:`start` to begin.
 
@@ -50,6 +58,9 @@ class ScrapeWorker(threading.Thread):
         self._headless = headless
         self._known_keys = known_keys
         self._on_finished = on_finished
+        self._assignments = assignments
+        self._browser = browser
+        self.proxy_slot = proxy_slot
         self._wake = threading.Event()
         self._stopped = threading.Event()
         self._current: ScrapeRun | None = None
@@ -60,11 +71,21 @@ class ScrapeWorker(threading.Thread):
         while not self._stopped.is_set():
             stage = "claiming the next pending scrape"
             try:
-                scrape = self._database.claim_next_pending()
-                if scrape is None:
-                    self._wake.wait(_IDLE_POLL_SECONDS)
-                    self._wake.clear()
-                    continue
+                if self._assignments is None:
+                    scrape = self._database.claim_next_pending()
+                    if scrape is None:
+                        self._wake.wait(_IDLE_POLL_SECONDS)
+                        self._wake.clear()
+                        continue
+                else:
+                    scrape_id = self._next_assignment()
+                    if scrape_id is None:
+                        continue
+                    stage = f"claiming scrape {scrape_id}"
+                    scrape = self._database.claim(scrape_id)
+                    if scrape is None:
+                        logger.info("scrape %s is no longer pending", scrape_id)
+                        continue
                 stage = f"running scrape {scrape['ID']}"
                 self._execute(scrape)
             except (BufferError, ScrapeDatabaseError) as error:
@@ -74,6 +95,18 @@ class ScrapeWorker(threading.Thread):
             except Exception:
                 logger.exception("worker failed while %s", stage)
                 self._stopped.wait(_RETRY_PAUSE_SECONDS)
+
+    def _next_assignment(self) -> str | None:
+        """The next assigned scrape id; None on timeout or once the worker is stopping."""
+        assert self._assignments is not None
+        try:
+            scrape_id = self._assignments.get(timeout=_IDLE_POLL_SECONDS)
+        except queue.Empty:
+            return None
+        if self._stopped.is_set():
+            self._assignments.put(scrape_id)
+            return None
+        return scrape_id
 
     def cancel(self, scrape_id: str) -> None:
         """Stop the running scrape if it is ``scrape_id`` (used when it is deleted)."""
@@ -93,7 +126,12 @@ class ScrapeWorker(threading.Thread):
 
     def _execute(self, scrape: ScrapeRecord) -> None:
         run = ScrapeRun(
-            self._database, scrape, self._headless, self._redis, self._known_keys
+            self._database,
+            scrape,
+            self._headless,
+            self._redis,
+            self._known_keys,
+            browser=self._browser,
         )
         self._current = run
         logger.info("scrape %s: starting", scrape["ID"])
@@ -112,7 +150,9 @@ class ScrapeWorker(threading.Thread):
         if run.outcome is not None:
             self._report(scrape, run.outcome, run)
 
-    def _report(self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun) -> None:
+    def _report(
+        self, scrape: ScrapeRecord, outcome: RunOutcome, run: ScrapeRun
+    ) -> None:
         logger.info(
             "scrape %s reported as %s with %d leads",
             scrape["ID"],
