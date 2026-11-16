@@ -27,6 +27,7 @@ def test_is_proxy_failure_ignores_other_errors(message: str) -> None:
         "request timeout",
         "ERR_TIMED_OUT",
         "Timed Out",
+        "CDPError: no Page.loadEventFired event within 45.0 s",
     ],
 )
 def test_is_timeout_failure_detects_timeouts(message: str) -> None:
