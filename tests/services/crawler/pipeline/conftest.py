@@ -6,7 +6,7 @@ import fakeredis
 import pytest
 from tortoise.context import TortoiseContext
 
-from app.services.buffer.flusher import context_config
+from app.services.postgres import context_config
 from config.tortoise import TortoiseConfig
 
 T = TypeVar("T")
