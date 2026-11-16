@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.helpers.http_fetcher import FetchResult
+from app.helpers.http_fetcher.responses import header_value
 from app.services.crawler.site.crawl import FetchFn
 from app.utils.errors import describe
 from app.utils.logger import get_logger
@@ -33,7 +33,7 @@ def check_origin(origin: str, fetch: FetchFn) -> CrawlCheck:
     if result.error is not None or result.status == 0:
         logger.debug("origin %s: fetch error %s", origin, result.error)
         return CrawlCheck(crawlable=False, reason="fetch_error")
-    content_type = _header(result, "content-type")
+    content_type = header_value(result.headers, "content-type")
     if not is_crawlable(result.status, content_type):
         if not 200 <= result.status < 300:
             logger.debug("origin %s: HTTP %s", origin, result.status)
@@ -42,11 +42,3 @@ def check_origin(origin: str, fetch: FetchFn) -> CrawlCheck:
         return CrawlCheck(crawlable=False, reason="not_html")
     logger.debug("origin %s: crawlable", origin)
     return CrawlCheck(crawlable=True, reason="ok")
-
-
-def _header(result: FetchResult, name: str) -> str | None:
-    wanted = name.lower()
-    for key, value in result.headers.items():
-        if key.lower() == wanted:
-            return value
-    return None

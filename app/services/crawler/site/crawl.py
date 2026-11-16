@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 
 from app.helpers.http_fetcher.errors import FetchError
 from app.helpers.http_fetcher.models import FetchResult
+from app.helpers.http_fetcher.responses import header_value
 from app.helpers.http_fetcher.urls import hostname_of
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
@@ -52,13 +53,6 @@ class CrawlOptions:
     max_depth: int
     collect_emails: bool
     collect_socials: bool
-
-
-def _header(result: FetchResult, name: str) -> str:
-    for key, value in result.headers.items():
-        if key.lower() == name:
-            return value
-    return ""
 
 
 def _title_and_canonical(doc: Document, page_url: str) -> tuple[str | None, str | None]:
@@ -506,7 +500,7 @@ class WebsiteCrawl:
             self._save(page_id, outcome)
             return
         base = result.final_url
-        content_type = _header(result, "content-type")[:255] or None
+        content_type = header_value(result.headers, "content-type")[:255] or None
         try:
             doc = parse_page(result.text, base)
             title, canonical = _title_and_canonical(doc, base)
@@ -539,7 +533,7 @@ class WebsiteCrawl:
         shared = {
             "http_status": result.status or None,
             "final_url": result.final_url,
-            "content_type": _header(result, "content-type")[:255] or None,
+            "content_type": header_value(result.headers, "content-type")[:255] or None,
         }
         if result.error == FetchError.REDIRECT_OUT_OF_SCOPE or not is_in_scope(
             result.final_url, self._domain
@@ -557,7 +551,7 @@ class WebsiteCrawl:
                 error_message=result.detail[:_TEXT_LIMIT] or None,
                 **shared,
             )
-        kind = _header(result, "content-type").split(";")[0].strip().lower()
+        kind = header_value(result.headers, "content-type").split(";")[0].strip().lower()
         if kind and kind not in HTML_TYPES:
             return PageResult(status="skipped", skip_reason="not_html", **shared)
         if len(result.body) > MAX_BODY_BYTES:

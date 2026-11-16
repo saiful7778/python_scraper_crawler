@@ -7,6 +7,15 @@ def is_success_status(status: int) -> bool:
     return 200 <= status < 300
 
 
+def header_value(headers: Mapping[str, str], name: str) -> str:
+    """The value of a header by case-insensitive name; ``""`` when it is absent."""
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return ""
+
+
 def normalize_headers(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
     """Lower-case header names; repeated headers are joined with ``", "``."""
     merged: dict[str, str] = {}
