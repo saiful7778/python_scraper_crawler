@@ -3,9 +3,6 @@ import json
 from typing import cast
 from uuid import UUID
 
-from asyncpg import InterfaceError
-from asyncpg.exceptions import PostgresConnectionError
-
 from app.constant import SOCIALS
 from app.models import (
     GoogleMapKeyword,
@@ -17,6 +14,7 @@ from app.models import (
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.services.postgres import CONNECTION_LOST
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
@@ -24,9 +22,6 @@ from .base import BaseRepository
 from .lead_repository import LeadRepository, website_domain
 
 logger = get_logger(__name__)
-
-#: Errors meaning the PostgreSQL connection is gone; the caller reconnects and retries.
-CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
 
 PROFILE_TEXT_FIELDS = (
     "input_id",
