@@ -42,5 +42,12 @@ def test_seo_reads_social_meta_robots_and_link_counts():
     assert Finding("seo", "external_link_count", "1") in rows
 
 
+def test_seo_treats_a_same_host_link_on_another_port_as_internal():
+    html = '<body><a href="https://a.de:8080/x">a</a></body>'
+    rows = find_seo(_parse(html), URL)
+    assert Finding("seo", "internal_link_count", "1") in rows
+    assert Finding("seo", "external_link_count", "0") in rows
+
+
 def test_seo_returns_nothing_for_an_empty_page():
     assert find_seo(_parse("<html></html>"), URL) == []

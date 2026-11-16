@@ -38,6 +38,7 @@ def make_result(
         (404, "text/html", False),
         (200, "application/pdf", False),
         (200, None, False),
+        (200, "", False),
         (None, "text/html", False),
     ],
 )
@@ -56,6 +57,15 @@ def test_origin_serving_html_is_crawlable():
 
     assert seen == ["https://example.com"]
     assert check == CrawlCheck(crawlable=True, reason="ok")
+
+
+def test_origin_without_content_type_is_not_crawlable():
+    def fetch(url):
+        return make_result(url=url, headers={})
+
+    check = check_origin("https://example.com", fetch)
+
+    assert check == CrawlCheck(crawlable=False, reason="not_html")
 
 
 def test_redirect_to_2xx_html_page_is_crawlable():

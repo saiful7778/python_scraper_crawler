@@ -342,16 +342,18 @@ def test_connection_stays_open_between_flushes(tmp_path, rows, state):
     in_database(config, generate_schemas=True)
     rows.append("s1", [{"title": "A"}])
     flusher = Flusher(rows, state, save_row=Saved(), crawl_sink=None, config=config)
+    connection = flusher._connection
+    assert connection is not None
     try:
         assert flusher.flush_once() == 1
-        first = flusher._context
+        first = connection.context
         assert first is not None
         rows.append("s1", [{"title": "B"}])
         assert flusher.flush_once() == 1
-        assert flusher._context is first
+        assert connection.context is first
     finally:
         flusher.shutdown()
-    assert flusher._context is None
+    assert connection.context is None
 
 
 def test_a_dead_connection_is_replaced_before_the_next_save(tmp_path, rows, state):
@@ -362,14 +364,16 @@ def test_a_dead_connection_is_replaced_before_the_next_save(tmp_path, rows, stat
     flusher = Flusher(
         rows, state, save_row=repo.save_row, crawl_sink=None, config=config
     )
+    connection = flusher._connection
+    assert connection is not None
     try:
         assert flusher.flush_once() == 1
-        dead = flusher._context
+        dead = connection.context
         assert dead is not None
         flusher._loop.run_until_complete(dead.close_connections())
         rows.append("s1", [{"place_id": "p2", "title": "B"}])
         assert flusher.flush_once() == 1
-        assert flusher._context is not dead
+        assert connection.context is not dead
         assert rows.length("s1") == 0
     finally:
         flusher.shutdown()
@@ -382,7 +386,9 @@ def test_dropped_connection_is_replaced_by_a_new_one(tmp_path, rows, state):
     contexts = []
 
     async def save(row, scrape_id):
-        contexts.append(flusher._context)
+        connection = flusher._connection
+        assert connection is not None
+        contexts.append(connection.context)
         if len(contexts) == 1:
             raise ConnectionResetError("connection reset by peer")
 

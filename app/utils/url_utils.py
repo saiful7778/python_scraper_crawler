@@ -58,7 +58,7 @@ def encode_url_as_ascii(url: str) -> str:
 def extract_site_host(url: str) -> str:
     """Return the lower-case host of ``url`` without a leading ``www.``."""
     try:
-        host = urllib.parse.urlsplit(_ensure_scheme(url)).hostname
+        host = urllib.parse.urlsplit(_ensure_scheme(url.strip())).hostname
     except ValueError as error:
         logger.debug("no host in %r: %s", url, describe(error))
         return ""

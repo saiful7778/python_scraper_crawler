@@ -1,5 +1,5 @@
 import json
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from redis import Redis
 
@@ -8,6 +8,7 @@ from app.services.buffer.keys import (
     crawl_queue_key,
     crawl_queued_key,
 )
+from app.services.buffer.redis_lists import read_records, sum_lengths
 
 
 class CrawlJob(TypedDict):
@@ -76,10 +77,7 @@ class CrawlQueue:
         )
 
     def queued_jobs(self) -> list[CrawlJob]:
-        return [json.loads(raw) for raw in self._redis.lrange(crawl_queue_key(), 0, -1)]
+        return cast(list[CrawlJob], read_records(self._redis, crawl_queue_key()))
 
     def pending(self) -> int:
-        pipe = self._redis.pipeline()
-        pipe.llen(crawl_queue_key())
-        pipe.llen(crawl_processing_key())
-        return sum(pipe.execute())
+        return sum_lengths(self._redis, crawl_queue_key(), crawl_processing_key())

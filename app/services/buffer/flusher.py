@@ -2,13 +2,9 @@ import asyncio
 import threading
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
 from functools import partial
 from typing import Any
 
-from asyncpg import InterfaceError
-from asyncpg.exceptions import PostgresConnectionError
-from tortoise.context import TortoiseContext
 from tortoise.models import Model
 
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
@@ -16,6 +12,7 @@ from app.services.buffer.crawl_types import WebsiteSnapshot
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.services.postgres import CONNECTION_LOST, TortoiseConnection
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 from config.tortoise import TortoiseConfig
@@ -23,21 +20,8 @@ from config.tortoise import TortoiseConfig
 logger = get_logger(__name__)
 
 BATCH_SIZE = 500
-#: Every context the engine opens uses this alias: Tortoise keeps each model's
-#: default connection on the model class, so two aliases would override each other.
-CONNECTION = "scrape_engine"
 #: Columns an upsert never rewrites.
 _KEPT_COLUMNS = frozenset({"id", "created_at"})
-#: Errors meaning the PostgreSQL connection itself is gone, not the row is bad.
-CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
-#: A cheap query that proves a PostgreSQL connection still answers.
-_PING_QUERY = "SELECT 1"
-
-
-async def check_connection(context: TortoiseContext) -> None:
-    """Raise if the context's PostgreSQL connection no longer answers."""
-    await context.db().execute_query(_PING_QUERY)
-
 
 SaveRow = Callable[[LeadRow, str], Awaitable[None]]
 #: Saves rows in order and returns how many were saved from the start.
@@ -45,18 +29,6 @@ SaveRows = Callable[[list[LeadRow], str], Awaitable[int]]
 #: Stores one finished website snapshot. It raises when the snapshot cannot be
 #: stored yet; the flusher then keeps the website in Redis for the next save.
 CrawlSink = Callable[[WebsiteSnapshot], Awaitable[None]]
-
-
-def context_config(
-    config: TortoiseConfig, connection: str = CONNECTION
-) -> dict[str, Any]:
-    settings = asdict(config)
-    (credentials,) = settings["connections"].values()
-    settings["connections"] = {connection: credentials}
-    for app in settings["apps"].values():
-        app["default_connection"] = connection
-        app.pop("migrations", None)
-    return settings
 
 
 def _upsert_fields(model: type[Model]) -> list[str]:
@@ -115,8 +87,7 @@ class Flusher(threading.Thread):
         self._prepare_batch = prepare_batch
         self._crawl_sink = crawl_sink
         self._crawl_buffer = crawl_buffer
-        self._config = config
-        self._context: TortoiseContext | None = None
+        self._connection = TortoiseConnection(config) if config is not None else None
         self._loop = asyncio.new_event_loop()
         self._stop_requested = threading.Event()
         #: One loop and one connection serve every caller, so a scrape is saved by
@@ -251,10 +222,10 @@ class Flusher(threading.Thread):
 
     def _connection_ok(self) -> bool:
         """True if the flusher's own connection answers; a dead one is replaced once."""
-        if self._config is None:
+        if self._connection is None:
             return True
         try:
-            self._loop.run_until_complete(self._ensure_connection(self._config))
+            self._loop.run_until_complete(self._connection.ensure())
         except Exception as error:
             logger.error(
                 "the PostgreSQL connection is not usable; buffered rows stay in Redis: %s",
@@ -263,15 +234,6 @@ class Flusher(threading.Thread):
             )
             return False
         return True
-
-    async def _ensure_connection(self, config: TortoiseConfig) -> None:
-        context = await self._open(config)
-        try:
-            await check_connection(context)
-        except Exception:  # noqa: BLE001 -- any failure means the connection is unusable
-            await self._drop_context()
-            context = await self._open(config)
-            await check_connection(context)
 
     async def _save_batch(self, batch: list[LeadRow], scrape_id: str) -> int:
         if self._save_rows is not None:
@@ -297,70 +259,39 @@ class Flusher(threading.Thread):
         try:
             return await self._in_context(lambda: save_rows(batch, scrape_id))
         except CONNECTION_LOST:
-            await self._drop_context()
+            if self._connection is not None:
+                await self._connection.drop()
             return await self._in_context(lambda: save_rows(batch, scrape_id))
 
     async def _save_in_context(self, row: LeadRow, scrape_id: str) -> None:
         try:
             await self._in_context(lambda: self._save_row(row, scrape_id))
         except CONNECTION_LOST:
-            await self._drop_context()
+            if self._connection is not None:
+                await self._connection.drop()
             await self._in_context(lambda: self._save_row(row, scrape_id))
 
-    async def _drop_context(self) -> None:
-        context, self._context = self._context, None
-        if context is None:
-            return
-        try:
-            await context.close_connections()
-        except Exception as error:  # noqa: BLE001 -- the connection is already dead
-            logger.warning(
-                "closing the lost PostgreSQL connection failed: %s", describe(error)
-            )
-
     async def _in_context[T](self, work: Callable[[], Awaitable[T]]) -> T:
-        if self._config is None:
+        if self._connection is None:
             return await work()
         from tortoise.context import _current_context
 
-        context = await self._open(self._config)
+        context = await self._connection.open()
         token = _current_context.set(context)
         try:
             return await work()
         finally:
             _current_context.reset(token)
 
-    async def _open(self, config: TortoiseConfig) -> TortoiseContext:
-        if self._context is None:
-            context = TortoiseContext()
-            context.__enter__()
-            try:
-                await context.init(config=context_config(config))
-            except BaseException:
-                try:
-                    await context.close_connections()
-                except Exception as close_error:  # noqa: BLE001 -- the connect error is the one to report
-                    logger.warning(
-                        "closing the failed PostgreSQL connection also failed: %s",
-                        describe(close_error),
-                    )
-                raise
-            finally:
-                context.__exit__(None, None, None)
-            self._context = context
-            logger.info("opened the PostgreSQL connection for the flusher")
-        return self._context
-
     def _close(self) -> None:
         if self._loop.is_closed():
             return
         try:
-            if self._context is not None:
-                self._loop.run_until_complete(self._context.close_connections())
+            if self._connection is not None:
+                self._loop.run_until_complete(self._connection.close())
         except Exception as error:  # noqa: BLE001 -- shutting down; nothing left to keep
             logger.warning(
                 "closing the PostgreSQL connection failed: %s", describe(error)
             )
         finally:
-            self._context = None
             self._loop.close()

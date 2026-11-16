@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from app.utils.errors import describe
 from app.utils.logger import get_logger
+from app.utils.url_utils import extract_site_host
 
 from ..document import Document, absolute
 from ..findings import Finding, json_ld_items, schema_types
@@ -19,11 +20,6 @@ def _meta(doc: Document, attr: str, name: str) -> str:
         if item["tag"] == "meta" and (attrs.get(attr) or "").lower() == name:
             return (attrs.get("content") or "").strip()
     return ""
-
-
-def _host(url: str) -> str:
-    host = urlsplit(url).netloc.lower()
-    return host.removeprefix("www.")
 
 
 def find_seo(doc: Document, page_url: str) -> list[Finding]:
@@ -69,7 +65,7 @@ def find_seo(doc: Document, page_url: str) -> list[Finding]:
         rows.append(Finding("seo", "image_count", str(len(images))))
         rows.append(Finding("seo", "image_missing_alt_count", str(missing)))
 
-    site = _host(page_url)
+    site = extract_site_host(page_url)
     internal = external = 0
     for item in doc.elements:
         href = (item["attrs"].get("href") or "").strip()
@@ -79,7 +75,7 @@ def find_seo(doc: Document, page_url: str) -> list[Finding]:
             target = absolute(page_url, href)
             if urlsplit(target).scheme not in ("http", "https"):
                 continue
-            is_internal = _host(target) == site
+            is_internal = extract_site_host(target) == site
         except ValueError as error:
             logger.debug(
                 "skipped malformed link %r on %s: %s", href, page_url, describe(error)

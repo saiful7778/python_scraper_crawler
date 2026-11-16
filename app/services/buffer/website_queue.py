@@ -1,5 +1,5 @@
 import json
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from redis import Redis
 
@@ -9,6 +9,7 @@ from app.services.buffer.keys import (
     queue_key,
     queued_key,
 )
+from app.services.buffer.redis_lists import read_records, sum_lengths
 
 
 class WebsiteJob(TypedDict):
@@ -81,22 +82,14 @@ class WebsiteQueue:
 
     def processing_jobs(self, scrape_id: str) -> list[WebsiteJob]:
         """The jobs claimed by a crawler thread and not yet completed."""
-        return [
-            json.loads(raw)
-            for raw in self._redis.lrange(processing_key(scrape_id), 0, -1)
-        ]
+        return cast(list[WebsiteJob], read_records(self._redis, processing_key(scrape_id)))
 
     def queued_jobs(self, scrape_id: str) -> list[WebsiteJob]:
         """The jobs no crawler thread has claimed yet."""
-        return [
-            json.loads(raw) for raw in self._redis.lrange(queue_key(scrape_id), 0, -1)
-        ]
+        return cast(list[WebsiteJob], read_records(self._redis, queue_key(scrape_id)))
 
     def pending(self, scrape_id: str) -> int:
-        pipe = self._redis.pipeline()
-        pipe.llen(queue_key(scrape_id))
-        pipe.llen(processing_key(scrape_id))
-        return sum(pipe.execute())
+        return sum_lengths(self._redis, queue_key(scrape_id), processing_key(scrape_id))
 
     def discard(self, scrape_id: str) -> None:
         self._redis.delete(

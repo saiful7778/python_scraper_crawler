@@ -18,12 +18,22 @@ from app.services.buffer.flusher import upsert
 from app.services.crawler.findings import Finding
 from app.services.crawler.lead_fields import lead_columns, social_links
 from app.utils.logger import get_logger
+from app.utils.url_utils import extract_site_host
 
 logger = get_logger(__name__)
 
 
 def _event_id(run_id: object, event_number: object) -> UUID:
     return uuid5(NAMESPACE_URL, f"{run_id}:{event_number}")
+
+
+def _lead_domain(host: str) -> str:
+    """The domain a stored crawl is matched to a lead by.
+
+    A bare IPv6 host (``::1``) is not a URL, so :func:`extract_site_host` cannot
+    parse it; keep it as it is rather than losing the lead match.
+    """
+    return extract_site_host(host) or host.removeprefix("www.")
 
 
 def _findings_of(snapshot: WebsiteSnapshot) -> list[Finding]:
@@ -61,7 +71,7 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
     A matching lead also gets the emails and socials the crawl found. Without
     a match the website is stored with no lead. Repeating it is harmless.
     """
-    domain = snapshot.website["host"].removeprefix("www.")
+    domain = _lead_domain(snapshot.website["host"])
     logger.debug(
         "storing crawl of %s: %d pages, %d links, %d findings, %d events",
         domain,

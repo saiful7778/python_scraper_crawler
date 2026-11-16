@@ -4,15 +4,22 @@ from tortoise.exceptions import IntegrityError
 
 from app.utils.errors import describe
 from app.utils.logger import get_logger
-from app.utils.utils import utc_now
 
 logger = get_logger(__name__)
 
 
 class BaseRepository:
-    @staticmethod
-    def now():
-        return utc_now()
+    def __init__(self):
+        self._counters: dict = {}
+
+    async def _next_global_counter(self) -> int:
+        model = self._model
+        value = self._counters.get(model)
+        if value is None:
+            value = (await self.last_counter(model)) or 0
+        value += 1
+        self._counters[model] = value
+        return value
 
     @staticmethod
     def is_valid_uuid(val):

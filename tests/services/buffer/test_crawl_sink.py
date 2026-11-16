@@ -14,7 +14,7 @@ from app.models import (
     LeadSocialModel,
 )
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
-from app.services.buffer.crawl_sink import _event_id, store_crawl
+from app.services.buffer.crawl_sink import _event_id, _lead_domain, store_crawl
 from app.services.buffer.crawl_types import LinkSeed, PageResult, PageSeed
 from app.services.crawler.findings import Finding
 from tests.models.conftest import db  # noqa: F401
@@ -204,3 +204,11 @@ async def test_a_pre_migration_website_row_is_reused_for_its_origin(fake_redis):
     assert await CrawlRunModel.filter(website_id=old_id).count() == 1
     assert await CrawlFindingModel.filter(website_id=old_id).count() == 6
     assert await CrawlRunModel.filter(website_id=snapshot.website["id"]).count() == 0
+
+
+def test_lead_domain_keeps_a_bare_ipv6_host():
+    assert _lead_domain("::1") == "::1"
+
+
+def test_lead_domain_drops_www_from_a_host():
+    assert _lead_domain("www.example.com") == "example.com"

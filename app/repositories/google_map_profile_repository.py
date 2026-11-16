@@ -3,9 +3,6 @@ import json
 from typing import cast
 from uuid import UUID
 
-from asyncpg import InterfaceError
-from asyncpg.exceptions import PostgresConnectionError
-
 from app.constant import SOCIALS
 from app.models import (
     GoogleMapKeyword,
@@ -17,6 +14,7 @@ from app.models import (
 )
 from app.services.google_map_scraper.scrape.lead_rows import address_fields
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow
+from app.services.postgres import CONNECTION_LOST
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
@@ -24,9 +22,6 @@ from .base import BaseRepository
 from .lead_repository import LeadRepository, website_domain
 
 logger = get_logger(__name__)
-
-#: Errors meaning the PostgreSQL connection is gone; the caller reconnects and retries.
-CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
 
 PROFILE_TEXT_FIELDS = (
     "input_id",
@@ -137,18 +132,10 @@ def _children(row: LeadRow) -> dict:
 
 class GoogleMapProfileRepository(BaseRepository):
     def __init__(self, leads: LeadRepository):
+        super().__init__()
         self._leads = leads
         self._model = GoogleMapProfileModel
-        self._counters = {}
         self._keyword_ids: dict[str, UUID] = {}
-
-    async def _next_global_counter(self):
-        value = self._counters.get(self._model)
-        if value is None:
-            value = (await self.last_counter(self._model)) or 0
-        value += 1
-        self._counters[self._model] = value
-        return value
 
     async def key_rows(self) -> list[LeadRow]:
         """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""

@@ -86,26 +86,26 @@ def test_an_unreachable_database_raises_an_error_that_names_postgres(tmp_path):
 
 def test_a_dead_connection_is_replaced_before_the_next_call(database):
     assert database.pending_ids() == []
-    dead = database._context
+    dead = database._connection.context
     assert dead is not None
     asyncio.run_coroutine_threadsafe(
         dead.close_connections(), database._loop
     ).result()
 
     assert database.pending_ids() == []
-    assert database._context is not dead
+    assert database._connection.context is not dead
 
 
 def test_check_connection_reconnects_a_dead_connection(database):
     database.pending_ids()
-    dead = database._context
+    dead = database._connection.context
     assert dead is not None
     asyncio.run_coroutine_threadsafe(
         dead.close_connections(), database._loop
     ).result()
 
     database.check_connection()
-    assert database._context is not dead
+    assert database._connection.context is not dead
 
 
 def test_a_closed_database_refuses_a_connection_check(postgres):

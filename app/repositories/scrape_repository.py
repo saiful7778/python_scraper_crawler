@@ -18,6 +18,7 @@ ERROR_MAX_LENGTH = 500
 
 class ScrapeRepository(BaseRepository):
     def __init__(self):
+        super().__init__()
         self._model = ScrapeModel
 
     @staticmethod

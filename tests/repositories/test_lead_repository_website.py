@@ -1,8 +1,13 @@
 import pytest
 
 from app.models import LeadModel
-from app.repositories.lead_repository import LeadRepository
+from app.repositories.lead_repository import LeadRepository, website_domain
 from tests.models.conftest import db  # noqa: F401
+
+
+def test_website_domain_strips_and_drops_www() -> None:
+    assert website_domain("  https://www.Example.com/x  ") == "example.com"
+    assert website_domain("   ") is None
 
 
 @pytest.mark.usefixtures("db")
