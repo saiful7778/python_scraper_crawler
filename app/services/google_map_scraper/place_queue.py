@@ -3,6 +3,7 @@ import json
 from typing import NotRequired, TypedDict
 
 from redis import Redis
+from redis.commands.core import Script
 from redis.exceptions import RedisError
 
 from app.services.buffer.client import BufferError
@@ -39,6 +40,64 @@ class DoneTile(TypedDict):
     rows: list[LeadRow]
 
 
+_TAKE = """
+local raw = redis.call('LPOP', KEYS[1])
+if not raw then
+    return false
+end
+local id = cjson.decode(raw)['ID']
+redis.call('RPUSH', KEYS[2], id)
+redis.call('HSET', KEYS[3], id, raw)
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[3], ARGV[1])
+return raw
+"""
+
+_MARK_SCRAPE = """
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then
+    return 0
+end
+local tile = cjson.decode(raw)
+tile['scrape_id'] = ARGV[2]
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(tile))
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1
+"""
+
+_FINISH = """
+if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 0 then
+    return 0
+end
+redis.call('HDEL', KEYS[2], ARGV[2])
+redis.call('LREM', KEYS[1], 1, ARGV[2])
+redis.call('RPUSH', KEYS[3], ARGV[1])
+redis.call('EXPIRE', KEYS[3], ARGV[3])
+return 1
+"""
+
+_REQUEUE = """
+if redis.call('HEXISTS', KEYS[2], ARGV[2]) == 0 then
+    return 0
+end
+redis.call('HDEL', KEYS[2], ARGV[2])
+redis.call('LREM', KEYS[1], 1, ARGV[2])
+redis.call('LPUSH', KEYS[3], ARGV[1])
+redis.call('EXPIRE', KEYS[3], ARGV[3])
+return 1
+"""
+
+_IN_FLIGHT = """
+local ids = redis.call('LRANGE', KEYS[1], 0, -1)
+local tiles = {}
+for index, id in ipairs(ids) do
+    tiles[index] = redis.call('HGET', KEYS[2], id)
+end
+return tiles
+"""
+
+
 def run_id(query: PlaceQuery) -> str:
     payload = json.dumps(query.model_dump(mode="json"), sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -47,9 +106,9 @@ def run_id(query: PlaceQuery) -> str:
 class PlaceTileQueue:
     """The tiles of one city run in Redis: pending, in flight, and done.
 
-    A tile moves from pending to in flight when a worker takes it, and from in
-    flight to done when it finishes. A tile that must run again goes back to the
-    front of pending.
+    Pending and done are lists of tile JSON. In flight is a list of tile ids
+    plus a hash of their JSON, so claiming, updating and finishing a tile touch
+    one entry instead of reading and rewriting the whole in-flight list.
     """
 
     def __init__(self, redis: Redis, query: PlaceQuery, ttl_seconds: int):
@@ -58,13 +117,22 @@ class PlaceTileQueue:
         run = run_id(query)
         self._pending_key = f"place_queue:{run}:pending"
         self._in_flight_key = f"place_queue:{run}:in_flight"
+        self._in_flight_data_key = f"place_queue:{run}:in_flight_data"
         self._done_key = f"place_queue:{run}:done"
+        self._take = redis.register_script(_TAKE)
+        self._mark_scrape = redis.register_script(_MARK_SCRAPE)
+        self._finish = redis.register_script(_FINISH)
+        self._requeue = redis.register_script(_REQUEUE)
+        self._in_flight = redis.register_script(_IN_FLIGHT)
 
     def exists(self) -> bool:
         try:
             return bool(
                 self._redis.exists(
-                    self._pending_key, self._in_flight_key, self._done_key
+                    self._pending_key,
+                    self._in_flight_key,
+                    self._in_flight_data_key,
+                    self._done_key,
                 )
             )
         except RedisError as error:
@@ -74,7 +142,12 @@ class PlaceTileQueue:
 
     def clear(self) -> None:
         try:
-            self._redis.delete(self._pending_key, self._in_flight_key, self._done_key)
+            self._redis.delete(
+                self._pending_key,
+                self._in_flight_key,
+                self._in_flight_data_key,
+                self._done_key,
+            )
         except RedisError as error:
             raise BufferError(
                 f"could not clear place run: {describe(error)}"
@@ -118,63 +191,55 @@ class PlaceTileQueue:
 
     def take(self) -> PlaceTile | None:
         """Move the first pending tile to in flight in one Redis step, or return None."""
-        try:
-            raw = self._redis.lmove(
-                self._pending_key, self._in_flight_key, "LEFT", "RIGHT"
-            )
-            if raw is not None:
-                self._redis.expire(self._in_flight_key, self._ttl_seconds)
-        except RedisError as error:
-            raise BufferError(
-                f"could not take place tile: {describe(error)}"
-            ) from error
-        return None if raw is None else json.loads(raw)
+        raw = self._run(
+            self._take,
+            keys=[self._pending_key, self._in_flight_key, self._in_flight_data_key],
+            args=[self._ttl_seconds],
+            what="take place tile",
+        )
+        return None if not raw else json.loads(raw)
 
     def mark_scrape(self, tile_id: str, scrape_id: str) -> None:
         """Store the scrape id on an in-flight tile."""
-        index, _, tile = self._locate(tile_id)
-        tile["scrape_id"] = scrape_id
-        try:
-            self._redis.lset(
-                self._in_flight_key, index, json.dumps(tile, sort_keys=True)
-            )
-        except RedisError as error:
-            raise BufferError(
-                f"could not mark place tile: {describe(error)}"
-            ) from error
+        marked = self._run(
+            self._mark_scrape,
+            keys=[self._in_flight_data_key],
+            args=[tile_id, scrape_id, self._ttl_seconds],
+            what="mark place tile",
+        )
+        if not marked:
+            raise BufferError(f"place tile {tile_id} is not in flight")
 
     def finish(self, tile_id: str, done: DoneTile) -> None:
         """Remove an in-flight tile and append its result to the done list."""
-        _, raw, _ = self._locate(tile_id)
-        try:
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.lrem(self._in_flight_key, 1, raw)
-            pipe.rpush(self._done_key, json.dumps(done, sort_keys=True))
-            pipe.expire(self._done_key, self._ttl_seconds)
-            pipe.expire(self._in_flight_key, self._ttl_seconds)
-            pipe.execute()
-        except RedisError as error:
-            raise BufferError(
-                f"could not finish place tile: {describe(error)}"
-            ) from error
+        finished = self._run(
+            self._finish,
+            keys=[self._in_flight_key, self._in_flight_data_key, self._done_key],
+            args=[json.dumps(done, sort_keys=True), tile_id, self._ttl_seconds],
+            what="finish place tile",
+        )
+        if not finished:
+            raise BufferError(f"place tile {tile_id} is not in flight")
 
     def requeue(self, tile_id: str, tile: PlaceTile) -> None:
         """Take an in-flight tile back out and put ``tile`` at the front of pending."""
-        _, raw, _ = self._locate(tile_id)
-        try:
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.lrem(self._in_flight_key, 1, raw)
-            pipe.lpush(self._pending_key, json.dumps(tile, sort_keys=True))
-            pipe.expire(self._pending_key, self._ttl_seconds)
-            pipe.expire(self._in_flight_key, self._ttl_seconds)
-            pipe.execute()
-        except RedisError as error:
-            raise BufferError(
-                f"could not requeue place tile: {describe(error)}"
-            ) from error
+        requeued = self._run(
+            self._requeue,
+            keys=[self._in_flight_key, self._in_flight_data_key, self._pending_key],
+            args=[json.dumps(tile, sort_keys=True), tile_id, self._ttl_seconds],
+            what="requeue place tile",
+        )
+        if not requeued:
+            raise BufferError(f"place tile {tile_id} is not in flight")
 
     def in_flight(self) -> list[PlaceTile]:
-        return self._read(self._in_flight_key, "in-flight place tiles")
+        raws = self._run(
+            self._in_flight,
+            keys=[self._in_flight_key, self._in_flight_data_key],
+            args=[],
+            what="read in-flight place tiles",
+        )
+        return [json.loads(raw) for raw in raws]
 
     def pending(self) -> list[PlaceTile]:
         return self._read(self._pending_key, "pending place tiles")
@@ -197,16 +262,15 @@ class PlaceTileQueue:
         except RedisError as error:
             raise BufferError(f"could not read {what}: {describe(error)}") from error
 
-    def _locate(self, tile_id: str) -> tuple[int, str, PlaceTile]:
-        """The index, raw JSON and tile of an in-flight tile."""
+    def _run(
+        self,
+        script: Script,
+        *,
+        keys: list[str],
+        args: list,
+        what: str,
+    ):
         try:
-            raws = self._redis.lrange(self._in_flight_key, 0, -1)
+            return script(keys=keys, args=args)
         except RedisError as error:
-            raise BufferError(
-                f"could not read in-flight place tiles: {describe(error)}"
-            ) from error
-        for index, raw in enumerate(raws):
-            tile = json.loads(raw)
-            if tile["ID"] == tile_id:
-                return index, raw, tile
-        raise BufferError(f"place tile {tile_id} is not in flight")
+            raise BufferError(f"could not {what}: {describe(error)}") from error

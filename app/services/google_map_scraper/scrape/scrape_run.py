@@ -218,12 +218,11 @@ class ScrapeRun:
         """
         accepted: list[LeadRow] = []
         try:
-            for row in rows:
-                if not keep_lead(row, self.settings):
-                    continue
-                if not self._known.add_if_new(self.scrape_id, row):
-                    continue
-                accepted.append(row)
+            kept = [row for row in rows if keep_lead(row, self.settings)]
+            accepted = [
+                kept[index]
+                for index in self._known.add_if_new_many(self.scrape_id, kept)
+            ]
             if accepted:
                 self._rows.append(self.scrape_id, accepted)
         except Exception:

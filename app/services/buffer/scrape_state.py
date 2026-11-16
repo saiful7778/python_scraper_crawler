@@ -18,6 +18,23 @@ from app.services.google_map_scraper.scrape.scrape_types import (
     SettingsData,
 )
 
+_CREATE = """
+redis.call('HSET', KEYS[1], 'settings', ARGV[1], 'status', 'pending')
+redis.call('SADD', KEYS[2], ARGV[2])
+for i = 1, #KEYS do
+    redis.call('EXPIRE', KEYS[i], ARGV[3])
+end
+return 1
+"""
+
+_WRITE = """
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+for i = 1, #KEYS do
+    redis.call('EXPIRE', KEYS[i], ARGV[3])
+end
+return 1
+"""
+
 
 def _scrape_keys(scrape_id: str) -> list[str]:
     return [
@@ -41,31 +58,34 @@ class ScrapeState:
     def __init__(self, redis: Redis, ttl_seconds: int):
         self._redis = redis
         self._ttl_seconds = ttl_seconds
+        self._create = redis.register_script(_CREATE)
+        self._write = redis.register_script(_WRITE)
 
     def create(self, scrape_id: str, settings_data: SettingsData) -> None:
-        self._redis.hset(
-            state_key(scrape_id),
-            mapping={"settings": json.dumps(settings_data), "status": "pending"},
+        self._create(
+            keys=[state_key(scrape_id), active_key(), *_scrape_keys(scrape_id)[1:]],
+            args=[json.dumps(settings_data), scrape_id, self._ttl_seconds],
         )
-        self._redis.sadd(active_key(), scrape_id)
-        self._redis.expire(active_key(), self._ttl_seconds)
-        self.refresh_ttl(scrape_id)
 
     def get_settings(self, scrape_id: str) -> SettingsData | None:
         raw = self._redis.hget(state_key(scrape_id), "settings")
         return None if raw is None else _load(cast(str, raw))
 
     def save_progress(self, scrape_id: str, progress: ProgressData) -> None:
-        self._redis.hset(state_key(scrape_id), "progress", json.dumps(progress))
-        self.refresh_ttl(scrape_id)
+        self._write(
+            keys=_scrape_keys(scrape_id),
+            args=["progress", json.dumps(progress), self._ttl_seconds],
+        )
 
     def get_progress(self, scrape_id: str) -> ProgressData:
         raw = self._redis.hget(state_key(scrape_id), "progress")
         return {} if raw is None else _load(cast(str, raw))
 
     def set_status(self, scrape_id: str, status: str) -> None:
-        self._redis.hset(state_key(scrape_id), "status", status)
-        self.refresh_ttl(scrape_id)
+        self._write(
+            keys=_scrape_keys(scrape_id),
+            args=["status", status, self._ttl_seconds],
+        )
 
     def discard(self, scrape_id: str) -> None:
         pipe = self._redis.pipeline()

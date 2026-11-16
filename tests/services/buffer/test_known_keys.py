@@ -29,6 +29,30 @@ def test_add_if_new_accepts_a_row_with_no_keys(fake_redis):
     assert keys.add_if_new("s1", {}) is True
 
 
+def test_add_if_new_many_accepts_each_unknown_row(fake_redis):
+    keys = KnownKeys(fake_redis, ttl_seconds=3600)
+    rows = [{"title": "Cafe A"}, {"title": "Cafe B"}]
+    assert keys.add_if_new_many("s1", rows) == [0, 1]
+    assert fake_redis.sismember(known_key("s1"), "title:Cafe A") == 1
+
+
+def test_add_if_new_many_rejects_known_and_repeated_rows(fake_redis):
+    keys = KnownKeys(fake_redis, ttl_seconds=3600)
+    keys.load("s1", ["place_id:p1"])
+    rows = [
+        {"title": "Cafe A"},
+        {"title": "Cafe A"},
+        {"title": "Cafe B", "place_id": "p1"},
+    ]
+    assert keys.add_if_new_many("s1", rows) == [0]
+    assert fake_redis.sismember(known_key("s1"), "title:Cafe B") == 0
+
+
+def test_add_if_new_many_accepts_rows_with_no_keys(fake_redis):
+    keys = KnownKeys(fake_redis, ttl_seconds=3600)
+    assert keys.add_if_new_many("s1", [{}, {}]) == [0, 1]
+
+
 def test_load_returns_the_set_size_across_batches(fake_redis):
     keys = KnownKeys(fake_redis, ttl_seconds=3600)
     assert keys.load("s1", (f"title:{n}" for n in range(2500))) == 2500

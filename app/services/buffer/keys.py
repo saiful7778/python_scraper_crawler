@@ -30,6 +30,26 @@ def crawl_key(website_id: str) -> str:
     return f"buffer:crawl:{website_id}"
 
 
+def crawl_runs_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}:runs"
+
+
+def crawl_pages_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}:pages"
+
+
+def crawl_links_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}:links"
+
+
+def crawl_findings_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}:findings"
+
+
+def crawl_events_key(website_id: str) -> str:
+    return f"buffer:crawl:{website_id}:events"
+
+
 def crawl_finished_key() -> str:
     return "buffer:crawl_finished"
 

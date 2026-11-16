@@ -165,7 +165,7 @@ def test_redis_error_is_a_buffer_error(redis, monkeypatch):
     def boom(*args, **kwargs):
         raise RedisConnectionError("down")
 
-    monkeypatch.setattr(redis, "lmove", boom)
+    monkeypatch.setattr(redis, "evalsha", boom)
     with pytest.raises(BufferError):
         queue.take()
 

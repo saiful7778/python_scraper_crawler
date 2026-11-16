@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterable
 from itertools import batched
 
@@ -22,12 +23,35 @@ redis.call('EXPIRE', KEYS[1], ARGV[1])
 return 1
 """
 
+_ADD_IF_NEW_MANY = """
+local rows = cjson.decode(ARGV[2])
+local accepted = {}
+for index, keys in ipairs(rows) do
+    local known = false
+    for _, key in ipairs(keys) do
+        if redis.call('SISMEMBER', KEYS[1], key) == 1 then
+            known = true
+            break
+        end
+    end
+    if not known then
+        if #keys > 0 then
+            redis.call('SADD', KEYS[1], unpack(keys))
+        end
+        table.insert(accepted, index)
+    end
+end
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return accepted
+"""
+
 
 class KnownKeys:
     def __init__(self, redis: Redis, ttl_seconds: int):
         self._redis = redis
         self._ttl_seconds = ttl_seconds
         self._add_if_new = redis.register_script(_ADD_IF_NEW)
+        self._add_if_new_many = redis.register_script(_ADD_IF_NEW_MANY)
 
     def load(self, scrape_id: str, keys: Iterable[str]) -> int:
         key = known_key(scrape_id)
@@ -50,6 +74,22 @@ class KnownKeys:
         except OutOfMemoryError as exc:
             raise BufferFullError(FULL_MESSAGE) from exc
         return bool(added)
+
+    def add_if_new_many(self, scrape_id: str, rows: list[LeadRow]) -> list[int]:
+        """Accept rows whose keys are all unknown; return their positions in ``rows``.
+
+        The check and the add happen in one Redis step, so a row is accepted only
+        when no earlier row of the same batch used one of its keys.
+        """
+        keys_by_row = [lead_keys(row) for row in rows]
+        try:
+            accepted = self._add_if_new_many(
+                keys=[known_key(scrape_id)],
+                args=[self._ttl_seconds, json.dumps(keys_by_row)],
+            )
+        except OutOfMemoryError as exc:
+            raise BufferFullError(FULL_MESSAGE) from exc
+        return [int(index) - 1 for index in accepted]
 
     def forget(self, scrape_id: str, row: LeadRow) -> None:
         keys = lead_keys(row)
