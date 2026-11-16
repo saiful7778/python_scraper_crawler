@@ -139,6 +139,12 @@ def test_no_proxies_means_one_slot_without_proxy(arrange, redis):
     assert all(tuple(env.settings_of(sid)["proxies"]) == () for sid, _ in env.submitted)
 
 
+def test_a_has_website_run_checks_crawlability_in_the_queue(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_query(has_website=True))
+    assert env.check_crawlable == [True]
+
+
 def test_a_proxy_failure_stops_only_its_own_slot(arrange, redis):
     env = arrange(lambda kw, slot: proxy_failure() if slot == 0 else done("b"))
     result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], proxies=PROXIES))
@@ -165,7 +171,7 @@ def test_navigation_timeouts_do_not_retire_every_slot_and_stop_the_run(arrange, 
             return failed("CDPError: no Page.loadEventFired event within 45.0 s")
         return done(kw)
 
-    env = arrange(behave)
+    arrange(behave)
     result = PlaceScraper(redis).scrape(
         _query(keywords=["cafes", "bakeries", "teas"], proxies=PROXIES)
     )

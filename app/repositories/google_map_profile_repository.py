@@ -290,12 +290,27 @@ class GoogleMapProfileRepository(BaseRepository):
 
     async def _save_lead(self, row: LeadRow, profile):
         values = {name: row.get(name) or None for name in LEAD_FIELDS}
+        crawlable = row.get("is_crawlable")
         lead = await self._linked_lead(profile)
         if lead is None:
             domain = await self._leads.find_by_domain(
                 website_domain(row.get("website", ""))
             )
-            return await self._leads.create({**values, "website_domain": domain})
-        if self.fill_empty(lead, values):
+            return await self._leads.create(
+                {
+                    **values,
+                    "website_domain": domain,
+                    **(
+                        {"is_crawlable": bool(crawlable)}
+                        if crawlable is not None
+                        else {}
+                    ),
+                }
+            )
+        changed = self.fill_empty(lead, values)
+        if crawlable is not None and lead.is_crawlable != bool(crawlable):
+            lead.is_crawlable = bool(crawlable)
+            changed = True
+        if changed:
             await lead.save()
         return lead

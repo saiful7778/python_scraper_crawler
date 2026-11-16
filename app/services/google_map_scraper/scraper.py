@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import cast
@@ -39,6 +40,7 @@ from .place_query import PlaceQuery
 from .place_queue import PlaceTile, PlaceTileQueue
 from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
+from .scrape.lead_crawlability import LeadCrawlability
 from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
 from .scrape.scrape_database import ScrapeDatabase
@@ -97,6 +99,18 @@ def finalize_rows(
     return kept[: query.limit] if query.limit else kept
 
 
+def _prepare_batch(
+    *steps: Callable[[list[LeadRow]], None],
+) -> Callable[[list[LeadRow]], None]:
+    """Run the batch steps in order before the flusher saves it."""
+
+    def prepare(rows: list[LeadRow]) -> None:
+        for step in steps:
+            step(rows)
+
+    return prepare
+
+
 def parse_bounding_box(place: str, raw_box: list[str]) -> BoundingBox:
     """Turn Nominatim's ``[south, north, west, east]`` strings into floats.
 
@@ -141,6 +155,7 @@ class ScrapeSession:
         slots: int,
         *,
         locale: str,
+        check_crawlable: bool = False,
     ):
         self._redis = redis
         self._state = ScrapeState(redis, BUFFER_TTL_SECONDS)
@@ -173,6 +188,9 @@ class ScrapeSession:
                 )
             )
         profiles = GoogleMapProfileRepository(LeadRepository())
+        steps: list[Callable[[list[LeadRow]], None]] = [WebsiteResolutions()]
+        if check_crawlable:
+            steps.append(LeadCrawlability())
         #: No timer: a tile's rows are saved by ``finish`` when its job ends, and
         #: once more when the flusher stops, so a flush never races the workers.
         self._flusher = Flusher(
@@ -181,7 +199,7 @@ class ScrapeSession:
             save_row=profiles.save_row,
             crawl_sink=None,
             config=postgres,
-            prepare_batch=WebsiteResolutions(),
+            prepare_batch=_prepare_batch(*steps),
             save_rows=profiles.save_rows,
         )
 
@@ -404,6 +422,7 @@ def run_scrape(
         known_keys,
         1,
         locale=settings.locale_tag,
+        check_crawlable=settings.has_website,
     )
     try:
         result = session.run(name, settings)
@@ -1140,6 +1159,7 @@ class PlaceScraper:
             known_keys,
             len(lanes),
             locale=query.locale_tag,
+            check_crawlable=query.has_website,
         )
         try:
             carried = session.start()

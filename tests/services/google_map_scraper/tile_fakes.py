@@ -90,6 +90,7 @@ class TileEnv:
         )
         self.delivered = 0
         self.slot_counts: list[int] = []
+        self.check_crawlable: list[bool] = []
         self.stopped = 0
         self.deleted: set[str] = (
             set()
@@ -118,11 +119,21 @@ class TileSession:
     """Stands in for ``ScrapeSession``; same methods the coordinator calls."""
 
     def __init__(
-        self, env: TileEnv, config, redis, postgres, known_keys, slots, *, locale
+        self,
+        env: TileEnv,
+        config,
+        redis,
+        postgres,
+        known_keys,
+        slots,
+        *,
+        locale,
+        check_crawlable=False,
     ):
         self._env = env
         self._queue: deque[str] = deque()
         env.slot_counts.append(slots)
+        env.check_crawlable.append(check_crawlable)
 
     def start(self) -> list[str]:
         return list(self._env.carried)

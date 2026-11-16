@@ -95,6 +95,7 @@ class LeadRow(TypedDict):
     about: str
     user_reviews: str
     categories: str
+    is_crawlable: NotRequired[bool]
 
 
 class SettingsData(TypedDict):

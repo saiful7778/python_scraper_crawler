@@ -84,6 +84,35 @@ async def test_images_and_reviews_are_saved_to_their_own_tables_once(db, repo):
     ]
 
 
+async def test_saving_a_row_stores_its_crawlability(db, repo):
+    await repo.save_row(
+        {
+            "place_id": "p1",
+            "title": "Cafe A",
+            "website": "https://a.com",
+            "is_crawlable": True,
+        },
+        scrape_id="s1",
+    )
+
+    lead = await LeadModel.get(website_domain="a.com")
+    assert lead.is_crawlable is True
+
+
+async def test_saving_the_same_lead_with_a_new_crawlability_updates_it(db, repo):
+    row = {
+        "place_id": "p1",
+        "title": "Cafe A",
+        "website": "https://a.com",
+        "is_crawlable": False,
+    }
+    await repo.save_row(row, scrape_id="s1")
+    await repo.save_row({**row, "is_crawlable": True}, scrape_id="s1")
+
+    lead = await LeadModel.get(website_domain="a.com")
+    assert lead.is_crawlable is True
+
+
 async def test_saving_a_row_with_place_id_and_no_website_twice_creates_one_lead(
     db, repo
 ):

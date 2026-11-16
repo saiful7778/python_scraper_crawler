@@ -89,6 +89,22 @@ def test_finalize_rows_applies_the_limit():
     assert [row["title"] for row in kept] == ["0", "1"]
 
 
+def test_prepare_batch_runs_its_steps_in_order():
+    from app.services.google_map_scraper.scraper import _prepare_batch
+
+    calls: list[str] = []
+
+    def first(rows):
+        calls.append("first")
+
+    def second(rows):
+        calls.append("second")
+
+    _prepare_batch(first, second)([])
+
+    assert calls == ["first", "second"]
+
+
 def test_final_flush_has_no_time_limit():
     from app.services.google_map_scraper import scraper
 
