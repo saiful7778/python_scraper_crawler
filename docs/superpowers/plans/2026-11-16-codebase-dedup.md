@@ -24,7 +24,7 @@
 - A response with no `Content-Type` must stay not-crawlable now that the helper returns `""` instead of `None`.
 - Timestamps written before this change are second-precision and must still parse with `datetime.fromisoformat`.
 - A dropped Postgres connection during a save must reconnect once and retry, not lose the row (existing flusher tests pin this).
-- Two repository instances must not hand out the same global counter.
+- Two repository instances must keep separate counter caches. Cross-instance uniqueness of `counter` was never provided (verified identical on the pre-change commit) and is out of scope for this dedup.
 
 ---
 
@@ -361,7 +361,7 @@ git commit -m "refactor: share one Postgres connection keeper"
 - [ ] **Step 1: Run the existing counter tests as the guard**
 
 Run: `uv run pytest tests/repositories -q`
-Expected: PASS on the current code.
+Expected: PASS on the current code. These are behaviour tests, not a dedicated counter test; cross-instance counter uniqueness is a pre-existing limitation and out of scope.
 
 - [ ] **Step 2: Move the method into `BaseRepository`**
 

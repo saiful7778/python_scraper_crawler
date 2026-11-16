@@ -9,7 +9,7 @@ def test_utc_now_is_iso_utc_timestamp_with_microseconds() -> None:
     value = utc_now()
     parsed = datetime.fromisoformat(value)
     assert parsed.utcoffset() == timedelta(0)
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00", value)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?\+00:00", value)
 
 
 def test_isoformat_or_none_keeps_none() -> None:

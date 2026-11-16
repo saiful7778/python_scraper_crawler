@@ -35,7 +35,6 @@ class ScrapeDatabase:
     """Reads and writes the ``scrapes`` table; each call blocks until PostgreSQL answers."""
 
     def __init__(self, config: TortoiseConfig):
-        self._config = config
         self._repository = ScrapeRepository()
         self._connection = TortoiseConnection(config)
         self._closed = False

@@ -12,12 +12,13 @@ class BaseRepository:
     def __init__(self):
         self._counters: dict = {}
 
-    async def _next_global_counter(self):
-        value = self._counters.get(self._model)
+    async def _next_global_counter(self) -> int:
+        model = self._model
+        value = self._counters.get(model)
         if value is None:
-            value = (await self.last_counter(self._model)) or 0
+            value = (await self.last_counter(model)) or 0
         value += 1
-        self._counters[self._model] = value
+        self._counters[model] = value
         return value
 
     @staticmethod
