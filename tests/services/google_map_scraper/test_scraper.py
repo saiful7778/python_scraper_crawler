@@ -199,14 +199,45 @@ def test_a_lead_filtered_out_by_the_first_keyword_is_kept_for_the_second(
     monkeypatch, redis
 ):
     def behave(kw, slot):
-        phone = "" if kw == "cafes" else "+1 512"
+        phone = "" if kw == "cafes" else "512-555-0123"
         return Reply(rows=[row("same", place_id="p1", phone=phone)])
 
     _arrange(monkeypatch, behave)
     result = PlaceScraper(redis).scrape(
         _query(keywords=["cafes", "bakeries"], has_phone=True)
     )
-    assert [r["phone"] for r in result.rows] == ["+1 512"]
+    assert [r["phone"] for r in result.rows] == ["+15125550123"]
+
+
+def test_the_queue_formats_a_local_phone_as_e164_for_the_country(monkeypatch, redis):
+    _arrange(
+        monkeypatch,
+        lambda kw, slot: Reply(rows=[row("Cafe", phone="512-555-0123")]),
+    )
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], country="us"))
+    assert [r["phone"] for r in result.rows] == ["+15125550123"]
+
+
+def test_the_queue_stores_none_for_a_phone_the_country_cannot_validate(
+    monkeypatch, redis
+):
+    _arrange(
+        monkeypatch,
+        lambda kw, slot: Reply(rows=[row("Cafe", phone="not a phone")]),
+    )
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], country="us"))
+    assert [r["phone"] for r in result.rows] == [None]
+
+
+def test_the_phone_filter_drops_a_lead_whose_phone_is_invalid(monkeypatch, redis):
+    _arrange(
+        monkeypatch,
+        lambda kw, slot: Reply(rows=[row("Cafe", phone="not a phone")]),
+    )
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes"], country="us", has_phone=True)
+    )
+    assert result.rows == []
 
 
 def test_a_deleted_keyword_scrape_is_skipped_and_the_next_one_runs(monkeypatch, redis):
@@ -294,8 +325,8 @@ class _FakeDatabase:
 
 
 class _FakeFlusher:
-    def __init__(self, *_, **__):
-        pass
+    def __init__(self, *_, prepare_batch=None, **__):
+        self.prepare_batch = prepare_batch
 
     def start(self):
         pass
@@ -350,7 +381,7 @@ class _SessionEnv:
         self._redis = redis
         self.sessions = []
 
-    def session(self, slots):
+    def session(self, slots, country=""):
         session = scraper_module.ScrapeSession(
             EngineConfig(),
             self._redis,
@@ -358,6 +389,7 @@ class _SessionEnv:
             frozenset(),
             slots,
             locale="en-US",
+            country=country,
         )
         self.sessions.append(session)
         return session
@@ -375,6 +407,16 @@ def test_session_checks_the_database_before_it_starts(fake_session_env):
     session = fake_session_env.session(slots=1)
     session.start()
     assert session._database.checked == 1
+
+
+def test_the_session_formats_buffered_phones_before_they_are_saved(fake_session_env):
+    session = fake_session_env.session(slots=1, country="us")
+    rows = [
+        {"phone": "512-555-0123", "website": ""},
+        {"phone": "not a phone", "website": ""},
+    ]
+    session._flusher.prepare_batch(rows)
+    assert [row["phone"] for row in rows] == ["+15125550123", None]
 
 
 def test_session_runs_each_submitted_tile_on_its_slot(fake_session_env):

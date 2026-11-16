@@ -63,7 +63,7 @@ class LeadRow(TypedDict):
     open_hours: str
     popular_times: str
     website: str
-    phone: str
+    phone: str | None
     plus_code: str
     review_count: str
     review_rating: str

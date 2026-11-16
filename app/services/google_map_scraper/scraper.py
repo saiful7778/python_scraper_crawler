@@ -43,6 +43,7 @@ from .scrape.engine_config import EngineConfig
 from .scrape.lead_crawlability import LeadCrawlability
 from .scrape.lead_filter import keep_lead
 from .scrape.lead_rows import result_columns
+from .scrape.phone_numbers import format_phone_numbers
 from .scrape.scrape_database import ScrapeDatabase
 from .scrape.scrape_limits import BUFFER_TTL_SECONDS, MAX_RESUMES
 from .scrape.scrape_run import RunOutcome
@@ -155,6 +156,7 @@ class ScrapeSession:
         slots: int,
         *,
         locale: str,
+        country: str = "",
         check_crawlable: bool = False,
     ):
         self._redis = redis
@@ -188,7 +190,10 @@ class ScrapeSession:
                 )
             )
         profiles = GoogleMapProfileRepository(LeadRepository())
-        steps: list[Callable[[list[LeadRow]], None]] = [WebsiteResolutions()]
+        steps: list[Callable[[list[LeadRow]], None]] = [
+            partial(format_phone_numbers, country=country),
+            WebsiteResolutions(),
+        ]
         if check_crawlable:
             steps.append(LeadCrawlability())
         #: No timer: a tile's rows are saved by ``finish`` when its job ends, and
@@ -422,6 +427,7 @@ def run_scrape(
         known_keys,
         1,
         locale=settings.locale_tag,
+        country=settings.country,
         check_crawlable=settings.has_website,
     )
     try:
@@ -828,6 +834,7 @@ class _TileRun:
         self, tile: PlaceTile, rows: list[LeadRow]
     ) -> tuple[list[LeadRow], list[LeadRow]]:
         """Dedupe a tile's rows and apply the filters and limit; returns (deduped rows, kept rows)."""
+        format_phone_numbers(rows, self._query.country)
         keyword = tile["keyword_index"]
         seen = set(self._known)
         for keys in self._kept_keys.values():
@@ -1159,6 +1166,7 @@ class PlaceScraper:
             known_keys,
             len(lanes),
             locale=query.locale_tag,
+            country=query.country,
             check_crawlable=query.has_website,
         )
         try:

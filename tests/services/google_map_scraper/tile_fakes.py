@@ -128,6 +128,7 @@ class TileSession:
         slots,
         *,
         locale,
+        country="",
         check_crawlable=False,
     ):
         self._env = env
