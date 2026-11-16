@@ -34,6 +34,9 @@ def test_encode_url_as_ascii_returns_unparsable_url_unchanged() -> None:
         ("example.com", "example.com"),
         ("http://sub.shop.io:8080/x", "sub.shop.io"),
         ("", ""),
+        ("  https://www.Example.com/x  ", "example.com"),
+        ("   ", ""),
+        ("  www.example.com  ", "example.com"),
         ("http://[bad", ""),
     ],
 )
@@ -100,6 +103,10 @@ def test_validate_url_rejects_non_web_urls(url: str) -> None:
 
 def test_same_scope_ignores_www() -> None:
     assert same_scope("https://www.shop.example/a", "https://shop.example/") is True
+
+
+def test_same_scope_ignores_surrounding_whitespace() -> None:
+    assert same_scope("  https://www.example.com/x  ", "example.com") is True
 
 
 def test_same_scope_refuses_other_sites() -> None:

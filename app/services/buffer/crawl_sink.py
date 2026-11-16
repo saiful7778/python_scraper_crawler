@@ -18,6 +18,7 @@ from app.services.buffer.flusher import upsert
 from app.services.crawler.findings import Finding
 from app.services.crawler.lead_fields import lead_columns, social_links
 from app.utils.logger import get_logger
+from app.utils.url_utils import extract_site_host
 
 logger = get_logger(__name__)
 
@@ -61,7 +62,7 @@ async def store_crawl(snapshot: WebsiteSnapshot) -> None:
     A matching lead also gets the emails and socials the crawl found. Without
     a match the website is stored with no lead. Repeating it is harmless.
     """
-    domain = snapshot.website["host"].removeprefix("www.")
+    domain = extract_site_host(snapshot.website["host"])
     logger.debug(
         "storing crawl of %s: %d pages, %d links, %d findings, %d events",
         domain,

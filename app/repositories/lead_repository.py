@@ -1,4 +1,3 @@
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from app.models import (
@@ -9,6 +8,7 @@ from app.models import (
     LeadSocialModel,
 )
 from app.utils.errors import ScraperError, describe
+from app.utils.url_utils import extract_site_host
 
 from .base import BaseRepository
 
@@ -19,13 +19,7 @@ class LeadPersistenceError(ScraperError):
 
 def website_domain(website: str) -> str | None:
     """The host of a website, lowercased and without ``www.``; ``None`` when there is none."""
-    text = website.strip()
-    if not text:
-        return None
-    if "://" not in text:
-        text = "http://" + text
-    host = urlsplit(text).hostname
-    return host.removeprefix("www.") if host else None
+    return extract_site_host(website) or None
 
 
 class LeadRepository(BaseRepository):
