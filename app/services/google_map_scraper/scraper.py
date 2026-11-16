@@ -21,7 +21,7 @@ from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteQueue
 from app.utils.errors import ScraperError, describe
-from app.utils.failure_messages import is_proxy_failure
+from app.utils.failure_messages import is_proxy_failure, is_timeout_failure
 from app.utils.logger import get_logger
 from app.utils.proxies import mask_proxy_credentials
 from config.redis import RedisConfig
@@ -503,6 +503,7 @@ class _TileRun:
         self._flights: dict[str, _Flight] = {}
         self._load = [0] * len(lanes)
         self._retired: set[int] = set()
+        self._dead: set[int] = set()
         self._fresh_keys: dict[int, set[str]] = defaultdict(set)
         self._kept_keys: dict[int, set[str]] = defaultdict(set)
         self._rows_by_keyword: Counter[int] = Counter()
@@ -605,7 +606,25 @@ class _TileRun:
         proxies = self._session.proxies_of(scrape_id) or ()
         return self._lanes.index(proxies) if proxies in self._lanes else 0
 
+    def _revive_timed_out_slots(self) -> None:
+        """Bring back lanes retired for a timeout once every lane is idle.
+
+        A timeout may be one slow page, not a dead proxy. Retiring the lane still
+        makes the requeued tile run somewhere else, but with every lane retired
+        the run would stop with tiles still pending, so those lanes run again.
+        """
+        revived = self._retired - self._dead
+        if not revived:
+            return
+        self._retired -= revived
+        logger.info(
+            "revived %d timed-out proxy lane(s) so pending tiles still run",
+            len(revived),
+        )
+
     def _fill(self) -> None:
+        if len(self._retired) == len(self._lanes):
+            self._revive_timed_out_slots()
         for slot in range(len(self._lanes)):
             if self._cancel.is_set() or self.stopped:
                 return
@@ -688,8 +707,17 @@ class _TileRun:
             and outcome.status == ScrapeStatus.FAILED
             and is_proxy_failure(outcome.note)
         )
-        if blocked or proxy_failed:
+        timed_out = (
+            bool(self._lanes[slot])
+            and not blocked
+            and outcome.status == ScrapeStatus.FAILED
+            and not proxy_failed
+            and is_timeout_failure(outcome.note)
+        )
+        if blocked or proxy_failed or timed_out:
             self._retired.add(slot)
+            if blocked or proxy_failed:
+                self._dead.add(slot)
             attempts = tile["attempts"] + 1
             if attempts < len(self._query.proxies):
                 # Keep what this attempt found before the block: the run may end
@@ -697,10 +725,13 @@ class _TileRun:
                 fresh, kept = self._keep(tile, rows)
                 self._persist(scrape_id)
                 proxy = mask_proxy_credentials(self._lanes[slot][0])
-                cause = "was rate-limited" if blocked else "failed"
-                print(
-                    f"\n⚠ {proxy} {cause}: its tiles stop; this tile runs on another proxy"
-                )
+                if blocked:
+                    cause = "was rate-limited: its tiles stop"
+                elif proxy_failed:
+                    cause = "failed: its tiles stop"
+                else:
+                    cause = "timed out"
+                print(f"\n⚠ {proxy} {cause}; this tile runs on another proxy")
                 logger.warning("tile retried on another slot after %s %s", proxy, cause)
                 self._tiles.requeue(
                     tile["ID"],

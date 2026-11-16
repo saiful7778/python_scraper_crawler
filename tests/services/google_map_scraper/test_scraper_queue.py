@@ -146,6 +146,32 @@ def test_a_proxy_failure_stops_only_its_own_slot(arrange, redis):
     assert result.finished == 1 and result.blocked is False
 
 
+def test_a_navigation_timeout_requeues_the_tile_on_a_healthy_slot(arrange, redis):
+    env = arrange(
+        lambda kw, slot: failed("CDPError: no Page.loadEventFired event within 45.0 s")
+        if slot == 0
+        else done("b")
+    )
+    result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], proxies=PROXIES))
+    assert env.slots_used_for("cafes") == [0, 1]
+    assert result.finished == 1 and result.blocked is False
+
+
+def test_navigation_timeouts_do_not_retire_every_slot_and_stop_the_run(arrange, redis):
+    attempts = itertools.count()
+
+    def behave(kw, slot):
+        if next(attempts) < 2:
+            return failed("CDPError: no Page.loadEventFired event within 45.0 s")
+        return done(kw)
+
+    env = arrange(behave)
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries", "teas"], proxies=PROXIES)
+    )
+    assert result.finished == 3 and result.skipped == 0
+
+
 def test_the_other_slots_keep_running_after_one_slot_is_rate_limited(arrange, redis):
     arrange(lambda kw, slot: blocked("a") if slot == 0 else done(kw))
     result = PlaceScraper(redis).scrape(
