@@ -132,18 +132,10 @@ def _children(row: LeadRow) -> dict:
 
 class GoogleMapProfileRepository(BaseRepository):
     def __init__(self, leads: LeadRepository):
+        super().__init__()
         self._leads = leads
         self._model = GoogleMapProfileModel
-        self._counters = {}
         self._keyword_ids: dict[str, UUID] = {}
-
-    async def _next_global_counter(self):
-        value = self._counters.get(self._model)
-        if value is None:
-            value = (await self.last_counter(self._model)) or 0
-        value += 1
-        self._counters[self._model] = value
-        return value
 
     async def key_rows(self) -> list[LeadRow]:
         """The duplicate-check key fields of every stored profile and linked lead, and nothing else."""

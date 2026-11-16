@@ -24,16 +24,8 @@ def website_domain(website: str) -> str | None:
 
 class LeadRepository(BaseRepository):
     def __init__(self):
+        super().__init__()
         self._model = LeadModel
-        self._counters = {}
-
-    async def _next_global_counter(self):
-        value = self._counters.get(self._model)
-        if value is None:
-            value = (await self.last_counter(self._model)) or 0
-        value += 1
-        self._counters[self._model] = value
-        return value
 
     async def find_by_domain(self, domain: str | None) -> str | None:
         """The domain a new lead may take: ``None`` when there is none or another lead already has it."""

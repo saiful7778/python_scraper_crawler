@@ -9,6 +9,17 @@ logger = get_logger(__name__)
 
 
 class BaseRepository:
+    def __init__(self):
+        self._counters: dict = {}
+
+    async def _next_global_counter(self):
+        value = self._counters.get(self._model)
+        if value is None:
+            value = (await self.last_counter(self._model)) or 0
+        value += 1
+        self._counters[self._model] = value
+        return value
+
     @staticmethod
     def is_valid_uuid(val):
         if isinstance(val, UUID):
