@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from asyncpg.exceptions import ConnectionDoesNotExistError
@@ -7,7 +8,7 @@ from tortoise.context import TortoiseContext
 from app.models import GoogleMapProfileModel, LeadModel
 from app.repositories.google_map_profile_repository import GoogleMapProfileRepository
 from app.repositories.lead_repository import LeadRepository
-from app.services.buffer.flusher import FLUSH_SECONDS, Flusher
+from app.services.buffer.flusher import Flusher
 from app.services.buffer.keys import state_key
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
@@ -49,8 +50,11 @@ def make_flusher(state):
         flusher.shutdown()
 
 
-def test_flush_interval_is_five_seconds():
-    assert FLUSH_SECONDS == 5
+def test_there_is_no_flush_interval():
+    from app.services.buffer import flusher as module
+
+    assert not hasattr(module, "FLUSH_SECONDS")
+    assert "interval" not in Flusher.__init__.__annotations__
 
 
 def test_flush_saves_rows_in_order_and_removes_them(rows, state, make_flusher):
@@ -90,7 +94,7 @@ def test_flush_scrape_keeps_the_failed_row_and_the_rest(rows, state, make_flushe
     assert [row["title"] for row in rows.read_all("s1")] == ["B", "C"]
 
 
-def test_failed_flush_keeps_rows_for_next_tick(rows, state, make_flusher):
+def test_failed_flush_keeps_rows_for_the_next_save(rows, state, make_flusher):
     rows.append("s1", [{"title": "A"}])
     flusher = make_flusher(rows, Saved(fail_on={"A"}))
     assert flusher.flush_once() == 0
@@ -107,7 +111,7 @@ def test_flush_stops_at_the_first_failed_row_and_keeps_the_rest(
     assert [row["title"] for row in rows.read_all("s1")] == ["B", "C"]
 
 
-def test_flush_retries_a_failed_row_on_the_next_tick(rows, state, make_flusher):
+def test_flush_retries_a_failed_row_on_the_next_save(rows, state, make_flusher):
     rows.append("s1", [{"title": "A"}, {"title": "B"}])
     save = Saved(fail_on={"A"})
     flusher = make_flusher(rows, save)
@@ -144,13 +148,32 @@ def test_flush_refreshes_the_ttl_of_every_scrape_it_touches(
     assert 0 < fake_redis.ttl(state_key("s1")) <= 3600
 
 
-def test_run_flushes_until_shutdown(rows, state):
+def test_the_thread_saves_nothing_until_it_stops(rows, state):
     rows.append("s1", [{"title": "A"}])
-    flusher = Flusher(rows, state, save_row=Saved(), crawl_sink=None, interval=0.01)
+    save = Saved()
+    flusher = Flusher(rows, state, save_row=save, crawl_sink=None)
     flusher.start()
+    time.sleep(0.2)
+    assert save.calls == []
+    assert rows.length("s1") == 1
     flusher.shutdown(wait=2)
     assert not flusher.is_alive()
+    assert save.calls == [("s1", "A")]
     assert rows.length("s1") == 0
+
+
+def test_a_finished_job_saves_only_its_own_rows(rows, state):
+    rows.append("s1", [{"title": "A"}])
+    rows.append("s2", [{"title": "B"}])
+    save = Saved()
+    flusher = Flusher(rows, state, save_row=save, crawl_sink=None)
+    flusher.start()
+    try:
+        assert flusher.flush_scrape("s1") == 1
+        assert save.calls == [("s1", "A")]
+        assert rows.length("s2") == 1
+    finally:
+        flusher.shutdown(wait=2)
 
 
 def test_shutdown_without_limit_waits_for_a_slow_final_save(rows, state):
@@ -161,7 +184,7 @@ def test_shutdown_without_limit_waits_for_a_slow_final_save(rows, state):
         saved.append(row["id"])
 
     rows.append("s1", [{"id": "a"}])
-    flusher = Flusher(rows, state, save_row=slow_save, crawl_sink=None, interval=60)
+    flusher = Flusher(rows, state, save_row=slow_save, crawl_sink=None)
     flusher.start()
     flusher.shutdown(wait=None)
     assert saved == ["a"]
@@ -329,6 +352,27 @@ def test_connection_stays_open_between_flushes(tmp_path, rows, state):
     finally:
         flusher.shutdown()
     assert flusher._context is None
+
+
+def test_a_dead_connection_is_replaced_before_the_next_save(tmp_path, rows, state):
+    config = sqlite_config(tmp_path / "leads.db")
+    in_database(config, generate_schemas=True)
+    repo = GoogleMapProfileRepository(LeadRepository())
+    rows.append("s1", [{"place_id": "p1", "title": "A"}])
+    flusher = Flusher(
+        rows, state, save_row=repo.save_row, crawl_sink=None, config=config
+    )
+    try:
+        assert flusher.flush_once() == 1
+        dead = flusher._context
+        assert dead is not None
+        flusher._loop.run_until_complete(dead.close_connections())
+        rows.append("s1", [{"place_id": "p2", "title": "B"}])
+        assert flusher.flush_once() == 1
+        assert flusher._context is not dead
+        assert rows.length("s1") == 0
+    finally:
+        flusher.shutdown()
 
 
 def test_dropped_connection_is_replaced_by_a_new_one(tmp_path, rows, state):

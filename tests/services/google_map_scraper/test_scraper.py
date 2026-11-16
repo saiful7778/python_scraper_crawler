@@ -255,6 +255,10 @@ def test_a_postgres_error_stops_the_keyword_loop(monkeypatch, redis):
 class _FakeDatabase:
     def __init__(self, *_):
         self.finished = []
+        self.checked = 0
+
+    def check_connection(self):
+        self.checked += 1
 
     def requeue_interrupted(self, max_resumes):
         return 0, 0
@@ -349,6 +353,12 @@ def fake_session_env(monkeypatch, redis):
     yield env
     for session in env.sessions:
         session.stop()
+
+
+def test_session_checks_the_database_before_it_starts(fake_session_env):
+    session = fake_session_env.session(slots=1)
+    session.start()
+    assert session._database.checked == 1
 
 
 def test_session_runs_each_submitted_tile_on_its_slot(fake_session_env):

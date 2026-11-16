@@ -173,6 +173,8 @@ class ScrapeSession:
                 )
             )
         profiles = GoogleMapProfileRepository(LeadRepository())
+        #: No timer: a tile's rows are saved by ``finish`` when its job ends, and
+        #: once more when the flusher stops, so a flush never races the workers.
         self._flusher = Flusher(
             self._rows,
             self._state,
@@ -185,6 +187,7 @@ class ScrapeSession:
 
     def start(self) -> list[str]:
         """Resume interrupted scrapes, start the Flusher and the workers; returns the carried ids."""
+        self._database.check_connection()
         carried = self._resume_interrupted()
         self._flusher.start()
         for worker in self._workers:
@@ -205,8 +208,8 @@ class ScrapeSession:
     def finish(self, scrape_id: str) -> RunResult | None:
         """Save and finish one tile's leads and return its result; None if it has no outcome yet.
 
-        The flusher may still be behind on this scrape, so its rows are saved now
-        rather than waiting for the next flush tick.
+        This is the only point where a tile's rows are saved: the job finished, so
+        its buffered rows go to PostgreSQL now.
 
         :raises UnsavedLeadsError: If the tile's leads stay unsaved in Redis.
         :raises ScrapeDeletedError: If the tile was deleted while it ran.
@@ -381,9 +384,10 @@ def run_scrape(
     """Store the scrape, run it on Redis and PostgreSQL and wait until it has an outcome.
 
     Scrapes an earlier run left unfinished resume first. Then the scrape worker
-    runs this scrape while the flusher saves its leads. Leads whose keys are in
-    ``known_keys`` are skipped. The Redis data of the scrape is deleted when it
-    ends, and its ``scrapes`` row stays with the final status.
+    runs this scrape, and each finished tile's leads are saved as it finishes.
+    Leads whose keys are in ``known_keys`` are skipped. The Redis data of the
+    scrape is deleted when it ends, and its ``scrapes`` row stays with the final
+    status.
 
     :raises ScrapeDeletedError: If the scrape is deleted while it runs.
     :raises UnsavedLeadsError: If the final save leaves the scrape's leads in Redis.

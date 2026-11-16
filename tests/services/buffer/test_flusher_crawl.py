@@ -84,7 +84,7 @@ def test_finished_websites_are_stored_then_released(
     website_id = finish_website(crawl)
     sink = Sink()
 
-    make_flusher(sink).flush_once()
+    make_flusher(sink).flush_crawls()
 
     assert [s.website["id"] for s in sink.snapshots] == [website_id]
     assert [f["value"] for f in sink.snapshots[0].findings] == ["hi@a.de"]
@@ -92,19 +92,17 @@ def test_finished_websites_are_stored_then_released(
     assert fake_redis.get(crawl_key(website_id)) is None
 
 
-def test_a_failed_store_keeps_the_website_for_the_next_tick(
-    state, crawl, make_flusher
-):
+def test_a_failed_store_keeps_the_website_for_the_next_save(state, crawl, make_flusher):
     state.create("s1", {})
     website_id = finish_website(crawl)
     sink = Sink(fail=True)
     flusher = make_flusher(sink)
 
-    flusher.flush_once()
+    flusher.flush_crawls()
     assert crawl.finished_website_ids() == [website_id]
 
     sink.fail = False
-    flusher.flush_once()
+    flusher.flush_crawls()
     assert crawl.finished_website_ids() == []
     assert len(sink.snapshots) == 1
 
@@ -118,7 +116,7 @@ def test_an_expired_document_is_skipped_and_the_rest_are_stored(
     fake_redis.delete(crawl_key(expired))
     sink = Sink()
 
-    make_flusher(sink).flush_once()
+    make_flusher(sink).flush_crawls()
 
     assert [s.website["id"] for s in sink.snapshots] == [kept]
     assert crawl.finished_website_ids() == []
@@ -136,13 +134,13 @@ def test_one_failing_website_does_not_block_the_others(state, crawl, make_flushe
             await super().__call__(snapshot)
 
     sink = FailsFirst()
-    make_flusher(sink).flush_once()
+    make_flusher(sink).flush_crawls()
 
     assert [s.website["id"] for s in sink.snapshots] == [second]
     assert crawl.finished_website_ids() == [first]
 
 
-def test_the_shutdown_tick_stores_what_finished_last(state, crawl, make_flusher):
+def test_the_final_save_stores_what_finished_last(state, crawl, make_flusher):
     state.create("s1", {})
     finish_website(crawl)
     sink = Sink()
@@ -151,3 +149,16 @@ def test_the_shutdown_tick_stores_what_finished_last(state, crawl, make_flusher)
     flusher.shutdown(wait=5)
     assert not flusher.is_alive()
     assert len(sink.snapshots) == 1
+
+
+def test_flush_crawls_saves_only_the_finished_websites(state, crawl, make_flusher):
+    state.create("s1", {})
+    first = finish_website(crawl, position=0)
+    second = finish_website(crawl, position=1)
+    sink = Sink()
+    flusher = make_flusher(sink)
+
+    flusher.flush_crawls()
+
+    assert [s.website["id"] for s in sink.snapshots] == [first, second]
+    assert crawl.finished_website_ids() == []

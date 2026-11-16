@@ -22,7 +22,6 @@ from config.tortoise import TortoiseConfig
 
 logger = get_logger(__name__)
 
-FLUSH_SECONDS = 5
 BATCH_SIZE = 500
 #: Every context the engine opens uses this alias: Tortoise keeps each model's
 #: default connection on the model class, so two aliases would override each other.
@@ -31,12 +30,20 @@ CONNECTION = "scrape_engine"
 _KEPT_COLUMNS = frozenset({"id", "created_at"})
 #: Errors meaning the PostgreSQL connection itself is gone, not the row is bad.
 CONNECTION_LOST = (InterfaceError, ConnectionError, PostgresConnectionError)
+#: A cheap query that proves a PostgreSQL connection still answers.
+_PING_QUERY = "SELECT 1"
+
+
+async def check_connection(context: TortoiseContext) -> None:
+    """Raise if the context's PostgreSQL connection no longer answers."""
+    await context.db().execute_query(_PING_QUERY)
+
 
 SaveRow = Callable[[LeadRow, str], Awaitable[None]]
 #: Saves rows in order and returns how many were saved from the start.
 SaveRows = Callable[[list[LeadRow], str], Awaitable[int]]
 #: Stores one finished website snapshot. It raises when the snapshot cannot be
-#: stored yet; the flusher then keeps the website in Redis for the next tick.
+#: stored yet; the flusher then keeps the website in Redis for the next save.
 CrawlSink = Callable[[WebsiteSnapshot], Awaitable[None]]
 
 
@@ -76,9 +83,14 @@ class Flusher(threading.Thread):
 
     Rows leave Redis only after they are saved, and a scrape's rows are saved in
     order, so a failure keeps the failed row and everything after it for the
-    next tick. ``config`` makes the flusher open its own Tortoise connection on
+    next save. ``config`` makes the flusher open its own Tortoise connection on
     its event loop; without it, ``save_row`` runs in whatever Tortoise context
     the caller already has.
+
+    There is no periodic save: a queue job that finishes calls ``flush_scrape``
+    (a scrape's rows) or ``flush_crawls`` (finished website crawls), so rows are
+    written when their job ends. ``flush_once`` saves everything, which is what
+    the thread does once when it stops, so a stop never loses a finished job.
 
     After the rows, each finished crawl in ``crawl_buffer`` goes through
     ``crawl_sink`` and is released from Redis once the sink accepted it.
@@ -90,7 +102,6 @@ class Flusher(threading.Thread):
         state: ScrapeState,
         save_row: SaveRow,
         crawl_sink: CrawlSink | None,
-        interval: float = FLUSH_SECONDS,
         config: TortoiseConfig | None = None,
         crawl_buffer: RedisCrawlBuffer | None = None,
         prepare_batch: Callable[[list[LeadRow]], None] | None = None,
@@ -104,14 +115,23 @@ class Flusher(threading.Thread):
         self._prepare_batch = prepare_batch
         self._crawl_sink = crawl_sink
         self._crawl_buffer = crawl_buffer
-        self._interval = interval
         self._config = config
         self._context: TortoiseContext | None = None
         self._loop = asyncio.new_event_loop()
         self._stop_requested = threading.Event()
         #: One loop and one connection serve every caller, so a scrape is saved by
-        #: one thread at a time: the flusher thread or a scrape finishing its tile.
+        #: one thread at a time: the flusher thread at its final save, or a queue
+        #: job finishing its rows.
         self._lock = threading.Lock()
+
+    def flush_crawls(self) -> None:
+        """Store every finished crawl now, and release the ones the sink accepted.
+
+        The crawl stage calls this when a website's job finishes, so its crawl is
+        written then rather than on a timer.
+        """
+        with self._lock:
+            self._flush_crawls()
 
     def flush_once(self) -> int:
         saved = 0
@@ -126,9 +146,9 @@ class Flusher(threading.Thread):
     def flush_scrape(self, scrape_id: str) -> int:
         """Save every buffered row of one scrape now; returns how many were saved.
 
-        A scrape finishing its tile calls this, so its rows do not wait behind the
-        other scrapes of the run. A row that fails stops the save and stays in
-        Redis with the rows after it.
+        A queue job finishing its tile calls this, so its rows are written when
+        the job ends. A row that fails stops the save and stays in Redis with the
+        rows after it.
         """
         saved = 0
         while True:
@@ -143,6 +163,8 @@ class Flusher(threading.Thread):
             if not batch:
                 return 0
             self._state.refresh_ttl(scrape_id)
+            if not self._connection_ok():
+                return 0
             if self._prepare_batch is not None:
                 prepare_started = time.monotonic()
                 self._prepare_batch(batch)
@@ -165,10 +187,21 @@ class Flusher(threading.Thread):
             return count
 
     def run(self) -> None:
+        """Wait for the stop, then save what the last jobs left behind."""
         try:
-            while not self._stop_requested.wait(self._interval):
-                self._tick()
-            self._tick()
+            self._stop_requested.wait()
+            self._save_and_close()
+        except BaseException:
+            self._close()
+            raise
+
+    def _save_and_close(self) -> None:
+        try:
+            self.flush_once()
+        except Exception as error:
+            logger.error(
+                "flushing buffered rows failed: %s", describe(error), exc_info=error
+            )
         finally:
             self._close()
 
@@ -183,19 +216,16 @@ class Flusher(threading.Thread):
         elif self.ident is None:
             self._close()
 
-    def _tick(self) -> None:
-        try:
-            self.flush_once()
-        except Exception as error:
-            logger.error(
-                "flushing buffered rows failed: %s", describe(error), exc_info=error
-            )
-
     def _flush_crawls(self) -> None:
         crawl_buffer, sink = self._crawl_buffer, self._crawl_sink
         if crawl_buffer is None or sink is None:
             return
-        for website_id in crawl_buffer.finished_website_ids():
+        website_ids = crawl_buffer.finished_website_ids()
+        if not website_ids:
+            return
+        if not self._connection_ok():
+            return
+        for website_id in website_ids:
             try:
                 snapshot = crawl_buffer.read_website(website_id)
             except LookupError as error:
@@ -218,6 +248,30 @@ class Flusher(threading.Thread):
                 continue
             logger.info("crawl of website %s stored in PostgreSQL", website_id)
             crawl_buffer.release_website(website_id)
+
+    def _connection_ok(self) -> bool:
+        """True if the flusher's own connection answers; a dead one is replaced once."""
+        if self._config is None:
+            return True
+        try:
+            self._loop.run_until_complete(self._ensure_connection(self._config))
+        except Exception as error:
+            logger.error(
+                "the PostgreSQL connection is not usable; buffered rows stay in Redis: %s",
+                describe(error),
+                exc_info=error,
+            )
+            return False
+        return True
+
+    async def _ensure_connection(self, config: TortoiseConfig) -> None:
+        context = await self._open(config)
+        try:
+            await check_connection(context)
+        except Exception:  # noqa: BLE001 -- any failure means the connection is unusable
+            await self._drop_context()
+            context = await self._open(config)
+            await check_connection(context)
 
     async def _save_batch(self, batch: list[LeadRow], scrape_id: str) -> int:
         if self._save_rows is not None:

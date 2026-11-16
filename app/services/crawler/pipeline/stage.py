@@ -2,6 +2,7 @@
 
 import threading
 import time
+from collections.abc import Callable
 
 from app.helpers.http_fetcher import SITE_TIMEOUT, WebPageFetcher
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
@@ -53,6 +54,8 @@ class CrawlStage:
 
     A claimed job whose thread stops before ``complete`` stays in the queue's
     processing list, where ``requeue_processing`` finds it on the next start.
+    ``on_job_done`` runs after each website's job, so the flusher can save that
+    crawl then instead of waiting for a timer.
     """
 
     def __init__(
@@ -62,12 +65,14 @@ class CrawlStage:
         fetch: FetchFn,
         size: int,
         options: CrawlOptions,
+        on_job_done: Callable[[], None] | None = None,
     ):
         self._queue = queue
         self._buffer = buffer
         self._fetch = fetch
         self._size = size
         self._options = options
+        self._on_job_done = on_job_done
         self._origins = _Origins()
         self._stopped = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -131,5 +136,19 @@ class CrawlStage:
                     describe(error),
                     exc_info=error,
                 )
+            self._save_job()
         finally:
             self._origins.release(job["origin"])
+
+    def _save_job(self) -> None:
+        """Save what the job just wrote, since its website is done."""
+        if self._on_job_done is None:
+            return
+        try:
+            self._on_job_done()
+        except Exception as error:
+            logger.error(
+                "saving a finished crawl failed; it stays in Redis: %s",
+                describe(error),
+                exc_info=error,
+            )

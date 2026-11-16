@@ -62,9 +62,7 @@ def run_crawl_stage(
     buffer = RedisCrawlBuffer(redis, BUFFER_TTL_SECONDS)
     fetch = fetch or site_fetch(WebPageFetcher())
 
-    logger.info(
-        "crawl stage: %d website(s) from %d lead(s)", len(websites), len(rows)
-    )
+    logger.info("crawl stage: %d website(s) from %d lead(s)", len(websites), len(rows))
     queue.requeue_processing()
     intake = CrawlIntake(queue, buffer, fetch).submit(websites)
     logger.info(
@@ -75,7 +73,9 @@ def run_crawl_stage(
     )
 
     flusher = _flusher(redis, buffer, postgres)
-    stage = CrawlStage(queue, buffer, fetch, CRAWL_THREADS, options)
+    stage = CrawlStage(
+        queue, buffer, fetch, CRAWL_THREADS, options, on_job_done=flusher.flush_crawls
+    )
     flusher.start()
     try:
         stage.run_until_empty()

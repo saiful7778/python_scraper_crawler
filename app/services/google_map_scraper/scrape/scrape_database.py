@@ -14,7 +14,7 @@ from uuid import uuid4
 from tortoise.context import TortoiseContext
 
 from app.repositories.scrape_repository import ScrapeRepository
-from app.services.buffer.flusher import context_config
+from app.services.buffer.flusher import check_connection, context_config
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
 from config.tortoise import TortoiseConfig
@@ -104,6 +104,21 @@ class ScrapeDatabase:
             if record["Status"] == ScrapeStatus.PENDING
         ]
 
+    def check_connection(self) -> None:
+        """Check that PostgreSQL answers before the run uses it, reconnecting once if dead."""
+        if self._closed or not self._thread.is_alive():
+            raise ScrapeDatabaseError(
+                "PostgreSQL failed while checking the connection: the scrape database is closed"
+            )
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._ensure_connection(), self._loop
+            ).result()
+        except Exception as error:
+            raise ScrapeDatabaseError(
+                f"PostgreSQL failed while checking the connection: {describe(error)}"
+            ) from error
+
     def close(self) -> None:
         """Stop the loop thread; calling it twice is harmless."""
         if self._closed:
@@ -168,11 +183,33 @@ class ScrapeDatabase:
             self._context = context
         return self._context
 
+    async def _ensure_connection(self) -> TortoiseContext:
+        """The live context, opening a new one once if the old connection no longer answers."""
+        context = await self._open()
+        try:
+            await check_connection(context)
+        except Exception:  # noqa: BLE001 -- any failure means the connection is unusable
+            await self._drop_context()
+            context = await self._open()
+            await check_connection(context)
+        return context
+
+    async def _drop_context(self) -> None:
+        context, self._context = self._context, None
+        if context is None:
+            return
+        try:
+            await context.close_connections()
+        except Exception as error:  # noqa: BLE001 -- the connection is already dead
+            logger.warning(
+                "closing the lost PostgreSQL connection failed: %s", describe(error)
+            )
+
     async def _in_context(self, coroutine: Coroutine[object, object, T]) -> T:
         from tortoise.context import _current_context
 
         try:
-            context = await self._open()
+            context = await self._ensure_connection()
         except BaseException:
             coroutine.close()
             raise

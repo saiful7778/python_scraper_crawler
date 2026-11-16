@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.services.google_map_scraper.scrape.scrape_database import (
@@ -80,6 +82,37 @@ def test_an_unreachable_database_raises_an_error_that_names_postgres(tmp_path):
             database.get("00000000-0000-0000-0000-000000000000")
     finally:
         database.close()
+
+
+def test_a_dead_connection_is_replaced_before_the_next_call(database):
+    assert database.pending_ids() == []
+    dead = database._context
+    assert dead is not None
+    asyncio.run_coroutine_threadsafe(
+        dead.close_connections(), database._loop
+    ).result()
+
+    assert database.pending_ids() == []
+    assert database._context is not dead
+
+
+def test_check_connection_reconnects_a_dead_connection(database):
+    database.pending_ids()
+    dead = database._context
+    assert dead is not None
+    asyncio.run_coroutine_threadsafe(
+        dead.close_connections(), database._loop
+    ).result()
+
+    database.check_connection()
+    assert database._context is not dead
+
+
+def test_a_closed_database_refuses_a_connection_check(postgres):
+    database = ScrapeDatabase(postgres)
+    database.close()
+    with pytest.raises(ScrapeDatabaseError, match="PostgreSQL"):
+        database.check_connection()
 
 
 def test_a_closed_database_refuses_calls(postgres):

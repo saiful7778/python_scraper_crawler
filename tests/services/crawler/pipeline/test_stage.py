@@ -122,9 +122,7 @@ def test_submit_does_not_reset_a_website_already_in_the_buffer(queue, buffer):
     assert len(snapshot.runs) == 1
 
 
-def test_run_until_empty_checks_every_queued_job_and_empties_the_queue(
-    queue, buffer
-):
+def test_run_until_empty_checks_every_queued_job_and_empties_the_queue(queue, buffer):
     intake = CrawlIntake(queue, buffer, Web())
     intake.submit(["https://a.example", "https://b.example"])
 
@@ -135,6 +133,41 @@ def test_run_until_empty_checks_every_queued_job_and_empties_the_queue(
     assert buffer.finished_count() == 2
     for website_id in buffer.finished_website_ids():
         assert buffer.read_website(website_id).website["status"] != "running"
+
+
+def test_each_finished_job_saves_its_crawl(queue, buffer):
+    intake = CrawlIntake(queue, buffer, Web())
+    intake.submit(["https://a.example", "https://b.example"])
+    stored: list[list[str]] = []
+
+    stage = CrawlStage(
+        queue,
+        buffer,
+        Web(),
+        size=1,
+        options=CRAWL_OPTIONS,
+        on_job_done=lambda: stored.append(buffer.finished_website_ids()),
+    )
+    stage.run_until_empty()
+
+    assert len(stored) == 2
+    assert all(ids for ids in stored)
+
+
+def test_a_failing_save_hook_does_not_stop_the_crawl(queue, buffer):
+    intake = CrawlIntake(queue, buffer, Web())
+    intake.submit(["https://a.example", "https://b.example"])
+
+    def failing() -> list[str]:
+        raise RuntimeError("database is down")
+
+    stage = CrawlStage(
+        queue, buffer, Web(), size=1, options=CRAWL_OPTIONS, on_job_done=failing
+    )
+    stage.run_until_empty()
+
+    assert queue.pending() == 0
+    assert buffer.finished_count() == 2
 
 
 def test_site_fetch_passes_the_site_timeout():
