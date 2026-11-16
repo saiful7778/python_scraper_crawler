@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any
 
 from app.models import (
@@ -9,6 +8,7 @@ from app.models import (
     LeadAddressModel,
     LeadModel,
 )
+from app.utils.utils import isoformat_or_none
 
 
 class Resource:
@@ -16,10 +16,6 @@ class Resource:
 
     def to_dict(self) -> dict[str, Any]:
         raise NotImplementedError
-
-    @staticmethod
-    def iso(value: datetime | None) -> str | None:
-        return None if value is None else value.isoformat()
 
 
 class LeadAddressResource(Resource):
@@ -79,8 +75,8 @@ class LeadDetailResource(LeadListItemResource):
             "descriptions": lead.descriptions,
             "owner": lead.owner,
             "timezone": lead.timezone,
-            "created_at": self.iso(lead.created_at),
-            "updated_at": self.iso(lead.updated_at),
+            "created_at": isoformat_or_none(lead.created_at),
+            "updated_at": isoformat_or_none(lead.updated_at),
             "emails": [e.email for e in sorted(lead.emails, key=lambda e: e.created_at)],
             "socials": [
                 {"platform": s.platform, "url": s.url}
@@ -126,8 +122,8 @@ class CrawlRunResource(Resource):
             "status": run.status,
             "error_code": run.error_code,
             "error_message": run.error_message,
-            "started_at": self.iso(run.started_at),
-            "finished_at": self.iso(run.finished_at),
+            "started_at": isoformat_or_none(run.started_at),
+            "finished_at": isoformat_or_none(run.finished_at),
             "pages": [
                 CrawlPageResource(page).to_dict()
                 for page in sorted(run.pages, key=lambda p: p.depth)
@@ -161,7 +157,7 @@ class CrawlWebsiteResource(Resource):
             "status": website.status,
             "error_code": website.error_code,
             "error_message": website.error_message,
-            "finished_at": self.iso(website.finished_at),
+            "finished_at": isoformat_or_none(website.finished_at),
             "tech": {
                 "cms": website.cms,
                 "mobile_friendly": website.mobile_friendly,

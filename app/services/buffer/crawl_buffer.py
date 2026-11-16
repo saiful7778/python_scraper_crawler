@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -29,6 +29,7 @@ from app.services.buffer.keys import (
 )
 from app.services.crawler.findings import Finding
 from app.utils.logger import get_logger
+from app.utils.utils import utc_now
 
 logger = get_logger(__name__)
 
@@ -109,10 +110,6 @@ return event['id']
 """
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _new_id() -> str:
     return str(uuid4())
 
@@ -184,7 +181,7 @@ class RedisCrawlBuffer:
             "status": _RUNNING,
             "error_code": None,
             "error_message": None,
-            "created_at": _now(),
+            "created_at": utc_now(),
             "finished_at": None,
             **dict.fromkeys(WEBSITE_TECH_FIELDS),
         }
@@ -216,7 +213,7 @@ class RedisCrawlBuffer:
         if not self._redis.exists(crawl_key(website_id)):
             raise LookupError(f"crawl website {website_id} is not in the buffer")
         run_id = _new_id()
-        now = _now()
+        now = utc_now()
         run: Document = {
             "id": run_id,
             "website_id": website_id,
@@ -251,7 +248,7 @@ class RedisCrawlBuffer:
         website_id = cast(str, self._redis.hget(crawl_owners_key(), run_id))
         if website_id is None:
             raise LookupError(f"crawl item {run_id} is not in the buffer")
-        now = _now()
+        now = utc_now()
         seeds = {seed.normalized_url: seed for seed in pages}
         page_ids = {
             normalized_url: _page_id(run_id, normalized_url)
@@ -299,7 +296,7 @@ class RedisCrawlBuffer:
             "content_hash": result.content_hash,
             "error_code": result.error_code,
             "error_message": result.error_message,
-            "fetched_at": _now() if result.status == "fetched" else None,
+            "fetched_at": utc_now() if result.status == "fetched" else None,
         }
         updated = self._run(
             self._update_page,
@@ -323,7 +320,7 @@ class RedisCrawlBuffer:
         if raw is None:
             raise LookupError(f"crawl item {source_page_id} is not in the buffer")
         source = json.loads(raw)
-        now = _now()
+        now = utc_now()
         args: list[Any] = [self._ttl_seconds, website_id]
         for link in links:
             target_id = _page_id(source["run_id"], link.target_normalized_url)
@@ -379,7 +376,7 @@ class RedisCrawlBuffer:
         findings: list[Finding],
     ) -> None:
         """Store extracted values for a page, or for the whole site when ``page_id`` is None."""
-        now = _now()
+        now = utc_now()
         rows = [
             json.dumps(
                 {
@@ -430,7 +427,7 @@ class RedisCrawlBuffer:
                 "level": level,
                 "message": message,
                 "data": data,
-                "created_at": _now(),
+                "created_at": utc_now(),
             }
         )
         added = self._add_event(
@@ -466,7 +463,7 @@ class RedisCrawlBuffer:
         raw_run, raw_website = pipe.execute()
         if raw_run is None or raw_website is None:
             raise LookupError(f"crawl item {run_id} is not in the buffer")
-        finished = _now()
+        finished = utc_now()
         run = json.loads(raw_run)
         run.update(
             status=status,
@@ -513,7 +510,7 @@ class RedisCrawlBuffer:
             status="failed",
             error_code=error_code,
             error_message=error_message,
-            finished_at=_now(),
+            finished_at=utc_now(),
         )
         self._save_website(website_id, website, finished=True)
 
@@ -523,7 +520,7 @@ class RedisCrawlBuffer:
         if raw is None:
             raise LookupError(f"crawl website {website_id} is not in the buffer")
         website = json.loads(raw)
-        website.update(status=_SKIPPED, finished_at=_now())
+        website.update(status=_SKIPPED, finished_at=utc_now())
         self._save_website(website_id, website, finished=True)
 
     def mark_interrupted(self) -> None:
@@ -542,7 +539,7 @@ class RedisCrawlBuffer:
                 continue
             website = json.loads(raw)
             website_id = website["id"]
-            finished = _now()
+            finished = utc_now()
             run_rows = [json.loads(row) for row in raw_runs.values()]
             for run in run_rows:
                 if run["status"] in (_RUNNING, _QUEUED):
@@ -686,6 +683,6 @@ class RedisCrawlBuffer:
             "fetched_at": None,
             "error_code": None,
             "error_message": None,
-            "created_at": _now(),
+            "created_at": utc_now(),
             **fields,
         }

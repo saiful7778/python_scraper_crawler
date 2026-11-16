@@ -1,13 +1,9 @@
-import sys
 from datetime import UTC, datetime
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat()
 
 
-def log(msg: object) -> None:
-    try:
-        print(f"{utc_now()} {msg}", file=sys.stderr, flush=True)
-    except (OSError, ValueError):
-        pass
+def isoformat_or_none(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()

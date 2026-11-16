@@ -4,16 +4,11 @@ from tortoise.exceptions import IntegrityError
 
 from app.utils.errors import describe
 from app.utils.logger import get_logger
-from app.utils.utils import utc_now
 
 logger = get_logger(__name__)
 
 
 class BaseRepository:
-    @staticmethod
-    def now():
-        return utc_now()
-
     @staticmethod
     def is_valid_uuid(val):
         if isinstance(val, UUID):
