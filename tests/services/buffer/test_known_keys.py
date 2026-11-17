@@ -83,7 +83,7 @@ def test_discard_deletes_the_set(fake_redis):
 
 def test_full_redis_raises_buffer_full(fake_redis_full):
     keys = KnownKeys(fake_redis_full, ttl_seconds=3600)
-    with pytest.raises(BufferFullError, match="200mb"):
+    with pytest.raises(BufferFullError, match="500mb"):
         keys.load("s1", ["title:x"])
 
 

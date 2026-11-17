@@ -13,7 +13,7 @@ class BufferFullError(BufferError):
 
 
 FULL_MESSAGE = (
-    "Redis memory limit reached (maxmemory 200mb in infra/redis/redis.conf); "
+    "Redis memory limit reached (maxmemory 500mb in infra/redis/redis.conf); "
     "raise it to buffer more leads"
 )
 
