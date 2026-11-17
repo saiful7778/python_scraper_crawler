@@ -180,7 +180,7 @@ async def test_save_rows_twice_creates_nothing_new(db, repo):
     assert await LeadModel.all().count() == 2
 
 
-async def test_save_rows_keeps_the_rows_before_a_failing_one(db, repo):
+async def test_save_rows_keeps_the_rows_before_a_failing_one(db, repo, monkeypatch):
     rows = [
         {"place_id": "p1", "title": "Cafe A"},
         {"place_id": "p2", "title": "Cafe B", "cid": "7"},
@@ -195,8 +195,77 @@ async def test_save_rows_keeps_the_rows_before_a_failing_one(db, repo):
             raise ValueError("bad row")
         return await real(row)
 
+    async def failing_bulk(*args, **kwargs):
+        raise RuntimeError("bulk write failed")
+
     repo._save_parent = failing_on_second
+    monkeypatch.setattr(repo, "_write_batch", failing_bulk)
     assert await repo.save_rows(rows, scrape_id="s1") == 1
     assert calls == ["p1", "p2"]
     assert await GoogleMapProfileModel.filter(place_id="p1").count() == 1
     assert await GoogleMapProfileModel.filter(place_id="p2").count() == 0
+
+
+async def test_prepare_batch_merges_a_business_listed_twice(db, repo):
+    rows = [
+        {"place_id": "p1", "title": "Cafe A", "phone": "111"},
+        {"place_id": "p1", "title": "Cafe A", "phone": "222", "address": "1 Road"},
+    ]
+    prepared = await repo._prepare_batch(rows)
+
+    assert len(prepared) == 1
+    assert (
+        prepared[0].row["phone"] == "111"
+    )  # the first value wins, as a second save would
+    assert prepared[0].row["address"] == "1 Road"  # blanks are filled
+
+
+async def test_prepare_batch_matches_a_stored_profile(db, repo):
+    await repo.save_row({"place_id": "p1", "title": "Cafe A"}, scrape_id="s1")
+
+    prepared = await repo._prepare_batch([{"place_id": "p1", "title": "Cafe A"}])
+
+    assert prepared[0].profile is not None
+    assert prepared[0].profile.place_id == "p1"
+
+
+async def test_save_rows_uses_the_bulk_path_for_a_normal_batch(db, repo, monkeypatch):
+    async def unexpected_fallback(*args, **kwargs):
+        raise AssertionError("a normal batch fell back to saving row by row")
+
+    monkeypatch.setattr(repo, "_save_one_by_one", unexpected_fallback)
+    rows = [
+        {"place_id": "p1", "title": "Cafe A", "input_id": "coffee"},
+        {"place_id": "p2", "title": "Cafe B", "input_id": "coffee"},
+    ]
+
+    assert await repo.save_rows(rows, scrape_id="s1") == 2
+    assert await GoogleMapProfileModel.all().count() == 2
+    assert await LeadModel.all().count() == 2
+
+
+async def test_a_batch_keeps_two_businesses_on_one_domain_apart(db, repo):
+    rows = [
+        {"place_id": "p1", "title": "Cafe A", "website": "https://a.com"},
+        {"place_id": "p2", "title": "Cafe B", "website": "https://a.com"},
+    ]
+    assert await repo.save_rows(rows, scrape_id="s1") == 2
+
+    assert await LeadModel.all().count() == 2
+    assert await LeadModel.filter(website_domain="a.com").count() == 1
+    assert await LeadModel.filter(website_domain=None).count() == 1
+
+
+async def test_a_batch_saves_a_stored_business_and_a_new_one_together(db, repo):
+    await repo.save_row({"place_id": "p1", "title": "Cafe A"}, scrape_id="s1")
+
+    rows = [
+        {"place_id": "p1", "title": "Cafe A", "phone": "111"},
+        {"place_id": "p2", "title": "Cafe B"},
+    ]
+    assert await repo.save_rows(rows, scrape_id="s1") == 2
+
+    stored = await GoogleMapProfileModel.get(place_id="p1")
+    assert stored.lead_id is not None
+    assert await GoogleMapProfileModel.all().count() == 2
+    assert await LeadModel.all().count() == 2
