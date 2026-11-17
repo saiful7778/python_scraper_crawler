@@ -5,10 +5,12 @@ test decides what each proxy slot does with each keyword. Nothing here starts Ch
 or touches PostgreSQL.
 """
 
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from app.services.buffer.finish_pool import FinishPool
 from app.services.google_map_scraper.scrape.scrape_run import RunOutcome
 from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus
 from app.services.google_map_scraper.scrape.scrape_types import LeadRow, RunResult
@@ -96,6 +98,9 @@ class TileEnv:
             set()
         )  # deleted before their worker claims them: never reported
         self.cancelled: list[str] = []  # flights dropped while their worker ran
+        self.finish_started = threading.Event()
+        self.finish_gate: threading.Event | None = None  # set to hold a save open
+        self.deferred: list[str] = []
         self._count = 0
 
     def slots_used_for(self, keyword: str) -> list[int]:
@@ -135,6 +140,8 @@ class TileSession:
         self._queue: deque[str] = deque()
         env.slot_counts.append(slots)
         env.check_crawlable.append(check_crawlable)
+        # one slot cannot overlap, so only a multi-slot run finishes in the background
+        self._pool = FinishPool(self.finish, workers=4) if slots > 1 else None
 
     def start(self) -> list[str]:
         return list(self._env.carried)
@@ -188,11 +195,28 @@ class TileSession:
         )
         return scrape_id, outcome, reply.rows, slot
 
+    def defer_finish(self, scrape_id: str) -> None:
+        if self._pool is None:
+            self.finish(scrape_id)
+        else:
+            self._env.deferred.append(scrape_id)
+            self._pool.defer(scrape_id)
+
+    def flush_pending(self) -> None:
+        if self._pool is not None:
+            self._pool.drain()
+
+    def finish_error(self):
+        return None if self._pool is None else self._pool.error()
+
     def finish(self, scrape_id: str) -> RunResult | None:
         env = self._env
         reply = env.replies.get(scrape_id)
         if reply is None:
             return None
+        if env.finish_gate is not None:
+            env.finish_started.set()
+            env.finish_gate.wait(5)
         if reply.deleted:
             raise ScrapeDeletedError(f"scrape {scrape_id} was deleted")
         if reply.unsaved:
@@ -207,4 +231,6 @@ class TileSession:
         return None
 
     def stop(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
         self._env.stopped += 1

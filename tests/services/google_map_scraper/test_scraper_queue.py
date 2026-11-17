@@ -1,4 +1,6 @@
 import itertools
+import threading
+import time
 
 import fakeredis
 import pytest
@@ -154,9 +156,11 @@ def test_a_proxy_failure_stops_only_its_own_slot(arrange, redis):
 
 def test_a_navigation_timeout_requeues_the_tile_on_a_healthy_slot(arrange, redis):
     env = arrange(
-        lambda kw, slot: failed("CDPError: no Page.loadEventFired event within 45.0 s")
-        if slot == 0
-        else done("b")
+        lambda kw, slot: (
+            failed("CDPError: no Page.loadEventFired event within 45.0 s")
+            if slot == 0
+            else done("b")
+        )
     )
     result = PlaceScraper(redis).scrape(_query(keywords=["cafes"], proxies=PROXIES))
     assert env.slots_used_for("cafes") == [0, 1]
@@ -391,6 +395,30 @@ def test_unsaved_leads_raise_and_keep_the_queue(arrange, redis):
     with pytest.raises(UnsavedLeadsError):
         PlaceScraper(redis).scrape(_query(keywords=["cafes", "bakeries"]))
     assert redis.keys("place_queue:*")
+
+
+def test_a_slot_takes_another_tile_while_the_finished_one_is_still_saving(
+    arrange, redis
+):
+    env = arrange(lambda kw, slot: done(kw))
+    env.finish_gate = threading.Event()
+
+    run = threading.Thread(
+        target=lambda: PlaceScraper(redis).scrape(
+            _query(keywords=["cafes", "bakeries", "pubs"], proxies=PROXIES)
+        )
+    )
+    run.start()
+    try:
+        assert env.finish_started.wait(5)  # a save is now holding the finish pool
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len({kw for kw, _ in env.searched}) < 3:
+            time.sleep(0.01)
+        assert {kw for kw, _ in env.searched} == {"cafes", "bakeries", "pubs"}
+    finally:
+        env.finish_gate.set()
+        run.join(5)
+    assert not run.is_alive()
 
 
 def test_a_crash_in_a_cell_resumes_at_that_cell(arrange, redis):

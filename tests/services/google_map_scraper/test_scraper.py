@@ -166,7 +166,10 @@ def test_finish_saves_the_tiles_rows_before_it_checks_that_they_are_saved(redis)
     session._rows = rows
     session._database = database
     session._redis = redis
-    session._flusher = flusher
+    session._flushers = [flusher]
+    session._free_flushers = queue.Queue()
+    session._free_flushers.put(flusher)
+    session._finishers = None
     try:
         result = session.finish(scrape_id)
     finally:
@@ -415,7 +418,7 @@ def test_the_session_formats_buffered_phones_before_they_are_saved(fake_session_
         {"phone": "512-555-0123", "website": ""},
         {"phone": "not a phone", "website": ""},
     ]
-    session._flusher.prepare_batch(rows)
+    session._flushers[0].prepare_batch(rows)
     assert [row["phone"] for row in rows] == ["+15125550123", None]
 
 

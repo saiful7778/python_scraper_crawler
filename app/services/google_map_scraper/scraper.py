@@ -17,6 +17,7 @@ from app.repositories import GoogleMapProfileRepository, LeadRepository
 from app.services.browser import BrowserSession, SharedBrowser
 from app.services.buffer.client import BufferError, connect
 from app.services.buffer.discard import discard_scrape
+from app.services.buffer.finish_pool import FinishPool
 from app.services.buffer.flusher import Flusher
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
@@ -59,6 +60,7 @@ SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
 
 _POLL_SECONDS = 1
 _EXISTENCE_POLLS = 5  # idle polls between checks that the queued scrapes still exist
+_FINISH_WORKERS = 4  # background saves at once; each has its own PostgreSQL connection
 
 
 class BoundingBoxError(ScraperError):
@@ -196,23 +198,41 @@ class ScrapeSession:
         ]
         if check_crawlable:
             steps.append(LeadCrawlability())
+        flusher_count = min(_FINISH_WORKERS, slots) if slots > 1 else 1
         #: No timer: a tile's rows are saved by ``finish`` when its job ends, and
         #: once more when the flusher stops, so a flush never races the workers.
-        self._flusher = Flusher(
-            self._rows,
-            self._state,
-            save_row=profiles.save_row,
-            crawl_sink=None,
-            config=postgres,
-            prepare_batch=_prepare_batch(*steps),
-            save_rows=profiles.save_rows,
+        #: With two or more slots each flusher can save a different scrape at once.
+        self._flushers = [
+            Flusher(
+                self._rows,
+                self._state,
+                save_row=profiles.save_row,
+                crawl_sink=None,
+                config=postgres,
+                prepare_batch=_prepare_batch(*steps),
+                save_rows=profiles.save_rows,
+            )
+            for _ in range(flusher_count)
+        ]
+        #: A save takes a free flusher, so two saves never share one connection.
+        self._free_flushers: queue.Queue[Flusher] = queue.Queue()
+        for flusher in self._flushers:
+            self._free_flushers.put(flusher)
+        #: With one slot a save cannot overlap anything, so it stays synchronous.
+        #: With more, saves run in the background: a slot takes its next tile
+        #: without waiting for the previous tile's rows to reach PostgreSQL.
+        self._finishers: FinishPool | None = (
+            FinishPool(self._finish_deferred, workers=flusher_count)
+            if slots > 1
+            else None
         )
 
     def start(self) -> list[str]:
         """Resume interrupted scrapes, start the Flusher and the workers; returns the carried ids."""
         self._database.check_connection()
         carried = self._resume_interrupted()
-        self._flusher.start()
+        for flusher in self._flushers:
+            flusher.start()
         for worker in self._workers:
             worker.start()
         return carried
@@ -232,15 +252,52 @@ class ScrapeSession:
         """Save and finish one tile's leads and return its result; None if it has no outcome yet.
 
         This is the only point where a tile's rows are saved: the job finished, so
-        its buffered rows go to PostgreSQL now.
+        its buffered rows go to PostgreSQL now. Each caller takes a free flusher,
+        so a background save never shares a connection with another one.
 
         :raises UnsavedLeadsError: If the tile's leads stay unsaved in Redis.
         :raises ScrapeDeletedError: If the tile was deleted while it ran.
         """
         if scrape_id not in self._finished:
             return None
-        self._flusher.flush_scrape(scrape_id)
+        flusher = self._free_flushers.get()
+        try:
+            flusher.flush_scrape(scrape_id)
+        finally:
+            self._free_flushers.put(flusher)
         return self._finish_one(scrape_id)
+
+    def defer_finish(self, scrape_id: str) -> None:
+        """Save a finished tile without holding up the slot's next tile.
+
+        A one-slot run has nothing to overlap, so it saves right here and any
+        error reaches the caller; a run with more slots saves in the background
+        and reports the error through ``finish_error``.
+        """
+        if self._finishers is None:
+            self.finish(scrape_id)
+            return
+        self._finishers.defer(scrape_id)
+
+    def flush_pending(self) -> None:
+        """Wait until every deferred save has been written."""
+        if self._finishers is not None:
+            self._finishers.drain()
+
+    def finish_error(self) -> BaseException | None:
+        """The first background save that failed, if any."""
+        return None if self._finishers is None else self._finishers.error()
+
+    def _finish_deferred(self, scrape_id: str) -> None:
+        """Finish one scrape on a finisher thread; a deleted scrape is not an error."""
+        try:
+            self.finish(scrape_id)
+        except ScrapeDeletedError as error:
+            logger.info(
+                "scrape %s was deleted before it was saved: %s",
+                scrape_id,
+                describe(error),
+            )
 
     def create(self, name: str, settings: SettingsData) -> str:
         """Store a new pending scrape and return its id; a worker runs it once submitted."""
@@ -284,10 +341,13 @@ class ScrapeSession:
         return self._finish(carried, scrape_id)
 
     def stop(self) -> None:
+        self.flush_pending()
+        if self._finishers is not None:
+            self._finishers.close()
         for name, stop in (
             ("scrape workers", self._shutdown_workers),
             ("shared browser", lambda: self._shared and self._shared.close()),
-            ("flusher", lambda: self._flusher.shutdown(wait=None)),
+            ("flushers", self._shutdown_flushers),
             ("scrape database", self._database.close),
         ):
             try:
@@ -306,6 +366,10 @@ class ScrapeSession:
         for worker in self._workers:
             if worker.is_alive():
                 worker.join(1)
+
+    def _shutdown_flushers(self) -> None:
+        for flusher in self._flushers:
+            flusher.shutdown(wait=None)
 
     def _resume_interrupted(self) -> list[str]:
         resumed, failed = self._database.requeue_interrupted(MAX_RESUMES)
@@ -356,7 +420,8 @@ class ScrapeSession:
     def _finish(self, carried: list[str], scrape_id: str) -> RunResult:
         ids = [i for i in (*carried, scrape_id) if i in self._finished]
         self._shutdown_workers()
-        self._flusher.shutdown(wait=None)
+        self.flush_pending()
+        self._shutdown_flushers()
         result: RunResult | None = None
         for finished_id in ids:
             if finished_id == scrape_id:
@@ -598,10 +663,18 @@ class _TileRun:
             print("⏸ Finishing the current cell, press Ctrl-C again to quit")
             self._drain()
             raise
+        finally:
+            self._session.flush_pending()
+        error = self._session.finish_error()
+        if error is not None:
+            raise error
 
     def _drain(self) -> None:
         idle = 0
         while self._flights:
+            error = self._session.finish_error()
+            if error is not None:
+                raise error
             item = self._session.next_finished(_POLL_SECONDS)
             if item is None:
                 self._session.check_workers()
@@ -881,9 +954,9 @@ class _TileRun:
         self._open_by_keyword[tile["keyword_index"]] -= 1
 
     def _persist(self, scrape_id: str) -> None:
-        """Save a tile's scrape to PostgreSQL. Its result is already in the queue."""
+        """Hand a tile's scrape to its save. Its result is already in the queue."""
         try:
-            self._session.finish(scrape_id)
+            self._session.defer_finish(scrape_id)
         except ScrapeDeletedError as error:
             logger.warning(
                 "scrape %s was deleted before it was saved: %s",
