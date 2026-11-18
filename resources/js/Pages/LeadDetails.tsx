@@ -68,7 +68,6 @@ export interface LeadDetail {
   phone: string | null;
   website: string | null;
   website_domain: string | null;
-  status: string | null;
   descriptions: string | null;
   owner: string | null;
   timezone: string | null;
@@ -259,7 +258,6 @@ export default function LeadDetails({ lead }: LeadDetailsProps) {
           <CardContent>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="#" value={lead.counter} />
-              <Field label="Status" value={lead.status} />
               <Field label="Owner" value={lead.owner} />
               <Field label="Phone" value={lead.phone} />
               <Field label="Timezone" value={lead.timezone} />

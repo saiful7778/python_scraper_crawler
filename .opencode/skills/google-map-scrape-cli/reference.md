@@ -7,7 +7,7 @@ Operational detail behind [SKILL.md](SKILL.md).
 | Table                              | Contents                                                               |
 | ---------------------------------- | ---------------------------------------------------------------------- |
 | `scrapes`                          | One row per keyword/tile, with status, error and progress JSON.        |
-| `leads`                            | Business name, address, phone, website, status.                        |
+| `leads`                            | Business name, address, phone, website.                                |
 | `google_maps_profiles`             | Ratings, review counts, hours, images, place ids, linked by `lead_id`. |
 | `lead_addresses`                   | Parsed address, latitude/longitude, plus code.                         |
 | `lead_categories`                  | Categories.                                                            |

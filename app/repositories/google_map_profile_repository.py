@@ -51,7 +51,6 @@ LEAD_FIELDS = (
     "address",
     "phone",
     "website",
-    "status",
     "descriptions",
     "owner",
     "timezone",

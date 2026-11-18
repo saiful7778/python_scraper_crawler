@@ -24,7 +24,6 @@ LeadKey = Literal[
     "latitude",
     "longitude",
     "cid",
-    "status",
     "descriptions",
     "reviews_link",
     "thumbnail",
@@ -76,7 +75,6 @@ class LeadRow(TypedDict):
     latitude: float | None
     longitude: float | None
     cid: str
-    status: str
     descriptions: str
     reviews_link: str
     thumbnail: str

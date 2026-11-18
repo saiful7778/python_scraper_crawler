@@ -72,7 +72,6 @@ class PlaceRecord(TypedDict, total=False):
     longitude: float
     place_id: str
     data_id: str
-    open_state: str | int | float
     thumbnail: str
     timezone: str
     price_range: str
@@ -130,7 +129,6 @@ FIELD_PATHS = {
     "longitude": (9, 3),
     "place_id": (78,),
     "data_id": (10,),
-    "open_state": (203, 1, 4, 0),
     "thumbnail": (72, 0, 0, 6, 0),
     "timezone": (30,),
     "price_range": (4, 2),

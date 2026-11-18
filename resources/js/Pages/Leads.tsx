@@ -26,7 +26,6 @@ export interface Lead {
   phone: string | null;
   email: string | null;
   website: string | null;
-  status: string | null;
 }
 
 interface LeadsProps {

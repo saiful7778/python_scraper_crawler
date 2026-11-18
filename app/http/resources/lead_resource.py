@@ -58,7 +58,6 @@ class LeadListItemResource(Resource):
                 None,
             ),
             "website": lead.website,
-            "status": lead.status,
         }
 
 
