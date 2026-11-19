@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-BASE_ARGS = ["--keywords", "coffee shops", "--city", "Austin", "--country", "us"]
+BASE_ARGS = ["--keyword", "coffee shops", "--city", "Austin", "--country", "us"]
 
 
 def parse(monkeypatch: pytest.MonkeyPatch, *extra: str):
@@ -38,12 +38,14 @@ def test_unsaved_leads_exit_with_the_message(monkeypatch, capsys):
     assert "4 lead(s)" in str(exit_info.value)
 
 
-def test_keywords_are_split_on_commas(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_repeated_keyword_flags_make_one_keyword_each(monkeypatch) -> None:
     from cli.google_map_scrape_cli import read_query
 
     args = [
-        "--keywords",
-        "coffee shops,bakeries",
+        "--keyword",
+        "coffee shops",
+        "--keyword",
+        "bakeries",
         "--city",
         "Austin",
         "--country",
@@ -53,13 +55,24 @@ def test_keywords_are_split_on_commas(monkeypatch: pytest.MonkeyPatch) -> None:
     assert read_query().keywords == ("coffee shops", "bakeries")
 
 
-def test_keywords_drop_blanks_and_repeats(monkeypatch: pytest.MonkeyPatch) -> None:
-    from cli.google_map_scrape_cli import keyword_names
+def test_the_keywords_flag_is_gone(monkeypatch) -> None:
+    from cli.google_map_scrape_cli import read_query
 
-    assert keyword_names(" coffee shops, bakeries ,,coffee shops") == [
-        "coffee shops",
-        "bakeries",
-    ]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            "--keywords",
+            "a,b",
+            "--city",
+            "A",
+            "--country",
+            "us",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        read_query()
 
 
 def test_proxies_split_on_commas_and_drop_blanks_and_repeats():
@@ -157,28 +170,6 @@ def test_a_keyword_without_flags_gets_depth_five_and_grid_one(monkeypatch):
     ]
 
 
-def test_a_keyword_list_shares_the_depth_and_grid_after_it(monkeypatch):
-    from cli.google_map_scrape_cli import read_query
-
-    args = [
-        "--keywords",
-        "coffee shops,bakeries",
-        "--depth",
-        "6",
-        "--grid",
-        "2",
-        "--city",
-        "Austin",
-        "--country",
-        "us",
-    ]
-    monkeypatch.setattr(sys, "argv", ["google_map_scrape_cli.py", *args])
-    assert [(p.keyword, p.depth, p.grid) for p in read_query().keyword_plans] == [
-        ("coffee shops", 6, 2),
-        ("bakeries", 6, 2),
-    ]
-
-
 def test_a_numeric_keyword_is_a_name_not_a_depth(monkeypatch):
     from cli.google_map_scrape_cli import read_query
 
@@ -210,7 +201,7 @@ def test_a_depth_before_any_keyword_exits_with_a_named_error(monkeypatch):
     )
     with pytest.raises(SystemExit) as exit_info:
         read_query()
-    assert "--depth must follow a --keyword or --keywords flag" in str(exit_info.value)
+    assert "--depth must follow a --keyword flag" in str(exit_info.value)
 
 
 def test_no_keyword_exits_with_the_required_message(monkeypatch):

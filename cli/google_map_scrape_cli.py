@@ -54,42 +54,33 @@ def comma_list(text: str, label: str) -> list[str]:
     return names
 
 
-def keyword_names(text: str) -> list[str]:
-    return comma_list(text, "keyword")
-
-
 def proxy_names(text: str) -> list[str]:
     return comma_list(text, "proxy")
 
 
 class KeywordAction(argparse.Action):
-    """Open a keyword plan: the --depth/--grid that follow belong to it."""
+    """Start a keyword plan: the --depth/--grid that follow belong to it."""
 
     def __call__(self, parser, namespace, values, option_string=None):
+        plan = {"keyword": str(values), "depth": None, "grid": None}
         plans = getattr(namespace, "keyword_plans", None)
         if plans is None:
             plans = namespace.keyword_plans = []
-        names: list[str] = (
-            [values] if isinstance(values, str) else [str(v) for v in values or ()]
-        )
-        opened = [{"keyword": name, "depth": None, "grid": None} for name in names]
-        plans.extend(opened)
-        # the flag's scope: every plan it just opened, so a list shares its values
-        namespace.keyword_scope = opened
+        plans.append(plan)
+        namespace.keyword_scope = plan
 
 
 class KeywordScopedAction(argparse.Action):
-    """Set a value on the plan the last keyword flag opened."""
+    """Set a value on the plan the last --keyword flag started."""
 
     def __call__(self, parser, namespace, values, option_string=None):
-        scope = getattr(namespace, "keyword_scope", None)
-        if not scope:
+        plan = getattr(namespace, "keyword_scope", None)
+        if plan is None:
             namespace.keyword_plan_error = (
-                f"{option_string} must follow a --keyword or --keywords flag"
+                f"{option_string} must follow a --keyword flag"
             )
             return
-        for plan in scope:
-            plan[self.dest] = values
+        plan[self.dest] = values
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -100,13 +91,6 @@ def build_parser() -> argparse.ArgumentParser:
         action=KeywordAction,
         metavar="KEYWORD",
         help='a business type to search for, e.g. "coffee shops"; repeat it for more keywords, and give each its own --depth/--grid after it',
-    )
-    ap.add_argument(
-        "--keywords",
-        type=keyword_names,
-        action=KeywordAction,
-        metavar="KW,...",
-        help="comma-separated business types; all of them take the --depth/--grid that follow",
     )
     ap.add_argument("--city", required=True, help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -129,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         action=KeywordScopedAction,
         metavar="N",
-        help="batches of results per keyword, 1 to 10 (default: 5); follows a --keyword/--keywords flag",
+        help="batches of results per keyword, 1 to 10 (default: 5); follows a --keyword flag",
     )
     ap.add_argument(
         "--lang",
@@ -142,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         action=KeywordScopedAction,
         metavar="N",
-        help="split the --city area into N x N map tiles for that keyword, one scrape each, deduped (breaks Google's ~120 per search cap; default: 1, max 10); follows a --keyword/--keywords flag",
+        help="split the --city area into N x N map tiles for that keyword, one scrape each, deduped (breaks Google's ~120 per search cap; default: 1, max 10); follows a --keyword flag",
     )
     ap.add_argument(
         "--max-time",
@@ -188,8 +172,7 @@ def read_query() -> CliQuery:
     if not plans:
         logger.warning("invalid arguments: no keyword")
         sys.exit(
-            "✗ --keyword is required: give at least one keyword "
-            '(--keyword "coffee shops" or --keywords "a,b").'
+            '✗ --keyword is required: give at least one, e.g. --keyword "coffee shops".'
         )
     values["keyword_plans"] = [
         {key: value for key, value in plan.items() if value is not None}

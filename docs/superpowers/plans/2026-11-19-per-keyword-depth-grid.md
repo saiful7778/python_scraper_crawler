@@ -4,6 +4,10 @@
 
 **Goal:** Let one CLI command give each keyword its own `--depth` and `--grid`, and delete deep scan end to end.
 
+> **Amendment (after execution):** `--keywords` was removed; `--keyword`/`-k` is
+> the only keyword flag. The tasks below describe the original plan, which kept a
+> comma-list compatibility flag. See the spec for the current design.
+
 **Architecture:** `PlaceQuery` gains a `keyword_plans` tuple of `KeywordPlan(keyword, depth, grid)`, derived from `keywords` plus the run-level `scroll_depth`/`grid` when no plans are given, so library callers and stored records keep working. The scraper reads a keyword's plan by its 1-based `keyword_index` instead of the run-level values, and treats `grid == 1` as the existing whole-city path. The CLI parses repeated `--keyword` flags into plans with two small argparse actions.
 
 **Tech Stack:** Python 3.12, pydantic v2, argparse, pytest, fakeredis.

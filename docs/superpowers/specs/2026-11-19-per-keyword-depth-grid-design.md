@@ -39,8 +39,8 @@ the whole run. Deep scan goes away entirely in the same change.
 - Remove deep scan: the CLI flag, the `deep_scan` field, the saturated-tile
   split, sub-tiles, `SATURATED`, `PlaceTileQueue.insert_after_keyword`, and the
   tests and docs that describe it.
-- `--keywords "a,b"` keeps working, so existing commands, tests and the
-  `google-map-scrape-cli` skill doc stay valid.
+- `--keyword` is the only keyword flag: `--keywords "a,b"` is removed, because
+  a keyword list cannot give each name its own depth and grid.
 
 ## Non-goals
 
@@ -61,8 +61,8 @@ the whole run. Deep scan goes away entirely in the same change.
   becomes a configuration.
 - Losing the shared-run behaviour: a command that used to geocode once, dedupe
   across keywords and salvage on Ctrl-C must still do all three.
-- `--keywords a,b --depth 6 --grid 2` changing meaning, or an existing test
-  needing its meaning changed rather than its data updated.
+- A removed `--keywords` flag being silently accepted, so a command that used
+  it searches something other than what the user typed.
 - Leaving a half-removed deep scan: dead fields, dead helpers, tests that pass
   because the feature is unreachable.
 
@@ -84,15 +84,13 @@ Flags only. A bare number after a keyword is a keyword name, never a depth, so a
 mistake cannot be silently read as configuration.
 
 - `--keyword KW` / `-k KW` (repeatable) starts one keyword entry with no explicit
-  depth or grid.
-- `--keywords KW,...` (repeatable, comma list) starts one entry per name, all
-  sharing whatever depth and grid follow it. This is the compatibility form.
-- `--depth N` and `--grid N` apply to the entries opened by the most recent
-  keyword flag. Repeating them for the same entry keeps the last value.
+  depth or grid. It is the only keyword flag; `--keywords` is gone.
+- `--depth N` and `--grid N` apply to the entry opened by the most recent
+  `--keyword`. Repeating them for the same entry keeps the last value.
 - `--depth`/`--grid` before any keyword flag is a usage error that names the
-  problem: `✗ --depth must follow a --keyword or --keywords flag.`
+  problem: `✗ --depth must follow a --keyword flag.`
 - No keyword flag at all exits with
-  `✗ --keyword is required: give at least one keyword (--keyword "coffee shops" or --keywords "a,b").`
+  `✗ --keyword is required: give at least one, e.g. --keyword "coffee shops".`
 - `--depth` range 1–10 and `--grid` range 1–10, as today, enforced by the model
   (`strict=True`, so `--depth 6.5` is rejected).
 - Other flags (`--city`, `--state`, `--country`, `--lang`,
@@ -201,9 +199,8 @@ The rate-limit heads-up triggers when any keyword has `depth >= 10` or
 
 - `tests/cli/test_google_map_scrape_cli.py`: repeated `-k ... --depth ... --grid`
   pairs produce the expected plans; omitted values give depth 5 and grid 1;
-  `--keywords a,b --depth 6 --grid 2` gives both keywords depth 6 and grid 2;
-  `--depth` before any keyword exits with the named error; no keyword exits with
-  the required error; the existing comma-splitting, proxies and dry-run tests
+  `--keywords` is rejected; `--depth` before any keyword exits with the named
+  error; no keyword exits with the required error; the proxies and dry-run tests
   keep passing (their meaning is unchanged).
 - `tests/services/google_map_scraper/`: a two-keyword run with grids 1 and 2
   searches 1 and 4 tiles respectively, each printed with its own depth; every
