@@ -56,8 +56,6 @@ from .scrape.website_resolver import WebsiteResolutions
 
 logger = get_logger(__name__)
 
-SATURATED = 20  # rows per scrape that indicates a tile hit Google's cap
-
 _POLL_SECONDS = 1
 _EXISTENCE_POLLS = 5  # idle polls between checks that the queued scrapes still exist
 _FINISH_WORKERS = 4  # background saves at once; each has its own PostgreSQL connection
@@ -749,21 +747,15 @@ class _TileRun:
             )
         else:
             if index == 1:
-                deep_scan_note = (
-                    " (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
-                    if self._query.deep_scan
-                    else ""
-                )
                 print(
-                    f"▶ Grid {grid}x{grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={depth}{deep_scan_note}"
+                    f"▶ Grid {grid}x{grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={depth}"
                 )
             cell = tile["cell"]
-            sub_tag = " (sub-tile)" if cell and cell.get("_sub") else ""
             if cell is None:
-                print(f"▶ Cell {index}/{self._cells_by_keyword[keyword]}{sub_tag}")
+                print(f"▶ Cell {index}/{self._cells_by_keyword[keyword]}")
             else:
                 print(
-                    f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
+                    f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m"
                 )
         scrape_id = self._session.create(tile["name"], settings)
         self._tiles.mark_scrape(tile["ID"], scrape_id)
@@ -897,14 +889,6 @@ class _TileRun:
             False,
         )
         self._report(tile, outcome, rows)
-        cell = tile["cell"]
-        if (
-            self._query.deep_scan
-            and cell is not None
-            and not cell.get("_sub")
-            and len(rows) >= SATURATED
-        ):
-            self._split(tile, cell, len(rows))
         self._persist(scrape_id)
         self._summarize(keyword)
 
@@ -1030,41 +1014,6 @@ class _TileRun:
         self._summarized.add(keyword)
         print(
             f"{self._rows_by_keyword[keyword]} unique rows, {self._kept_by_keyword[keyword]} after the city box and filters"
-        )
-
-    def _split(self, tile: PlaceTile, cell: GridCell, rows: int) -> None:
-        keyword = tile["keyword_index"]
-        bbox = cast(BoundingBox, tuple(cell["_bbox"]))
-        sub_cells: list[GridCell] = [
-            {**sub, "_sub": True} for sub in build_grid_cells(bbox, 2)
-        ]  # one level only: sub-tiles never split again
-        first = self._cells_by_keyword[keyword]
-        new_tiles = [
-            _new_tile(
-                tile["name"],
-                tile["keyword"],
-                keyword,
-                _tile_settings(tile["settings"], sub),
-                tile["bounding_box"],
-                sub,
-                first + offset,
-            )
-            for offset, sub in enumerate(sub_cells, start=1)
-        ]
-        if self._query.proxies:
-            # with proxies the sub-tiles join the end of the queue
-            for new_tile in new_tiles:
-                self._tiles.push(new_tile)
-        else:
-            # without proxies they run before the next keyword, as the base grid does
-            self._tiles.insert_after_keyword(keyword, new_tiles)
-        self._cells_by_keyword[keyword] += len(new_tiles)
-        self._open_by_keyword[keyword] += len(new_tiles)
-        logger.info(
-            "cell at Google's cap (%d rows): %d sub-tiles added", rows, len(sub_cells)
-        )
-        print(
-            f"! cell {tile['cell_index']} is at Google's cap: {len(sub_cells)} sub-tiles added, {self._cells_by_keyword[keyword]} cells now"
         )
 
     def _discard(self, scrape_id: str) -> None:

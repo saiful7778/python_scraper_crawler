@@ -105,3 +105,13 @@ def test_dry_run_counts_comma_separated_proxies(monkeypatch, capsys):
     )
     cli.main()
     assert "Proxies: 2" in capsys.readouterr().out
+
+
+def test_deep_scan_is_rejected(monkeypatch) -> None:
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys, "argv", ["google_map_scrape_cli.py", *BASE_ARGS, "--deep-scan"]
+    )
+    with pytest.raises(SystemExit):
+        read_query()

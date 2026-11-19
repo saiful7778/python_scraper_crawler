@@ -101,11 +101,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="split the --city area into N x N map tiles, one scrape each, deduped (breaks Google's ~120 per search cap; max 10)",
     )
     ap.add_argument(
-        "--deep-scan",
-        action="store_true",
-        help="! slower: a whole-city run past Google's cap. Runs --grid (3 x 3 unless --grid says otherwise), then splits every tile that came back at the cap (about 20 rows) into 4 sub-tiles one zoom level in, deduped; up to 5x the tiles, about 25 s each",
-    )
-    ap.add_argument(
         "--max-time",
         dest="max_time",
         type=int,
@@ -185,14 +180,7 @@ def print_plan(query: CliQuery) -> None:
     print("Dry run: nothing will be scraped or written.\n")
     keywords = ", ".join(repr(keyword) for keyword in query.keywords)
     print(f"Search: {keywords} in {place}")
-    print(
-        f"Tiles: {tiles}"
-        + (
-            " (deep scan adds more where Google caps results)"
-            if query.deep_scan
-            else ""
-        )
-    )
+    print(f"Tiles: {tiles}")
     if tiles > 1:
         print(f"Scrapes: {len(query.keywords)} keyword(s) × {tiles} tiles")
     else:
@@ -218,13 +206,12 @@ def print_plan(query: CliQuery) -> None:
 def main() -> None:
     query = read_query()
     logger.info(
-        "query: keywords=%r city=%r state=%r country=%s grid=%s deep_scan=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
+        "query: keywords=%r city=%r state=%r country=%s grid=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
         query.keywords,
         query.city,
         query.state,
         query.country,
         query.grid,
-        query.deep_scan,
         query.scroll_depth,
         query.max_seconds,
         query.limit,
@@ -233,12 +220,6 @@ def main() -> None:
         query.dry_run,
         len(query.proxies or []),
     )
-
-    if query.deep_scan:
-        n = (query.grid or 3) ** 2
-        print(
-            f"\n!Deep scan: {n} tiles, and up to {4 * n} more where a tile is at Google's cap, one at a time, about 25 s each: expect {n * 25 // 60}-{5 * n * 25 // 60} min per city.\n"
-        )
 
     if query.scroll_depth >= 10 or (query.grid or 1) ** 2 >= 4:
         print(

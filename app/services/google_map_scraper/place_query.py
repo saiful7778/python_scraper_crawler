@@ -44,11 +44,6 @@ class PlaceQuery(ScrapeSettings):
         max_length=500,
         description="Each keyword with its own depth and grid.",
     )
-    deep_scan: bool = Field(
-        default=False,
-        strict=True,
-        description="Split tiles that reach Google's result cap; needs a grid, 3 by default.",
-    )
 
     @model_validator(mode="before")
     @classmethod
@@ -56,8 +51,6 @@ class PlaceQuery(ScrapeSettings):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        if data.get("deep_scan") is True and data.get("grid") is None:
-            data["grid"] = 3
         plans = data.get("plans")
         keywords = data.get("keywords")
         if plans:

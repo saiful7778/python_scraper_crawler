@@ -41,7 +41,6 @@ class GridCell(TypedDict):
     radius: int
     zoom: int
     _bbox: BoundingBox
-    _sub: NotRequired[bool]
 
 
 class GeocodeHit(TypedDict):
@@ -213,7 +212,9 @@ def build_grid_cells(bounding_box: BoundingBox, cells_per_side: int) -> list[Gri
                     ),
                 }
             )
-    logger.debug("built %d grid cells (%dx%d)", len(cells), cells_per_side, cells_per_side)
+    logger.debug(
+        "built %d grid cells (%dx%d)", len(cells), cells_per_side, cells_per_side
+    )
     return cells
 
 

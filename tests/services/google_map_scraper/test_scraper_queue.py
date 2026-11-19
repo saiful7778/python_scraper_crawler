@@ -339,21 +339,6 @@ def test_limit_applies_to_each_tile_not_the_whole_grid(arrange, redis):
     assert len(result.rows) == 4
 
 
-def test_deep_scan_splits_a_saturated_tile_once(arrange, redis):
-    counter = itertools.count()
-
-    def behave(kw, slot):
-        return Reply(
-            rows=[row(f"r{next(counter)}") for _ in range(scraper_module.SATURATED)]
-        )
-
-    env = arrange(behave)
-    PlaceScraper(redis).scrape(_query(grid=2, deep_scan=True, keywords=["cafes"]))
-    assert (
-        len(env.searched) == 4 + 4 * 4
-    )  # four cells, each split once into four sub-tiles
-
-
 def test_a_failed_tile_keeps_its_rows(arrange, redis):
     arrange(
         lambda kw, slot: Reply(
@@ -575,32 +560,6 @@ def test_the_no_proxy_grid_run_prints_the_base_lines(arrange, redis, capsys):
     assert "4 unique rows, 4 after the city box and filters" in lines
 
 
-def test_the_no_proxy_deep_scan_prints_the_base_header_and_cap_line(
-    arrange, redis, capsys
-):
-    counter = itertools.count()
-
-    def behave(kw, slot):
-        return Reply(
-            rows=[row(f"r{next(counter)}") for _ in range(scraper_module.SATURATED)]
-        )
-
-    arrange(behave)
-    query = _query(keywords=["cafes"], grid=2, deep_scan=True)
-    PlaceScraper(redis).scrape(query)
-    lines = _lines(capsys)
-    assert (
-        f"▶ Grid 2x2: 4 scrapes, one at a time, depth={query.scroll_depth} (! deep scan: a tile at Google's cap is split into 4 sub-tiles)"
-        in lines
-    )
-    assert "! cell 1 is at Google's cap: 4 sub-tiles added, 8 cells now" in lines
-    assert "cell 2/8: 20 rows, 40 kept so far" in lines
-    assert any(
-        line.startswith("▶ Cell 5/20 @ ") and line.endswith("m (sub-tile)")
-        for line in lines
-    )
-
-
 def test_the_no_proxy_lost_chrome_and_blocked_cells_print_the_base_lines(
     arrange, redis, capsys
 ):
@@ -751,39 +710,6 @@ def test_a_lost_chrome_on_a_proxy_run_also_stops_the_run_and_keeps_the_queue(
     assert sorted(kw for kw, _ in env.searched) == ["bakeries", "cafes"]
     assert result.skipped == 2
     assert redis.keys("place_queue:*")
-
-
-def test_no_proxy_deep_scan_sub_tiles_finish_before_the_next_keyword(
-    arrange, redis, capsys
-):
-    counter = itertools.count()
-
-    def behave(kw, slot):
-        return Reply(
-            rows=[row(f"r{next(counter)}") for _ in range(scraper_module.SATURATED)]
-        )
-
-    env = arrange(behave)
-    result = PlaceScraper(redis).scrape(
-        _query(keywords=["cafes", "bakeries"], grid=2, deep_scan=True)
-    )
-    lines = _lines(capsys)
-    second = lines.index("▶ Keyword 2/2: bakeries")
-    sub_lines = [
-        i
-        for i, line in enumerate(lines)
-        if line.startswith("▶ Cell ") and line.endswith("m (sub-tile)")
-    ]
-    assert (
-        len([i for i in sub_lines if i < second]) == 16
-    )  # every keyword-1 sub-tile ran first
-    assert (
-        len([i for i in sub_lines if i > second]) == 16
-    )  # then keyword 2's own sub-tiles
-    keywords = [kw for kw, _ in env.searched]
-    assert keywords == ["cafes"] * 20 + ["bakeries"] * 20
-    titles = [r["title"] for r in result.rows]
-    assert len(titles) == 800 and len(set(titles)) == 800
 
 
 def test_a_proxy_run_dedupes_against_every_kept_row_when_a_later_keyword_finishes_first(

@@ -159,36 +159,6 @@ class PlaceTileQueue:
     def push_front(self, tile: PlaceTile) -> None:
         self._add("lpush", tile, "requeue place tile")
 
-    def insert_after_keyword(self, keyword_index: int, tiles: list[PlaceTile]) -> None:
-        """Insert tiles after the last pending tile of ``keyword_index``.
-
-        With no pending tile of that keyword, they go before the first pending tile
-        of a later keyword, or at the end of pending.
-        """
-        try:
-            raws = self._redis.lrange(self._pending_key, 0, -1)
-            keywords = [json.loads(raw)["keyword_index"] for raw in raws]
-            same = [i for i, index in enumerate(keywords) if index == keyword_index]
-            later = [i for i, index in enumerate(keywords) if index > keyword_index]
-            if same:
-                position = same[-1] + 1
-            else:
-                position = later[0] if later else len(raws)
-            new = (
-                raws[:position]
-                + [json.dumps(tile, sort_keys=True) for tile in tiles]
-                + raws[position:]
-            )
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.delete(self._pending_key)
-            pipe.rpush(self._pending_key, *new)
-            pipe.expire(self._pending_key, self._ttl_seconds)
-            pipe.execute()
-        except RedisError as error:
-            raise BufferError(
-                f"could not insert place tiles: {describe(error)}"
-            ) from error
-
     def take(self) -> PlaceTile | None:
         """Move the first pending tile to in flight in one Redis step, or return None."""
         raw = self._run(
