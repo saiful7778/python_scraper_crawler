@@ -7,7 +7,7 @@ description: Use when the user wants to run this repo's Google Maps scraper CLI 
 
 Runs `cli/google_map_scrape_cli.py` from the repo root (installed as `google-map-scrape`). It scrapes Google Maps listings and saves them to PostgreSQL, skipping leads already stored. It does not write a CSV or JSON file, so there is no output path to report.
 
-Each keyword is its own scrape. With `--grid`, each map tile is its own scrape. With `--proxies`, one tile runs per proxy at a time, so more proxies mean more tiles in parallel.
+Each keyword is its own scrape, at its own `--depth` and `--grid`. With a grid, each map tile is its own scrape. With `--proxies`, one tile runs per proxy at a time, so more proxies mean more tiles in parallel.
 
 ## Always load `.env`
 
@@ -30,7 +30,7 @@ uv run --env-file .env google-map-scrape ...
 ## Workflow
 
 0. **Check stale work on every run**, not just the first: `uv run python .opencode/skills/google-map-scrape-cli/scripts/db_status.py`. It shows `working` scrapes and Redis queues. First make sure no scrape is already running: `pgrep -af 'google-map-scrape|google_map_scrape_cli'` (empty output means none). Every `working` scrape is requeued **globally**: the new run executes it too, on lane 0, using that scrape's own stored settings (including its proxies), even when your flags differ. Stdout may show nothing; only a logger warning names it. Starting also changes `working` to `pending`, bumps `resumes`, and auto-fails a scrape at 3 resumes. If the count is non-zero, tell the user and get approval before starting; see [reference.md](reference.md).
-1. Gather `--keywords`, `--city`, and `--country` (2 letters). `--keywords` takes one or more business types separated by commas. Ask for anything else only if the user needs it.
+1. Gather the keywords, `--city`, and `--country` (2 letters). Use `--keyword "coffee shops"` once per keyword, and give a keyword its own `--depth`/`--grid` right after it; a keyword with neither gets depth 5 and no grid. `--keywords "a,b"` still works as a comma-separated list, and every name in it takes the `--depth`/`--grid` that follow. Ask for anything else only if the user needs it.
 2. Always run `--dry-run` first with the same flags and show the plan.
 3. Confirm with the user before a real run. The CLI prints a heads-up for `--depth 10` or `--grid` 2 or more, because Google can rate-limit the IP. Budget about 25 s per tile as a floor: each scrape can also use its full `--max-time` plus the reviews pass, so a 50-tile grid can take many hours.
 4. Run the real scrape with the same flags minus `--dry-run`, as a background job (see below). Never run a real scrape as a foreground shell call: the call can be aborted mid-run, which kills the scrape.
@@ -38,7 +38,7 @@ uv run --env-file .env google-map-scrape ...
 
 ```bash
 # Same flags as the run you intend to start:
-uv run --env-file .env google-map-scrape --keywords "coffee shops,bakeries" --city Austin --state TX --country us --dry-run
+uv run --env-file .env google-map-scrape --keyword "coffee shops" --depth 6 --keyword "pizza" --depth 3 --grid 2 --city Austin --state TX --country us --dry-run
 
 # Optional small smoke test: different flags, so a different plan.
 uv run --env-file .env google-map-scrape --keywords "coffee shops,bakeries" --city Austin --state TX --country us --has-website --limit 10
@@ -50,7 +50,7 @@ Use the shell tool's background mode when available. The portable equivalent is 
 
 ```bash
 mkdir -p /tmp/opencode
-nohup uv run --env-file .env google-map-scrape --keywords "plumbers" --city Sydney --state NSW --country au --grid 3 > /tmp/opencode/plumbers_sydney.log 2>&1 &
+nohup uv run --env-file .env google-map-scrape --keyword "plumbers" --grid 3 --city Sydney --state NSW --country au > /tmp/opencode/plumbers_sydney.log 2>&1 &
 echo $!
 ```
 
@@ -59,27 +59,27 @@ Use a log name that matches the run. Save the printed PID.
 - Check progress: `tail -n 50 /tmp/opencode/plumbers_sydney.log`
 - Check whether it is still running: `pgrep -af google-map-scrape` (or `pgrep -af google_map_scrape_cli`)
 - Stop it and keep what was found so far (same as Ctrl-C): `kill -INT <pid>`. No new tiles start, in-flight tiles finish, rows buffered in Redis are saved to PostgreSQL on shutdown, and the tile queue is kept for the next run. Do not use `kill -9`.
-- Rerunning the same command resumes the unfinished place run for that exact query; finished tiles are not searched again.
+- Rerunning the same command resumes the unfinished place run for that exact query; finished tiles are not searched again. Changing any keyword's depth or grid is a different command, so it starts a fresh run.
 - Detailed application logs also go to `storage/logs/<date>.log`. Timestamps there are UTC.
 
 ## Flags
 
-| Flag                                | Notes                                                                                                                                                                                                                                                                                                                 |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--keywords`, `--city`, `--country` | Required. `--keywords` is a comma-separated list, e.g. `"coffee shops,bakeries"`; each keyword is its own scrape. A keyword cannot contain a comma. `--country` must be exactly 2 letters, such as `us`, `au`, `de`, and is lowercased.                                                                               |
-| `--state`                           | Optional region, e.g. `TX`.                                                                                                                                                                                                                                                                                           |
-| `--lang XX`                         | Engine language, 2 letters, default `en`. Use the local language (`pt`, `es`, `de`) for non-English markets.                                                                                                                                                                                                          |
-| `--depth N`                         | Batches of results per keyword, 1 to 10, default 5.                                                                                                                                                                                                                                                                   |
-| `--max-time SECONDS`                | Time limit per scrape, 1 to 1200, default 600. Each keyword, and each grid tile, is its own scrape.                                                                                                                                                                                                                   |
-| `--grid N`                          | Split the city into an N×N grid, one scrape per tile, deduped; 1 to 10. Gets past Google's ~120-result cap per search.                                                                                                                                                                                                |
-| `--proxies URL,...`                 | Comma-separated; repeat the flag to add more (duplicates are dropped). Up to 100. Each entry is `http://[user:pass@]host:port`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. One tile runs per proxy at a time. Credentials on the command line are visible in shell history and `ps`. |
-| `--limit N`                         | Stop each scrape at N rows. Each keyword and each grid tile has its own limit; it is not a run total.                                                                                                                                                                                                                 |
-| `--has-phone`, `--has-website`      | Keep only rows that have that field. `--has-website` also checks whether each site is crawlable, so it adds time; it does not crawl for emails or socials.                                                                                                                                                            |
-| `--dry-run`                         | Print the plan and exit. Scrapes nothing and writes nothing. It does not check the database, Redis, Chrome or Nominatim. The help text's mention of writing a CSV is stale.                                                                                                                                           |
+| Flag                                     | Notes                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--keyword`, `-k`, `--city`, `--country` | Required (at least one keyword). `--keyword "coffee shops"` adds one keyword; repeat it for more. `--keywords "a,b"` is the comma-list form, still accepted; a keyword cannot contain a comma. `--country` must be exactly 2 letters, such as `us`, `au`, `de`, and is lowercased.                                    |
+| `--state`                                | Optional region, e.g. `TX`.                                                                                                                                                                                                                                                                                           |
+| `--lang XX`                              | Engine language, 2 letters, default `en`. Use the local language (`pt`, `es`, `de`) for non-English markets.                                                                                                                                                                                                          |
+| `--depth N`                              | Batches of results for the keyword above it, 1 to 10, default 5. It follows a `--keyword`/`--keywords` flag; before any keyword it is an error.                                                                                                                                                                       |
+| `--max-time SECONDS`                     | Time limit per scrape, 1 to 1200, default 600. Each keyword, and each grid tile, is its own scrape.                                                                                                                                                                                                                   |
+| `--grid N`                               | Split the city into an N×N grid for the keyword above it, one scrape per tile, deduped; 1 to 10, default 1 (one whole-city scrape). Gets past Google's ~120-result cap per search. Each keyword can have its own grid.                                                                                                |
+| `--proxies URL,...`                      | Comma-separated; repeat the flag to add more (duplicates are dropped). Up to 100. Each entry is `http://[user:pass@]host:port`, `https://`, `socks5://`, or `socks5h://`. SOCKS5 does not accept user:pass. One tile runs per proxy at a time. Credentials on the command line are visible in shell history and `ps`. |
+| `--limit N`                              | Stop each scrape at N rows. Each keyword and each grid tile has its own limit; it is not a run total.                                                                                                                                                                                                                 |
+| `--has-phone`, `--has-website`           | Keep only rows that have that field. `--has-website` also checks whether each site is crawlable, so it adds time; it does not crawl for emails or socials.                                                                                                                                                            |
+| `--dry-run`                              | Print the plan and exit. Scrapes nothing and writes nothing. It does not check the database, Redis, Chrome or Nominatim. The help text's mention of writing a CSV is stale.                                                                                                                                           |
 
 There are no `--website-depth`, `--format`, `--fields`, or `--output` flags. Website address resolution is always on (the plan prints `Website: level 1`); leads go to the database only.
 
-Out-of-range numbers are rejected by validation even though argparse accepts them: `--depth` must be 1–10, `--max-time` 1–1200, and `--grid` 1–10.
+Out-of-range numbers are rejected by validation even though argparse accepts them: `--depth` must be 1–10, `--max-time` 1–1200, and `--grid` 1–10. The message names the flag (`✗ --depth: ...`).
 
 ## Output and behavior
 
@@ -92,7 +92,7 @@ Out-of-range numbers are rejected by validation even though argparse accepts the
 - After a block (or any normal finish) the queue is cleared. A rerun starts a fresh search: stored rows are skipped, but finished tiles are searched again.
 - If the database save fails and rows stay in Redis, the CLI exits with `✗ UnsavedLeadsError: ...` (or `ScrapeDatabaseError`). The Redis data and tile queue are kept, so the next run resumes; leads already saved stay in PostgreSQL.
 - Ctrl-C stops the run from taking new tiles, lets in-flight tiles finish, saves buffered rows to PostgreSQL on shutdown, and keeps the queue. The CLI prints `⏸ Finishing the current cell, press Ctrl-C again to quit` and then `✗ Stopped.` A second Ctrl-C quits at once.
-- Grid runs print per-cell lines (`cell i/N: ... rows, ... kept so far`) and a per-keyword summary.
+- A keyword with a grid prints per-cell lines (`cell i/N: ... rows, ... kept so far`) and a per-keyword summary; a whole-city keyword (grid 1) prints neither.
 - A rerun of the same command resumes the unfinished place run and prints `▶ Resuming the unfinished run of this command`; finished tiles are not searched again. The queue lives in Redis for 7 days. Resume is all-or-nothing: changing any flag, including adding proxies, starts a new queue. Saved rows stay in PostgreSQL, but tile progress is lost.
 
 ## See the results
@@ -122,6 +122,7 @@ uv run python .opencode/skills/google-map-scrape-cli/scripts/query.py "SELECT ti
 - Assuming a rate-limited rerun continues where it stopped: the block clears the queue, so finished tiles are searched again.
 - Passing a 3-letter or full country name to `--country`.
 - Passing `--depth` outside 1–10, `--max-time` outside 1–1200, or `--grid` outside 1–10.
+- Putting `--depth`/`--grid` before any keyword flag: they belong to the keyword that precedes them, so this exits with `--depth must follow a --keyword or --keywords flag`.
 - Passing credentials in SOCKS5 proxy URLs. Use `http://user:pass@host:port` for auth.
 - Assuming Ctrl-C leaves the leads unsaved. Buffered rows are saved on shutdown, but the run stays unfinished and the queue is kept.
 - Assuming a resumed run re-searches tiles that already finished.

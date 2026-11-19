@@ -129,7 +129,8 @@ Leftover Redis `place_queue:*` keys are harmless to a different command. They ex
 
 - A run's queue key is `place_queue:<sha256 of the full query JSON>:...`. The hash cannot be matched to a command by hand; `db_status.py` shows the first tile's name as the practical identifier.
 - The same command with **every flag identical** resumes an interrupted queue and prints `▶ Resuming the unfinished run of this command`.
-- Changing any flag (including `--proxies`, filters or `--limit`) produces a different queue and a fresh run. Resume is all-or-nothing: adding proxies to a crashed run forfeits its tile progress (saved rows stay in PostgreSQL).
+- Changing any flag (including `--proxies`, filters or `--limit`) produces a different queue and a fresh run, and so does changing one keyword's `--depth` or `--grid`. Resume is all-or-nothing: adding proxies to a crashed run forfeits its tile progress (saved rows stay in PostgreSQL).
+- Queues left by a run started before per-keyword depth and grid existed are not resumed: the queue key changed shape, so the next run starts fresh.
 - `Ctrl-C`/`SIGINT` finishes the tile in flight, saves it, and leaves the queue for the next identical run. A second interrupt quits sooner.
 - A lost Chrome connection, crash or exception leaves the queue. A normal finish or a rate-limit block clears it.
 - After a block, a rerun starts a fresh search: rows already stored are deduped, but finished tiles are searched again. Only an interrupt keeps the tile progress.
