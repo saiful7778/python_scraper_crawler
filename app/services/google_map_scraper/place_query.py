@@ -1,5 +1,6 @@
 """A search for one or more keywords in one city: the schema behind every place-level scrape."""
 
+from collections.abc import Iterable
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -7,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from .scrape.scrape_settings import CleanText, ScrapeSettings
 
 CountryCode = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2}$")]
+
+
+def _as_items(value: Any) -> list[Any]:
+    """The items of a list, tuple, set or other non-string iterable; anything else is one item."""
+    if isinstance(value, (str, bytes, dict)) or not isinstance(value, Iterable):
+        return [value] if value is not None else []
+    return list(value)
 
 
 class KeywordPlan(BaseModel):
@@ -51,14 +59,19 @@ class PlaceQuery(ScrapeSettings):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        plans = data.get("plans") or data.get("keyword_plans")
-        keywords = data.get("keywords")
+        plans = _as_items(data.get("plans") or data.get("keyword_plans"))
+        keywords = _as_items(data.get("keywords"))
         if plans:
-            data["keywords"] = [
-                plan["keyword"] if isinstance(plan, dict) else plan.keyword
+            names = [
+                plan.get("keyword", "") if isinstance(plan, dict) else plan
                 for plan in plans
             ]
-        elif isinstance(keywords, (list, tuple)) and keywords:
+            if keywords and list(keywords) != names:
+                raise ValueError(
+                    "give either the keywords or their plans, not both with different names"
+                )
+            data["keywords"] = names
+        elif keywords:
             depth = data.get("depth", data.get("scroll_depth", 1))
             grid = data.get("grid") or 1
             data["plans"] = [
@@ -68,6 +81,14 @@ class PlaceQuery(ScrapeSettings):
         data["email"] = True
         data["socials"] = True
         return data
+
+    @model_validator(mode="after")
+    def _every_keyword_has_a_plan(self) -> "PlaceQuery":
+        if len(self.keyword_plans) != len(self.keywords):
+            raise ValueError(
+                f"got {len(self.keywords)} keyword(s) but {len(self.keyword_plans)} plan(s)"
+            )
+        return self
 
     def depth_of(self, keyword_index: int) -> int:
         """Batches the keyword at this 1-based index searches with."""

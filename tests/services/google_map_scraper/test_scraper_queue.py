@@ -787,7 +787,13 @@ def test_the_whole_city_keyword_of_a_mixed_run_prints_no_cell_lines(
     lines = _lines(capsys)
     assert "▶ Creating scrape: 1 keyword @ 1.0,2.0 depth=4" in lines
     assert "▶ Grid 2x2: 4 scrapes, one at a time, depth=6" in lines
-    assert not any(line.startswith("▶ Cell ") and "t0" in line for line in lines)
+    # only the tiled keyword prints cells, and all four of them are its own
+    cells = [line for line in lines if line.startswith("▶ Cell ")]
+    assert len(cells) == 4
+    assert all(
+        line.startswith("▶ Cell ") and line.split()[2].split("/")[1] == "4"
+        for line in cells
+    )
     assert [line for line in lines if "unique rows" in line] == [
         "4 unique rows, 4 after the city box and filters"
     ]
@@ -805,3 +811,16 @@ def test_a_whole_city_run_does_not_need_a_bounding_box(arrange, redis, monkeypat
     PlaceScraper(redis).scrape(_planned(("cafes", 5, 1)))
     PlaceScraper(redis).scrape(_planned(("teas", 5, 2)))
     assert asked == [False, True]
+
+
+def test_a_whole_city_keyword_of_a_mixed_run_is_not_trimmed_to_the_city_box(
+    arrange, redis
+):
+    def behave(kw, slot):
+        if kw == "cafes":
+            return Reply(rows=[row("far-cafes", latitude=50.0, longitude=50.0)])
+        return done(f"{kw}-{slot}")
+
+    arrange(behave)
+    result = PlaceScraper(redis).scrape(_planned(("cafes", 5, 1), ("pizza", 5, 2)))
+    assert "far-cafes" in [r["title"] for r in result.rows]

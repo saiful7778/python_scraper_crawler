@@ -91,3 +91,24 @@ def test_a_depth_out_of_range_names_the_depth_field():
             }
         )
     assert error.value.errors()[0]["loc"][-1] == "depth"
+
+
+def test_a_set_of_keywords_still_gets_one_plan_each():
+    query = PlaceQuery.model_validate(
+        {"keywords": {"cafes"}, "city": "Austin", "country": "us"}
+    )
+    assert [(p.keyword, p.depth, p.grid) for p in query.keyword_plans] == [
+        ("cafes", 1, 1)
+    ]
+
+
+def test_keywords_and_plans_always_agree_in_length():
+    with pytest.raises(ValidationError):
+        PlaceQuery.model_validate(
+            {
+                "keywords": ["cafes"],
+                "plans": [{"keyword": "cafes"}, {"keyword": "pizza"}],
+                "city": "Austin",
+                "country": "us",
+            }
+        )

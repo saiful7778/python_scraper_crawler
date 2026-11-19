@@ -1161,9 +1161,8 @@ class PlaceScraper:
             else None
         )
         if cells is None:
-            tiles.push(
-                _new_tile(name, keyword, keyword_index, base, bounding_box, None, None)
-            )
+            # a whole-city keyword is not trimmed to a sibling's city box
+            tiles.push(_new_tile(name, keyword, keyword_index, base, None, None, None))
             return
         for index, cell in enumerate(cells, start=1):
             tiles.push(

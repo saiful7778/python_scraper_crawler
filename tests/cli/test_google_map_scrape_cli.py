@@ -264,3 +264,30 @@ def test_dry_run_prints_one_line_per_keyword(monkeypatch, capsys):
     assert "  'coffee shops': depth 6, 1 scrape(s), whole city" in out
     assert "  'pizza': depth 3, 4 scrape(s), 2x2 grid" in out
     assert "Scrapes: 5" in out
+
+
+def test_an_empty_keyword_is_reported_against_the_keyword_flag(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["google_map_scrape_cli.py", "-k", "", "--city", "Austin", "--country", "us"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "✗ --keyword:" in str(exit_info.value)
+    assert "--keywords" not in str(exit_info.value)
+
+
+def test_a_duplicated_failure_is_reported_once(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["google_map_scrape_cli.py", "-k", "", "--city", "Austin", "--country", "us"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert str(exit_info.value).count("--keyword:") == 1

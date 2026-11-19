@@ -17,7 +17,11 @@ from config.tortoise import TORTOISE_ORM
 
 logger = get_logger(__name__)
 
-FLAG_NAMES = {"proxies": "--proxies"}
+FLAG_NAMES = {
+    "proxies": "--proxies",
+    "keywords": "--keyword",
+    "keyword_plans": "--keyword",
+}
 
 
 class CliQuery(PlaceQuery):
@@ -164,6 +168,7 @@ def read_query() -> CliQuery:
     values = {
         k: v for k, v in vars(build_parser().parse_args()).items() if v is not None
     }
+    values.pop("keyword_scope", None)
     error = values.pop("keyword_plan_error", None)
     if error:
         logger.warning("invalid arguments: %s", error)
@@ -200,6 +205,14 @@ def read_query() -> CliQuery:
                 lines.append(f"✗ {flag}: {problem['msg']}.")
             else:
                 lines.append(f"✗ {problem['msg']}.")
+        # A keyword is validated as a plan and again as the derived keyword tuple,
+        # so the same flag can fail twice: report each flag once, first problem.
+        lines = list(dict.fromkeys(lines))
+        first_by_flag: dict[str, str] = {}
+        for line in lines:
+            flag = line.split(":")[0]
+            first_by_flag.setdefault(flag, line)
+        lines = list(first_by_flag.values())
         logger.warning("invalid arguments: %s", "; ".join(lines))
         sys.exit("\n".join(lines))
 

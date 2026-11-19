@@ -134,7 +134,12 @@ class KeywordPlan(BaseModel):
 
 Two helpers keep the scraper free of index arithmetic:
 `depth_of(keyword_index) -> int` and `grid_of(keyword_index) -> int` (1-based,
-matching the `keyword_index` the tiles already carry). `engine_settings()` keeps
+matching the `keyword_index` the tiles already carry). A plan list and a keyword
+list must agree in length and names when both are given; `keywords` may be any
+non-string iterable (a set works). One narrowing: a derived plan's depth is
+clamped by `KeywordPlan` to 1-10, so a library `scroll_depth` of 11-1000 that
+`ScrapeSettings` accepts is rejected through `PlaceQuery`; the CLI already capped
+`--depth` at 10. `engine_settings()` keeps
 its current rule, but "a grid is set" becomes "any plan has `grid > 1`". The
 `keywords` field on `ScrapeSettings` stays what the engine reads, so no engine
 code changes.
