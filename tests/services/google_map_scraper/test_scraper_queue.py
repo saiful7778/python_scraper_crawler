@@ -778,6 +778,70 @@ def test_each_tile_carries_its_keywords_depth(arrange, redis):
     assert depths == {"cafes": 4, "pizza": 6}
 
 
+def _ranged(*plans, **overrides) -> PlaceQuery:
+    return PlaceQuery.model_validate(
+        {"plans": list(plans), "city": "Austin", "country": "us", **overrides}
+    )
+
+
+def test_a_depth_range_runs_each_depth_of_a_whole_city_keyword(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_ranged({"keyword": "cafes", "depth": 6, "depth_to": 8}))
+    assert [env.settings_of(sid)["depth"] for sid, _ in env.submitted] == [6, 7, 8]
+
+
+def test_a_depth_range_runs_every_cell_of_one_depth_before_the_next(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(
+        _ranged({"keyword": "cafes", "depth": 6, "depth_to": 7, "grid": 2})
+    )
+    assert [env.settings_of(sid)["depth"] for sid, _ in env.submitted] == [6] * 4 + [
+        7
+    ] * 4
+
+
+def test_the_depths_of_a_range_dedupe_against_each_other(arrange, redis):
+    env = arrange(lambda kw, slot: done("shared"))
+    result = PlaceScraper(redis).scrape(
+        _ranged({"keyword": "cafes", "depth": 6, "depth_to": 8})
+    )
+    assert len(env.submitted) == 3
+    assert [r["title"] for r in result.rows] == ["shared"]
+
+
+def test_a_depth_range_prints_its_span_and_each_whole_city_tile_its_depth(
+    arrange, redis, capsys
+):
+    arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_ranged({"keyword": "cafes", "depth": 6, "depth_to": 8}))
+    lines = _lines(capsys)
+    assert "▶ Creating scrape: 1 keyword @ 1.0,2.0 depth=6" in lines
+    assert "▶ Creating scrape: 1 keyword @ 1.0,2.0 depth=7" in lines
+    assert "▶ Creating scrape: 1 keyword @ 1.0,2.0 depth=8" in lines
+
+
+def test_a_depth_range_prints_the_span_in_the_grid_header_and_the_cell_depth(
+    arrange, redis, capsys
+):
+    counter = itertools.count()
+    arrange(lambda kw, slot: done(f"t{next(counter)}"))
+    PlaceScraper(redis).scrape(
+        _ranged({"keyword": "cafes", "depth": 6, "depth_to": 7, "grid": 2})
+    )
+    lines = _lines(capsys)
+    assert "▶ Grid 2x2: 8 scrapes, one at a time, depth=6-7" in lines
+    cells = [line for line in lines if line.startswith("▶ Cell ")]
+    assert len(cells) == 8
+    assert [line.split()[2].split("/")[1] for line in cells] == ["8"] * 8
+    assert [line.split(" depth=")[1].split()[0] for line in cells] == ["6"] * 4 + [
+        "7"
+    ] * 4
+    assert [line.split()[2].split("/")[0] for line in cells] == [
+        str(index) for index in range(1, 9)
+    ]
+    assert "8 unique rows, 8 after the city box and filters" in lines
+
+
 def test_the_whole_city_keyword_of_a_mixed_run_prints_no_cell_lines(
     arrange, redis, capsys
 ):

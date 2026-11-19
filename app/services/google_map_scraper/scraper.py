@@ -510,6 +510,12 @@ def run_scrape(
         session.stop()
 
 
+def _depth_span(query: PlaceQuery, keyword_index: int) -> str:
+    """A keyword's depth as printed: one number, or the span of its depth range."""
+    plan = query.keyword_plans[keyword_index - 1]
+    return str(plan.depth) if plan.depth_to is None else f"{plan.depth}-{plan.depth_to}"
+
+
 def _new_tile(
     name: str,
     keyword: str,
@@ -736,26 +742,26 @@ class _TileRun:
         settings = cast(SettingsData, {**tile["settings"], "proxies": lane})
         keyword = tile["keyword_index"]
         index = tile["cell_index"]
-        depth = self._query.depth_of(keyword)
+        scraped = ScrapeSettings.model_validate(tile["settings"])
+        depth = scraped.scroll_depth
         grid = self._query.grid_of(keyword)
         if index in (None, 1):
             print(f"▶ Keyword {keyword}/{len(self._query.keywords)}: {tile['keyword']}")
         if index is None:
-            scraped = ScrapeSettings.model_validate(tile["settings"])
             print(
                 f"▶ Creating scrape: 1 keyword @ {scraped.latitude},{scraped.longitude} depth={depth}"
             )
         else:
             if index == 1:
                 print(
-                    f"▶ Grid {grid}x{grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={depth}"
+                    f"▶ Grid {grid}x{grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={_depth_span(self._query, keyword)}"
                 )
             cell = tile["cell"]
             if cell is None:
                 print(f"▶ Cell {index}/{self._cells_by_keyword[keyword]}")
             else:
                 print(
-                    f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m"
+                    f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} depth={depth} radius={cell['radius']}m"
                 )
         scrape_id = self._session.create(tile["name"], settings)
         self._tiles.mark_scrape(tile["ID"], scrape_id)
@@ -1140,42 +1146,49 @@ class PlaceScraper:
         bounding_box: BoundingBox | None,
         tiles: PlaceTileQueue,
     ) -> None:
-        """Queue a keyword's tiles: one whole-city tile, or one per grid cell. Tiles start with no proxy.
+        """Queue a keyword's tiles: one per depth, and per grid cell. Tiles start with no proxy.
+
+        A keyword with a depth range queues every cell of its shallowest depth
+        first, then every cell of the next depth, and so on.
 
         :raises BufferError: If Redis fails.
         """
         plan = query.keyword_plans[keyword_index - 1]
-        base = cast(
-            SettingsData,
-            anchored.model_copy(
-                update={
-                    "keywords": (keyword,),
-                    "proxies": (),
-                    "scroll_depth": plan.depth,
-                }
-            ).model_dump(by_alias=True, mode="json"),
-        )
         cells = (
             build_grid_cells(bounding_box, plan.grid)
             if plan.grid > 1 and bounding_box
             else None
         )
-        if cells is None:
-            # a whole-city keyword is not trimmed to a sibling's city box
-            tiles.push(_new_tile(name, keyword, keyword_index, base, None, None, None))
-            return
-        for index, cell in enumerate(cells, start=1):
-            tiles.push(
-                _new_tile(
-                    name,
-                    keyword,
-                    keyword_index,
-                    _tile_settings(base, cell),
-                    bounding_box,
-                    cell,
-                    index,
-                )
+        for depth in plan.depths:
+            base = cast(
+                SettingsData,
+                anchored.model_copy(
+                    update={
+                        "keywords": (keyword,),
+                        "proxies": (),
+                        "scroll_depth": depth,
+                    }
+                ).model_dump(by_alias=True, mode="json"),
             )
+            if cells is None:
+                # a whole-city keyword is not trimmed to a sibling's city box
+                tiles.push(
+                    _new_tile(name, keyword, keyword_index, base, None, None, None)
+                )
+                continue
+            for index, cell in enumerate(cells, start=1):
+                queue_index = (depth - plan.depth) * plan.grid**2 + index
+                tiles.push(
+                    _new_tile(
+                        name,
+                        keyword,
+                        keyword_index,
+                        _tile_settings(base, cell),
+                        bounding_box,
+                        cell,
+                        queue_index,
+                    )
+                )
 
     def _listen(
         self,

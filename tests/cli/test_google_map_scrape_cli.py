@@ -238,6 +238,230 @@ def test_a_depth_out_of_range_is_reported_against_the_depth_flag(monkeypatch):
     assert "✗ --depth:" in str(exit_info.value)
 
 
+def test_a_depth_from_and_to_give_the_keyword_one_pass_per_depth(monkeypatch):
+    query = parse(
+        monkeypatch,
+        "--depth-from",
+        "6",
+        "--depth-to",
+        "8",
+    )
+    plan = query.keyword_plans[0]
+    assert (plan.depth, plan.depth_to) == (6, 8)
+    assert query.depths_of(1) == (6, 7, 8)
+
+
+def test_a_depth_from_alone_searches_only_that_depth(monkeypatch):
+    query = parse(monkeypatch, "--depth-from", "6")
+    plan = query.keyword_plans[0]
+    assert (plan.depth, plan.depth_to) == (6, None)
+    assert query.depths_of(1) == (6,)
+
+
+def test_a_depth_to_without_a_depth_from_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["google_map_scrape_cli.py", *BASE_ARGS, "--depth-to", "8"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth-to must follow a --depth-from flag" in str(exit_info.value)
+
+
+def test_depth_with_a_depth_range_on_one_keyword_exits_with_a_named_error(
+    monkeypatch,
+):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth",
+            "6",
+            "--depth-to",
+            "8",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth" in str(exit_info.value)
+    assert "--depth-from" in str(exit_info.value)
+
+
+def test_a_depth_range_before_any_keyword_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            "--depth-from",
+            "6",
+            "-k",
+            "pizza",
+            "--city",
+            "Austin",
+            "--country",
+            "us",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth-from must follow a --keyword flag" in str(exit_info.value)
+
+
+def test_a_depth_after_its_depth_to_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth-from",
+            "6",
+            "--depth-to",
+            "8",
+            "--depth",
+            "7",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth-from, not --depth" in str(exit_info.value)
+
+
+def test_a_depth_to_after_a_plain_depth_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["google_map_scrape_cli.py", *BASE_ARGS, "--depth", "6", "--depth-to", "8"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth-from" in str(exit_info.value)
+    assert "--depth-to" in str(exit_info.value)
+
+
+def test_a_deeper_end_below_the_shallower_one_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth-from",
+            "8",
+            "--depth-to",
+            "6",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "✗ --depth-to:" in str(exit_info.value)
+
+
+def test_a_deeper_end_out_of_range_is_reported_against_its_flag(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth-from",
+            "6",
+            "--depth-to",
+            "11",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "✗ --depth-to:" in str(exit_info.value)
+
+
+def test_dry_run_counts_a_depth_range_per_depth(monkeypatch, capsys):
+    import cli.google_map_scrape_cli as cli
+
+    args = [
+        "--keyword",
+        "coffee shops",
+        "--depth-from",
+        "6",
+        "--depth-to",
+        "8",
+        "--grid",
+        "2",
+        "--city",
+        "Austin",
+        "--country",
+        "us",
+        "--dry-run",
+    ]
+    monkeypatch.setattr(sys, "argv", ["google_map_scrape_cli.py", *args])
+    cli.main()
+    out = capsys.readouterr().out
+    assert (
+        "  'coffee shops': depth 6-8 (3 passes per tile), 12 scrape(s), 2x2 grid" in out
+    )
+    assert "Scrapes: 12" in out
+
+
+def test_a_range_reaching_depth_ten_prints_the_large_scrape_heads_up(
+    monkeypatch, capsys
+):
+    import cli.google_map_scrape_cli as cli
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth-from",
+            "8",
+            "--depth-to",
+            "10",
+            "--dry-run",
+        ],
+    )
+    cli.main()
+    assert "Heads-up: this is a large scrape" in capsys.readouterr().out
+
+
+def test_a_range_below_depth_ten_prints_no_heads_up(monkeypatch, capsys):
+    import cli.google_map_scrape_cli as cli
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            *BASE_ARGS,
+            "--depth-from",
+            "6",
+            "--depth-to",
+            "8",
+            "--dry-run",
+        ],
+    )
+    cli.main()
+    assert "Heads-up" not in capsys.readouterr().out
+
+
 def test_dry_run_prints_one_line_per_keyword(monkeypatch, capsys):
     import cli.google_map_scrape_cli as cli
 

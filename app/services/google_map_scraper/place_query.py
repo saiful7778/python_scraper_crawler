@@ -3,7 +3,15 @@
 from collections.abc import Iterable
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from .scrape.scrape_settings import CleanText, ScrapeSettings
 
@@ -24,7 +32,34 @@ class KeywordPlan(BaseModel):
 
     keyword: CleanText
     depth: int = Field(default=5, ge=1, le=10, strict=True)
+    depth_to: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        strict=True,
+        description="Deepest depth when the keyword searches a range of depths.",
+    )
     grid: int = Field(default=1, ge=1, le=10, strict=True)
+
+    @field_validator("depth_to")
+    @classmethod
+    def _depth_range_does_not_descend(
+        cls, depth_to: int | None, info: ValidationInfo
+    ) -> int | None:
+        depth = info.data.get("depth")
+        if depth_to is not None and depth is not None and depth_to < depth:
+            raise ValueError(
+                f"depth_to {depth_to} is below depth {depth}: "
+                "a depth range goes from the shallower depth to the deeper one"
+            )
+        return depth_to
+
+    @property
+    def depths(self) -> tuple[int, ...]:
+        """Every depth this keyword searches, shallowest first: one, or each of its range."""
+        if self.depth_to is None:
+            return (self.depth,)
+        return tuple(range(self.depth, self.depth_to + 1))
 
 
 class PlaceQuery(ScrapeSettings):
@@ -91,8 +126,12 @@ class PlaceQuery(ScrapeSettings):
         return self
 
     def depth_of(self, keyword_index: int) -> int:
-        """Batches the keyword at this 1-based index searches with."""
+        """Shallowest depth of the keyword at this 1-based index."""
         return self.keyword_plans[keyword_index - 1].depth
+
+    def depths_of(self, keyword_index: int) -> tuple[int, ...]:
+        """Every depth the keyword at this 1-based index searches, shallowest first."""
+        return self.keyword_plans[keyword_index - 1].depths
 
     def grid_of(self, keyword_index: int) -> int:
         """Grid side of the keyword at this 1-based index; 1 is the whole city."""

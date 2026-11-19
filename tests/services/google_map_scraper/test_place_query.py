@@ -81,6 +81,81 @@ def test_a_changed_plan_changes_the_run_id():
     assert run_id(first) != run_id(deeper)
 
 
+def test_a_plan_with_a_deeper_end_searches_every_depth_between_them():
+    query = PlaceQuery.model_validate(
+        {
+            "plans": [{"keyword": "cafes", "depth": 6, "depth_to": 8}],
+            "city": "Austin",
+            "country": "us",
+        }
+    )
+    assert query.keyword_plans[0].depths == (6, 7, 8)
+    assert query.depths_of(1) == (6, 7, 8)
+    assert query.depth_of(1) == 6
+
+
+def test_a_plan_without_a_deeper_end_searches_its_one_depth():
+    assert (
+        PlaceQuery.model_validate(
+            {
+                "plans": [{"keyword": "cafes", "depth": 4}],
+                "city": "Austin",
+                "country": "us",
+            }
+        ).depth_of(1)
+        == 4
+    )
+    assert PlaceQuery.model_validate(
+        {
+            "plans": [{"keyword": "cafes", "depth": 4}],
+            "city": "Austin",
+            "country": "us",
+        }
+    ).depths_of(1) == (4,)
+
+
+def test_a_descending_depth_range_is_rejected():
+    with pytest.raises(ValidationError) as error:
+        PlaceQuery.model_validate(
+            {
+                "plans": [{"keyword": "cafes", "depth": 8, "depth_to": 6}],
+                "city": "Austin",
+                "country": "us",
+            }
+        )
+    assert error.value.errors()[0]["loc"][-1] == "depth_to"
+
+
+def test_a_deeper_end_out_of_range_names_the_depth_to_field():
+    with pytest.raises(ValidationError) as error:
+        PlaceQuery.model_validate(
+            {
+                "plans": [{"keyword": "cafes", "depth": 6, "depth_to": 11}],
+                "city": "Austin",
+                "country": "us",
+            }
+        )
+    assert error.value.errors()[0]["loc"][-1] == "depth_to"
+
+
+def test_a_deeper_end_changes_the_run_id():
+    narrow = PlaceQuery.model_validate(
+        {
+            "plans": [{"keyword": "cafes", "depth": 6, "depth_to": 8}],
+            "city": "Austin",
+            "country": "us",
+        }
+    )
+    wide = PlaceQuery.model_validate(
+        {
+            "plans": [{"keyword": "cafes", "depth": 6, "depth_to": 9}],
+            "city": "Austin",
+            "country": "us",
+        }
+    )
+    assert run_id(narrow) != run_id(wide)
+
+
 def test_a_depth_out_of_range_names_the_depth_field():
     with pytest.raises(ValidationError) as error:
         PlaceQuery.model_validate(

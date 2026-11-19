@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from pydantic import Field, ValidationError
 from tortoise import Tortoise
@@ -21,6 +22,7 @@ FLAG_NAMES = {
     "proxies": "--proxies",
     "keywords": "--keyword",
     "keyword_plans": "--keyword",
+    "depth_to": "--depth-to",
 }
 
 
@@ -66,7 +68,7 @@ class KeywordAction(argparse.Action):
     """Start a keyword plan: the --depth/--grid that follow belong to it."""
 
     def __call__(self, parser, namespace, values, option_string=None):
-        plan = {"keyword": str(values), "depth": None, "grid": None}
+        plan = {"keyword": str(values), "depth": None, "depth_to": None, "grid": None}
         plans = getattr(namespace, "keyword_plans", None)
         if plans is None:
             plans = namespace.keyword_plans = []
@@ -84,7 +86,56 @@ class KeywordScopedAction(argparse.Action):
                 f"{option_string} must follow a --keyword flag"
             )
             return
-        plan[self.dest] = values
+        if self.dest == "depth_from":
+            self._set_depth(
+                plan, cast(int, values), namespace, option_string, ranged=True
+            )
+        elif self.dest == "depth":
+            self._set_depth(
+                plan, cast(int, values), namespace, option_string, ranged=False
+            )
+        elif self.dest == "depth_to":
+            if plan.get("_depth_flag") and not plan.get("_ranged"):
+                namespace.keyword_plan_error = (
+                    f"{plan['_depth_flag']} sets one depth; give the shallowest "
+                    "depth of a range with --depth-from before --depth-to"
+                )
+                return
+            if not plan.get("_ranged"):
+                namespace.keyword_plan_error = (
+                    "--depth-to must follow a --depth-from flag"
+                )
+                return
+            plan["depth_to"] = values
+        else:
+            plan[self.dest] = values
+
+    @staticmethod
+    def _set_depth(
+        plan: dict,
+        value: int,
+        namespace: argparse.Namespace,
+        option_string: str | None,
+        *,
+        ranged: bool,
+    ) -> None:
+        """Set a keyword's shallowest depth from --depth or --depth-from, once."""
+        flag = option_string or ""
+        if plan.get("_ranged"):
+            namespace.keyword_plan_error = (
+                f"--depth-to makes a depth range; set its shallowest depth with "
+                f"--depth-from, not --depth (got {plan['_depth_flag']} and {flag})"
+            )
+            return
+        if plan.get("_depth_flag"):
+            namespace.keyword_plan_error = (
+                f"{plan['_depth_flag']} and {flag} both set the shallowest depth of "
+                "one keyword; give one of them"
+            )
+            return
+        plan["depth"] = value
+        plan["_depth_flag"] = flag
+        plan["_ranged"] = ranged
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +169,22 @@ def build_parser() -> argparse.ArgumentParser:
         action=KeywordScopedAction,
         metavar="N",
         help="batches of results per keyword, 1 to 10 (default: 5); follows a --keyword flag",
+    )
+    ap.add_argument(
+        "--depth-from",
+        dest="depth_from",
+        type=int,
+        action=KeywordScopedAction,
+        metavar="N",
+        help="shallowest depth of a range of depths, 1 to 10: with --depth-to 8 the keyword searches depth 6, 7 and 8; follows a --keyword flag",
+    )
+    ap.add_argument(
+        "--depth-to",
+        dest="depth_to",
+        type=int,
+        action=KeywordScopedAction,
+        metavar="N",
+        help="deepest depth of a --depth-from range, 1 to 10 (default: the range's shallowest depth, so one pass); follows a --depth-from flag",
     )
     ap.add_argument(
         "--lang",
@@ -180,7 +247,11 @@ def read_query() -> CliQuery:
             '✗ --keyword is required: give at least one, e.g. --keyword "coffee shops".'
         )
     values["keyword_plans"] = [
-        {key: value for key, value in plan.items() if value is not None}
+        {
+            key: value
+            for key, value in plan.items()
+            if value is not None and not key.startswith("_")
+        }
         for plan in plans
     ]
     if values.get("proxies"):
@@ -242,10 +313,18 @@ def print_plan(query: CliQuery) -> None:
     keywords = ", ".join(repr(plan.keyword) for plan in query.keyword_plans)
     print(f"Search: {keywords} in {place}")
     for plan in query.keyword_plans:
-        tiles = plan.grid**2
+        passes = len(plan.depths)
+        tiles = plan.grid**2 * passes
         where = "whole city" if plan.grid == 1 else f"{plan.grid}x{plan.grid} grid"
-        print(f"  {plan.keyword!r}: depth {plan.depth}, {tiles} scrape(s), {where}")
-    print(f"Scrapes: {sum(plan.grid**2 for plan in query.keyword_plans)}")
+        span = (
+            f"depth {plan.depth}"
+            if plan.depth_to is None
+            else f"depth {plan.depth}-{plan.depth_to} ({passes} passes per tile)"
+        )
+        print(f"  {plan.keyword!r}: {span}, {tiles} scrape(s), {where}")
+    print(
+        f"Scrapes: {sum(len(plan.depths) * plan.grid**2 for plan in query.keyword_plans)}"
+    )
     print(f"Max time: {query.max_seconds}s per scrape")
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
@@ -266,7 +345,10 @@ def main() -> None:
     query = read_query()
     logger.info(
         "query: plans=%r city=%r state=%r country=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
-        [(plan.keyword, plan.depth, plan.grid) for plan in query.keyword_plans],
+        [
+            (plan.keyword, plan.depth, plan.depth_to, plan.grid)
+            for plan in query.keyword_plans
+        ],
         query.city,
         query.state,
         query.country,
@@ -278,7 +360,7 @@ def main() -> None:
         len(query.proxies or []),
     )
 
-    if any(plan.depth >= 10 or plan.grid >= 2 for plan in query.keyword_plans):
+    if any(max(plan.depths) >= 10 or plan.grid >= 2 for plan in query.keyword_plans):
         print(
             "\nHeads-up: this is a large scrape (high depth or a grid).\n"
             "Running it back-to-back without proxies can get your IP temporarily rate-limited by Google (clears in minutes-hours; returns empty/failed scrapes meanwhile).\n"
