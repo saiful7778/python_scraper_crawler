@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi-startkit[fastapi,inertia,redis,vite]==0.74.0",
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
     "phonenumbers>=9.0.43",
     "playwright>=1.64.1",
     "pydantic>=2.14.3",
