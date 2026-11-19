@@ -9,6 +9,7 @@ from app.models import (
     GoogleMapProfileModel,
     GoogleMapProfileReviewModel,
     KeywordModel,
+    LeadCategoryModel,
     LeadModel,
 )
 from app.repositories.google_map_profile_repository import GoogleMapProfileRepository
@@ -235,13 +236,29 @@ async def test_save_rows_uses_the_bulk_path_for_a_normal_batch(db, repo, monkeyp
 
     monkeypatch.setattr(repo, "_save_one_by_one", unexpected_fallback)
     rows = [
-        {"place_id": "p1", "title": "Cafe A", "input_id": "coffee"},
-        {"place_id": "p2", "title": "Cafe B", "input_id": "coffee"},
+        {
+            "place_id": "p1",
+            "title": "Cafe A",
+            "input_id": "coffee",
+            "categories": "Cafe | Bakery",
+        },
+        {
+            "place_id": "p2",
+            "title": "Cafe B",
+            "input_id": "coffee",
+            "categories": "Cafe",
+        },
     ]
 
     assert await repo.save_rows(rows, scrape_id="s1") == 2
     assert await GoogleMapProfileModel.all().count() == 2
     assert await LeadModel.all().count() == 2
+    assert await LeadCategoryModel.all().count() == 2
+    cafe = await LeadModel.get(title="Cafe A")
+    assert {category.name for category in await cafe.categories.all()} == {
+        "Cafe",
+        "Bakery",
+    }
 
 
 async def test_a_batch_keeps_two_businesses_on_one_domain_apart(db, repo):
