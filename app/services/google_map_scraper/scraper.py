@@ -539,15 +539,15 @@ def _tile_settings(settings: SettingsData, cell: GridCell) -> SettingsData:
     """The settings of a tile at a grid cell: its centre and zoom replace the city's."""
     scraped = ScrapeSettings.model_validate(settings).model_copy(
         update={
-            "latitude": float(cell["lat"]),
-            "longitude": float(cell["lon"]),
+            "latitude": cell["lat"],
+            "longitude": cell["lon"],
             "zoom": cell["zoom"],
         }
     )
     return cast(SettingsData, scraped.model_dump(by_alias=True, mode="json"))
 
 
-def _box(bounding_box: list[float] | None) -> BoundingBox | None:
+def _box(bounding_box: BoundingBox | list[float] | None) -> BoundingBox | None:
     return None if bounding_box is None else cast(BoundingBox, tuple(bounding_box))
 
 
@@ -757,9 +757,12 @@ class _TileRun:
                 )
             cell = tile["cell"]
             sub_tag = " (sub-tile)" if cell and cell.get("_sub") else ""
-            print(
-                f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
-            )
+            if cell is None:
+                print(f"▶ Cell {index}/{self._cells_by_keyword[keyword]}{sub_tag}")
+            else:
+                print(
+                    f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} radius={cell['radius']}m{sub_tag}"
+                )
         scrape_id = self._session.create(tile["name"], settings)
         self._tiles.mark_scrape(tile["ID"], scrape_id)
         self._submit(scrape_id, slot, {**tile, "scrape_id": scrape_id})
@@ -1160,9 +1163,7 @@ class PlaceScraper:
             print(f"✗ Could not geocode {place!r}: {describe(error)}")
             return ScrapeResult([], columns, 0, 1, False)
 
-        anchored = settings.model_copy(
-            update={"latitude": float(lat), "longitude": float(lon)}
-        )
+        anchored = settings.model_copy(update={"latitude": lat, "longitude": lon})
         try:
             for keyword_index, keyword in enumerate(query.keywords, start=1):
                 # the scrape name is what the web UI lists

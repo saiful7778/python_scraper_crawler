@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from typing import Any, NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict, cast, overload
 
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
@@ -16,43 +16,50 @@ USER_AGENT = "Mozilla/5.0 (compatible; python_scraper_crawler-scraper/3.0)"
 logger = get_logger(__name__)
 
 BoundingBox = tuple[float, float, float, float]  # (south, north, west, east)
-LatLon = tuple[str, str]
+LatLon = tuple[float, float]
+
+
+class NominatimHit(TypedDict):
+    """The fields of a Nominatim search hit that this module reads."""
+
+    lat: str
+    lon: str
+    boundingbox: NotRequired[list[str]]
+    type: NotRequired[str]
+    display_name: NotRequired[str]
 
 
 class GeocodeResultWithBBox(TypedDict):
-    lat: str
-    lon: str
+    lat: float
+    lon: float
     boundingbox: list[str]
 
 
 class GridCell(TypedDict):
-    lat: str
-    lon: str
+    lat: float
+    lon: float
     radius: int
     zoom: int
     _bbox: BoundingBox
     _sub: NotRequired[bool]
 
 
+class GeocodeHit(TypedDict):
+    """A Nominatim hit with the fields a caller needs to judge the match."""
+
+    lat: float
+    lon: float
+    boundingbox: list[str] | None
+    type: str
+    display_name: str
+
+
 class GeocodingError(ScraperError):
     """Nominatim could not be asked, or its answer could not be read."""
 
 
-def get_geocode(
-    place: str,
-    with_bbox: bool = False,
-    country: str | None = None,
-) -> LatLon | tuple[LatLon, list[str] | None] | None:
-    """Resolve a place name to (lat, lon) via Nominatim.
-
-    Returns the coordinate pair, or, when ``with_bbox`` is true, a tuple of
-    the coordinate pair and the raw boundingbox (which may be ``None``).
-    Returns ``None`` only when Nominatim answers with no match.
-
-    :raises GeocodingError: When the request fails, the answer is not JSON,
-        or the answer has no usable coordinates. The message names the
-        failing step.
-    """
+def _search(place: str, country: str | None) -> list[NominatimHit]:
+    """Ask Nominatim for ``place`` and return its hits."""
     params: dict[str, str] = {"format": "json", "limit": "1", "q": place}
     if country:
         params["countrycodes"] = country.lower()
@@ -71,7 +78,7 @@ def get_geocode(
         ) from error
     time.sleep(1)  # respect Nominatim's ~1 req/sec policy
     try:
-        hits: Any = json.loads(body)
+        hits: object = json.loads(body)
     except ValueError as error:
         raise GeocodingError(
             f"Nominatim's answer for {place!r} is not JSON: {describe(error)}"
@@ -80,18 +87,93 @@ def get_geocode(
         raise GeocodingError(
             f"Nominatim's answer for {place!r} is a {type(hits).__name__}, not a list"
         )
-    logger.debug("Nominatim returned %d hit(s) for %r", len(hits), place)
+    known_hits = cast(list[object], hits)
+    logger.debug("Nominatim returned %d hit(s) for %r", len(known_hits), place)
+    return cast(list[NominatimHit], known_hits)
+
+
+def get_geocode_hit(place: str, country: str | None = None) -> GeocodeHit | None:
+    """Resolve ``place`` to a hit with its coordinates, class and bounding box.
+
+    Returns ``None`` only when Nominatim answers with no match.
+
+    :raises GeocodingError: When the request fails, the answer is not JSON,
+        or the answer has no usable coordinates.
+    """
+    hits = _search(place, country)
     if not hits:
         return None
     try:
         first = hits[0]
-        coords: LatLon = (str(first["lat"]), str(first["lon"]))
-        boundingbox = first.get("boundingbox")
-    except (KeyError, TypeError, AttributeError) as error:
+        lat = float(first["lat"])
+        lon = float(first["lon"])
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
         raise GeocodingError(
             f"Nominatim's first result for {place!r} has no usable lat/lon: "
             f"{describe(error)}"
         ) from error
+    raw_box: object = first.get("boundingbox")
+    return GeocodeHit(
+        lat=lat,
+        lon=lon,
+        boundingbox=raw_box if isinstance(raw_box, list) else None,
+        type=str(first.get("type") or ""),
+        display_name=str(first.get("display_name") or ""),
+    )
+
+
+@overload
+def get_geocode(
+    place: str,
+    with_bbox: Literal[False] = False,
+    country: str | None = None,
+) -> LatLon | None: ...
+
+
+@overload
+def get_geocode(
+    place: str,
+    with_bbox: Literal[True],
+    country: str | None = None,
+) -> tuple[LatLon, list[str] | None] | None: ...
+
+
+@overload
+def get_geocode(
+    place: str,
+    with_bbox: bool,
+    country: str | None = None,
+) -> LatLon | tuple[LatLon, list[str] | None] | None: ...
+
+
+def get_geocode(
+    place: str,
+    with_bbox: bool = False,
+    country: str | None = None,
+) -> LatLon | tuple[LatLon, list[str] | None] | None:
+    """Resolve a place name to (lat, lon) via Nominatim.
+
+    Returns the coordinate pair, or, when ``with_bbox`` is true, a tuple of
+    the coordinate pair and the raw boundingbox (which may be ``None``).
+    Returns ``None`` only when Nominatim answers with no match.
+
+    :raises GeocodingError: When the request fails, the answer is not JSON,
+        or the answer has no usable coordinates. The message names the
+        failing step.
+    """
+    hits = _search(place, country)
+    if not hits:
+        return None
+    try:
+        first = hits[0]
+        coords: LatLon = (float(first["lat"]), float(first["lon"]))
+        raw_box: object = first.get("boundingbox")
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise GeocodingError(
+            f"Nominatim's first result for {place!r} has no usable lat/lon: "
+            f"{describe(error)}"
+        ) from error
+    boundingbox = raw_box if isinstance(raw_box, list) else None
     if with_bbox:
         return coords, boundingbox
     return coords
@@ -119,8 +201,8 @@ def build_grid_cells(bounding_box: BoundingBox, cells_per_side: int) -> list[Gri
 
             cells.append(
                 {
-                    "lat": f"{center_lat:.6f}",
-                    "lon": f"{center_lon:.6f}",
+                    "lat": round(center_lat, 6),
+                    "lon": round(center_lon, 6),
                     "radius": max(1000, math.ceil(1.15 * tile_diagonal_m / 2)),
                     "zoom": min(17, max(11, zoom)),
                     "_bbox": (
@@ -136,14 +218,14 @@ def build_grid_cells(bounding_box: BoundingBox, cells_per_side: int) -> list[Gri
 
 
 def is_in_bounding_box(
-    row: Mapping[str, Any],
+    row: Mapping[str, object],
     bounding_box: BoundingBox,
     margin_ratio: float = 0.10,
 ) -> bool:
     """Return whether a row's coordinates fall within ``bounding_box`` (padded by margin)."""
     try:
-        lat = float(row["latitude"])
-        lon = float(row["longitude"])
+        lat = float(cast(str | float, row["latitude"]))
+        lon = float(cast(str | float, row["longitude"]))
     except (KeyError, TypeError, ValueError):
         return True
 

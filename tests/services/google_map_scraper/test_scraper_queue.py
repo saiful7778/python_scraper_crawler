@@ -41,8 +41,8 @@ def _geocode(place, with_bbox=False, country=None):
 
 def _cell() -> dict:
     return {
-        "lat": "0.25",
-        "lon": "0.25",
+        "lat": 0.25,
+        "lon": 0.25,
         "radius": 100,
         "zoom": 15,
         "_bbox": [0.0, 0.5, 0.0, 0.5],
