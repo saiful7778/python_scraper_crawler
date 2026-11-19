@@ -2,11 +2,21 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .scrape.scrape_settings import CleanText, ScrapeSettings
 
 CountryCode = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2}$")]
+
+
+class KeywordPlan(BaseModel):
+    """One keyword and the effort its own search gets."""
+
+    model_config = ConfigDict(frozen=True)
+
+    keyword: CleanText
+    depth: int = Field(default=5, ge=1, le=10, strict=True)
+    grid: int = Field(default=1, ge=1, le=10, strict=True)
 
 
 class PlaceQuery(ScrapeSettings):
@@ -28,22 +38,56 @@ class PlaceQuery(ScrapeSettings):
         strict=True,
         description="Split the city into N x N tiles.",
     )
+    keyword_plans: tuple[KeywordPlan, ...] = Field(
+        default=(),
+        alias="plans",
+        max_length=500,
+        description="Each keyword with its own depth and grid.",
+    )
     deep_scan: bool = Field(
         default=False,
         strict=True,
         description="Split tiles that reach Google's result cap; needs a grid, 3 by default.",
     )
+
     @model_validator(mode="before")
     @classmethod
-    def _derive_engine_fields(cls, data: Any) -> Any:
+    def _derive_fields(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
         data = dict(data)
         if data.get("deep_scan") is True and data.get("grid") is None:
             data["grid"] = 3
+        plans = data.get("plans")
+        keywords = data.get("keywords")
+        if plans:
+            data["keywords"] = [
+                plan["keyword"] if isinstance(plan, dict) else plan.keyword
+                for plan in plans
+            ]
+        elif isinstance(keywords, (list, tuple)) and keywords:
+            depth = data.get("depth", data.get("scroll_depth", 5))
+            grid = data.get("grid") or 1
+            data["plans"] = [
+                {"keyword": keyword, "depth": depth, "grid": grid}
+                for keyword in keywords
+            ]
         data["email"] = True
         data["socials"] = True
         return data
+
+    def depth_of(self, keyword_index: int) -> int:
+        """Batches the keyword at this 1-based index searches with."""
+        return self.keyword_plans[keyword_index - 1].depth
+
+    def grid_of(self, keyword_index: int) -> int:
+        """Grid side of the keyword at this 1-based index; 1 is the whole city."""
+        return self.keyword_plans[keyword_index - 1].grid
+
+    @property
+    def uses_grid(self) -> bool:
+        """True when any keyword splits the city into tiles."""
+        return any(plan.grid > 1 for plan in self.keyword_plans)
 
     def engine_settings(self) -> ScrapeSettings:
         """The settings the scrape engine runs with; the place-only fields are left out.
@@ -52,6 +96,6 @@ class PlaceQuery(ScrapeSettings):
         search (filters, grid bounding box), so the engine never stops too early.
         """
         data = self.model_dump(include=set(ScrapeSettings.model_fields))
-        if self.has_phone or self.has_website or self.grid:
+        if self.has_phone or self.has_website or self.uses_grid:
             data["limit"] = None
         return ScrapeSettings.model_validate(data)
