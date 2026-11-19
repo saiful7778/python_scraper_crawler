@@ -4,8 +4,8 @@
   ],
   "resources/**/*": ["prettier --write"],
   "{app,bootstrap,cli,commands,config,providers,routes,tasks,tests}/**/*.py": [
-    "ruff check --fix",
-    "ruff format"
+    "uv run ruff check --force-exclude --fix",
+    "uv run ruff format --force-exclude"
   ],
   "*.md": ["prettier --write"]
 }

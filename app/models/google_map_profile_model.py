@@ -6,7 +6,6 @@ from tortoise.models import Model
 
 class GoogleMapProfileModel(Model):
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(default=0)
     data_id = fields.TextField(null=True)
     place_id = fields.TextField(null=True)
     cid = fields.TextField(null=True)

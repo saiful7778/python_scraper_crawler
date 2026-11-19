@@ -43,7 +43,7 @@ class LeadRepository(BaseRepository):
         return None
 
     async def all(self, descending: bool = False) -> list[LeadModel]:
-        order = "-counter" if descending else "counter"
+        order = "-created_at" if descending else "created_at"
         return (
             await self._model.all()
             .order_by(order)
@@ -66,9 +66,7 @@ class LeadRepository(BaseRepository):
         return await self._model.filter(id=lead_id).delete() > 0
 
     async def create(self, values: dict):
-        return await self._model.create(
-            counter=await self._next_global_counter(), **values
-        )
+        return await self._model.create(**values)
 
     async def add_children(self, lead, parts):
         try:

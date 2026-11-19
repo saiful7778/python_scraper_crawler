@@ -375,7 +375,6 @@ class GoogleMapProfileRepository(BaseRepository):
                 domain = None
             crawlable = row.get("is_crawlable")
             lead = LeadModel(
-                counter=await self._leads._next_global_counter(),
                 website_domain=domain,
                 is_crawlable=bool(crawlable) if crawlable is not None else False,
                 **values,
@@ -392,7 +391,6 @@ class GoogleMapProfileRepository(BaseRepository):
         for entry in entries:
             assert entry.lead is not None
             profile = GoogleMapProfileModel(
-                counter=await self._next_global_counter(),
                 lead_id=entry.lead.id,
                 **_profile_values(entry.row),
             )
@@ -505,9 +503,7 @@ class GoogleMapProfileRepository(BaseRepository):
     ) -> GoogleMapProfileModel:
         values = _profile_values(row)
         if profile is None:
-            return await self._model.create(
-                counter=await self._next_global_counter(), lead=lead, **values
-            )
+            return await self._model.create(lead=lead, **values)
         self.fill_empty(profile, values)
         profile.lead = lead
         await profile.save()

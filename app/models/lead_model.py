@@ -13,7 +13,6 @@ class LeadModel(Model):
     """Lead Model"""
 
     id = fields.UUIDField(primary_key=True, default=uuid4)
-    counter = fields.IntField(null=True, db_index=True)
 
     title = fields.CharField(max_length=500, null=True, db_index=True)
     address = fields.TextField(null=True)

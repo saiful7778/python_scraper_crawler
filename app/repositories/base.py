@@ -10,20 +10,8 @@ logger = get_logger(__name__)
 
 
 class BaseRepository:
-    #: The Tortoise model the global counter and helpers work on; subclasses set it.
+    #: The Tortoise model helpers work on; subclasses set it.
     _model: Any
-
-    def __init__(self):
-        self._counters: dict = {}
-
-    async def _next_global_counter(self) -> int:
-        model = self._model
-        value = self._counters.get(model)
-        if value is None:
-            value = (await self.last_counter(model)) or 0
-        value += 1
-        self._counters[model] = value
-        return value
 
     @staticmethod
     def is_valid_uuid(val):
@@ -34,20 +22,6 @@ class BaseRepository:
             return True
         except (ValueError, AttributeError, TypeError):
             return False
-
-    @staticmethod
-    async def last_counter(model, **filters):
-        last = (
-            await model.filter(counter__isnull=False, **filters)
-            .order_by("-counter")
-            .first()
-        )
-        return None if last is None else last.counter
-
-    @classmethod
-    async def next_counter(cls, model, **filters):
-        last = await cls.last_counter(model, **filters)
-        return 0 if last is None else last + 1
 
     @staticmethod
     async def insert_ignoring_conflicts(model, objs):

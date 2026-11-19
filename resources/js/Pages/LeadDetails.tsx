@@ -61,7 +61,6 @@ export interface CrawlWebsite {
 
 export interface LeadDetail {
   id: string;
-  counter: number | null;
   title: string | null;
   categories: string[];
   address: string | null;
@@ -123,7 +122,10 @@ function CrawlWebsiteCard({ website }: { website: CrawlWebsite }) {
       <CardContent className="space-y-6">
         <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Origin" value={website.origin} />
-          <Field label="Registrable domain" value={website.registrable_domain} />
+          <Field
+            label="Registrable domain"
+            value={website.registrable_domain}
+          />
           <Field label="Finished" value={website.finished_at} />
           <Field label="Error code" value={website.error_code} />
           <Field label="Error message" value={website.error_message} />
@@ -257,7 +259,6 @@ export default function LeadDetails({ lead }: LeadDetailsProps) {
           </CardHeader>
           <CardContent>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="#" value={lead.counter} />
               <Field label="Owner" value={lead.owner} />
               <Field label="Phone" value={lead.phone} />
               <Field label="Timezone" value={lead.timezone} />

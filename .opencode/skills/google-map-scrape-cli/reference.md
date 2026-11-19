@@ -61,7 +61,7 @@ ORDER BY places DESC;
 SELECT l.title, l.phone, l.website, p.review_rating, p.review_count
 FROM leads l
 LEFT JOIN google_maps_profiles p ON p.lead_id = l.id
-ORDER BY l.counter DESC NULLS LAST
+ORDER BY l.created_at DESC
 LIMIT 20;
 
 -- Approximate: leads first seen in a city during a time window

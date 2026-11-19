@@ -19,7 +19,6 @@ import { TrashIcon } from "@phosphor-icons/react";
 
 export interface Lead {
   id: string;
-  counter: number | null;
   title: string | null;
   categories: string[];
   address: string | null;
@@ -65,7 +64,6 @@ export default function Leads({ leads }: LeadsProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>#</TableHead>
             <TableHead>Title</TableHead>
             <TableHead>Category</TableHead>
             <TableHead>Website</TableHead>
@@ -73,9 +71,8 @@ export default function Leads({ leads }: LeadsProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {leads.map((lead, index) => (
-            <TableRow key={lead.counter ?? index}>
-              <TableCell>{lead.counter ?? "—"}</TableCell>
+          {leads.map((lead) => (
+            <TableRow key={lead.id}>
               <TableCell>
                 <div>
                   <Link href={`/leads/${lead.id}`} className="hover:underline">
@@ -120,7 +117,7 @@ export default function Leads({ leads }: LeadsProps) {
           {leads.length === 0 && (
             <TableRow>
               <TableCell
-                colSpan={7}
+                colSpan={4}
                 className="text-center text-muted-foreground"
               >
                 No leads found.

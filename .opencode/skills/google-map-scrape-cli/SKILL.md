@@ -102,7 +102,7 @@ Results go to `leads`, `google_maps_profiles`, `lead_addresses`, `lead_categorie
 
 ```bash
 uv run python .opencode/skills/google-map-scrape-cli/scripts/db_status.py
-uv run python .opencode/skills/google-map-scrape-cli/scripts/query.py "SELECT title, phone, website FROM leads ORDER BY counter DESC NULLS LAST LIMIT 10"
+uv run python .opencode/skills/google-map-scrape-cli/scripts/query.py "SELECT title, phone, website FROM leads ORDER BY created_at DESC LIMIT 10"
 ```
 
 `db_status.py` loads the repo `.env` and prints the target database, scrape status counts, `working` scrapes, Redis tile queues (pending/in-flight/done, with the first tile's name), totals and the latest profiles. To attribute a queue to a command, correlate its first tile names with `/tmp/opencode/*.log` or `storage/logs/<date>.log`; the hash is not reversible. `query.py` runs read-only SQL; `psql` may not be installed here. More SQL, the `/leads` web UI, and per-run count caveats are in [reference.md](reference.md).

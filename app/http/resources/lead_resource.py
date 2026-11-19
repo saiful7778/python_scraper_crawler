@@ -46,7 +46,6 @@ class LeadListItemResource(Resource):
         lead = self.lead
         return {
             "id": str(lead.id),
-            "counter": lead.counter,
             "title": lead.title,
             "categories": [
                 c.name for c in sorted(lead.categories, key=lambda c: c.created_at)
@@ -76,7 +75,9 @@ class LeadDetailResource(LeadListItemResource):
             "timezone": lead.timezone,
             "created_at": isoformat_or_none(lead.created_at),
             "updated_at": isoformat_or_none(lead.updated_at),
-            "emails": [e.email for e in sorted(lead.emails, key=lambda e: e.created_at)],
+            "emails": [
+                e.email for e in sorted(lead.emails, key=lambda e: e.created_at)
+            ],
             "socials": [
                 {"platform": s.platform, "url": s.url}
                 for s in sorted(lead.socials, key=lambda s: s.created_at)
