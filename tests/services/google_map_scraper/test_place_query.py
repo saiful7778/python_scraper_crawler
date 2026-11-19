@@ -35,17 +35,21 @@ def test_plans_supply_the_keywords_and_are_read_by_one_based_index():
     assert query.depth_of(2) == 3 and query.grid_of(2) == 2
 
 
-def test_keywords_without_plans_get_depth_five_and_grid_one():
+def test_keywords_without_plans_inherit_the_run_level_depth_and_grid_one():
     assert plans_of(keywords=["cafes", "bakeries"]) == [
-        ("cafes", 5, 1),
-        ("bakeries", 5, 1),
+        ("cafes", 1, 1),
+        ("bakeries", 1, 1),
     ]
+
+
+def test_a_plan_with_no_depth_or_grid_gets_five_and_one():
+    assert plans_of(plans=[{"keyword": "cafes"}]) == [("cafes", 5, 1)]
 
 
 def test_a_run_level_grid_applies_to_every_derived_plan():
     assert plans_of(keywords=["cafes", "bakeries"], grid=2) == [
-        ("cafes", 5, 2),
-        ("bakeries", 5, 2),
+        ("cafes", 1, 2),
+        ("bakeries", 1, 2),
     ]
 
 

@@ -815,3 +815,67 @@ def test_the_done_record_is_written_before_a_blocked_tile_is_saved(
     arrange(lambda kw, slot: blocked("a"))
     PlaceScraper(redis).scrape(query)
     assert seen == [1]
+
+
+def _planned(*plans, **overrides) -> PlaceQuery:
+    return PlaceQuery.model_validate(
+        {
+            "plans": [
+                {"keyword": keyword, "depth": depth, "grid": grid}
+                for keyword, depth, grid in plans
+            ],
+            "city": "Austin",
+            "country": "us",
+            **overrides,
+        }
+    )
+
+
+def test_each_keyword_runs_with_its_own_grid(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_planned(("cafes", 5, 1), ("pizza", 5, 2)))
+    assert [kw for kw, _ in env.searched] == [
+        "cafes",
+        "pizza",
+        "pizza",
+        "pizza",
+        "pizza",
+    ]
+
+
+def test_each_tile_carries_its_keywords_depth(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_planned(("cafes", 4, 1), ("pizza", 6, 2)))
+    depths = {
+        env._keyword(sid): env.settings_of(sid)["depth"] for sid, _ in env.submitted
+    }
+    assert depths == {"cafes": 4, "pizza": 6}
+
+
+def test_the_whole_city_keyword_of_a_mixed_run_prints_no_cell_lines(
+    arrange, redis, capsys
+):
+    counter = itertools.count()
+    arrange(lambda kw, slot: done(f"t{next(counter)}"))
+    PlaceScraper(redis).scrape(_planned(("cafes", 4, 1), ("pizza", 6, 2)))
+    lines = _lines(capsys)
+    assert "▶ Creating scrape: 1 keyword @ 1.0,2.0 depth=4" in lines
+    assert "▶ Grid 2x2: 4 scrapes, one at a time, depth=6" in lines
+    assert not any(line.startswith("▶ Cell ") and "t0" in line for line in lines)
+    assert [line for line in lines if "unique rows" in line] == [
+        "4 unique rows, 4 after the city box and filters"
+    ]
+
+
+def test_a_whole_city_run_does_not_need_a_bounding_box(arrange, redis, monkeypatch):
+    arrange(lambda kw, slot: done(kw))
+    asked = []
+
+    def geocode(place, with_bbox=False, country=None):
+        asked.append(with_bbox)
+        return _geocode(place, with_bbox=with_bbox, country=country)
+
+    monkeypatch.setattr(scraper_module, "get_geocode", geocode)
+    PlaceScraper(redis).scrape(_planned(("cafes", 5, 1)))
+    PlaceScraper(redis).scrape(_planned(("teas", 5, 2)))
+    assert asked == [False, True]

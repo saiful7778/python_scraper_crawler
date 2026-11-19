@@ -66,7 +66,7 @@ class PlaceQuery(ScrapeSettings):
                 for plan in plans
             ]
         elif isinstance(keywords, (list, tuple)) and keywords:
-            depth = data.get("depth", data.get("scroll_depth", 5))
+            depth = data.get("depth", data.get("scroll_depth", 1))
             grid = data.get("grid") or 1
             data["plans"] = [
                 {"keyword": keyword, "depth": depth, "grid": grid}

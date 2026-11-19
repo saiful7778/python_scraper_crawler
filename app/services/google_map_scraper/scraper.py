@@ -738,12 +738,14 @@ class _TileRun:
         settings = cast(SettingsData, {**tile["settings"], "proxies": lane})
         keyword = tile["keyword_index"]
         index = tile["cell_index"]
+        depth = self._query.depth_of(keyword)
+        grid = self._query.grid_of(keyword)
         if index in (None, 1):
             print(f"▶ Keyword {keyword}/{len(self._query.keywords)}: {tile['keyword']}")
         if index is None:
             scraped = ScrapeSettings.model_validate(tile["settings"])
             print(
-                f"▶ Creating scrape: 1 keyword @ {scraped.latitude},{scraped.longitude} depth={self._query.scroll_depth}"
+                f"▶ Creating scrape: 1 keyword @ {scraped.latitude},{scraped.longitude} depth={depth}"
             )
         else:
             if index == 1:
@@ -753,7 +755,7 @@ class _TileRun:
                     else ""
                 )
                 print(
-                    f"▶ Grid {self._query.grid}x{self._query.grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={self._query.scroll_depth}{deep_scan_note}"
+                    f"▶ Grid {grid}x{grid}: {self._cells_by_keyword[keyword]} scrapes, one at a time, depth={depth}{deep_scan_note}"
                 )
             cell = tile["cell"]
             sub_tag = " (sub-tile)" if cell and cell.get("_sub") else ""
@@ -1021,7 +1023,7 @@ class _TileRun:
 
     def _summarize(self, keyword: int, final: bool = False) -> None:
         """Print a grid keyword's totals once its last tile is settled, or at once when the run stops on it."""
-        if not self._query.grid or keyword in self._summarized:
+        if self._query.grid_of(keyword) < 2 or keyword in self._summarized:
             return
         if not final and self._open_by_keyword[keyword]:
             return
@@ -1121,17 +1123,16 @@ class PlaceScraper:
         place = ", ".join(part for part in (query.city, query.state) if part)
 
         logger.info(
-            "scraping %r in %r: grid=%s depth=%s",
+            "scraping %r in %r: plans=%r",
             query.keywords,
             place,
-            query.grid,
-            query.scroll_depth,
+            [(plan.keyword, plan.depth, plan.grid) for plan in query.keyword_plans],
         )
         print(f'▶ Geocoding "{place}"')
         bounding_box: BoundingBox | None = None
 
         try:
-            if query.grid:
+            if query.uses_grid:
                 found = cast(
                     tuple[LatLon, list[str] | None] | None,
                     get_geocode(place, with_bbox=True, country=query.country),
@@ -1144,9 +1145,9 @@ class PlaceScraper:
                 bounding_box = parse_bounding_box(place, raw_box)
                 south, north, west, east = bounding_box
                 print(
-                    f"\t→ bbox S{south} N{north} W{west} E{east}, {query.grid}x{query.grid} tiles"
+                    f"\t→ bbox S{south} N{north} W{west} E{east} for the keywords with a grid"
                 )
-                logger.info("geocoded %r: %dx%d grid", place, query.grid, query.grid)
+                logger.info("geocoded %r with its bounding box", place)
             else:
                 found_point = get_geocode(place, country=query.country)
                 if not found_point:
@@ -1194,15 +1195,20 @@ class PlaceScraper:
 
         :raises BufferError: If Redis fails.
         """
+        plan = query.keyword_plans[keyword_index - 1]
         base = cast(
             SettingsData,
             anchored.model_copy(
-                update={"keywords": (keyword,), "proxies": ()}
+                update={
+                    "keywords": (keyword,),
+                    "proxies": (),
+                    "scroll_depth": plan.depth,
+                }
             ).model_dump(by_alias=True, mode="json"),
         )
         cells = (
-            build_grid_cells(bounding_box, query.grid)
-            if query.grid and bounding_box
+            build_grid_cells(bounding_box, plan.grid)
+            if plan.grid > 1 and bounding_box
             else None
         )
         if cells is None:
