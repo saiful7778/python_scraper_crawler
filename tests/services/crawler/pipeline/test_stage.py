@@ -1,7 +1,10 @@
+from typing import cast
+
 import fakeredis
 import pytest
 
 from app.helpers.http_fetcher import SITE_TIMEOUT, FetchResult
+from app.helpers.http_fetcher.fetcher import WebPageFetcher
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
 from app.services.buffer.crawl_queue import CrawlQueue
 from app.services.crawler.pipeline.intake import CrawlIntake, IntakeResult
@@ -158,7 +161,7 @@ def test_a_failing_save_hook_does_not_stop_the_crawl(queue, buffer):
     intake = CrawlIntake(queue, buffer, Web())
     intake.submit(["https://a.example", "https://b.example"])
 
-    def failing() -> list[str]:
+    def failing() -> None:
         raise RuntimeError("database is down")
 
     stage = CrawlStage(
@@ -180,7 +183,7 @@ def test_site_fetch_passes_the_site_timeout():
             return page(url)
 
     fetcher = Fetcher()
-    site_fetch(fetcher)("https://a.example")
+    site_fetch(cast(WebPageFetcher, fetcher))("https://a.example")
 
     assert fetcher.timeouts == [SITE_TIMEOUT]
 

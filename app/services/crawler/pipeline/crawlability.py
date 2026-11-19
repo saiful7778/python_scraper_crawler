@@ -26,7 +26,7 @@ def is_crawlable(http_status: int | None, content_type: str | None) -> bool:
 def check_origin(origin: str, fetch: FetchFn) -> CrawlCheck:
     try:
         result = fetch(origin)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - any fetch failure means "not crawlable"
         logger.warning("origin %s could not be fetched: %s", origin, describe(error))
         return CrawlCheck(crawlable=False, reason="fetch_error")
 

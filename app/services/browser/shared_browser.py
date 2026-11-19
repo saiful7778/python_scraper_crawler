@@ -33,6 +33,7 @@ class SharedBrowser:
         with self._lock:
             if browser_is_dead(self._browser):
                 self._replace(self._browser)
+            assert self._browser is not None
             return self._browser
 
     def restart_if_dead(self, seen: Browser | None) -> Browser:
@@ -46,6 +47,7 @@ class SharedBrowser:
             ):
                 return current
             self._replace(current)
+            assert self._browser is not None
             return self._browser
 
     def close(self) -> None:

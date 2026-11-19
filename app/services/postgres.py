@@ -3,8 +3,8 @@
 from dataclasses import asdict
 from typing import Any
 
-from asyncpg import InterfaceError
-from asyncpg.exceptions import PostgresConnectionError
+from asyncpg import InterfaceError  # pyright: ignore[reportMissingTypeStubs]
+from asyncpg.exceptions import PostgresConnectionError  # pyright: ignore[reportMissingTypeStubs]
 from tortoise.context import TortoiseContext
 
 from app.utils.errors import describe

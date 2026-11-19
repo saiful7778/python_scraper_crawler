@@ -1,9 +1,16 @@
+from typing import cast
+
 import fakeredis
 import pytest
 
 from app.services.buffer.client import BufferError
 from app.services.google_map_scraper.place_query import PlaceQuery
-from app.services.google_map_scraper.place_queue import PlaceTileQueue, run_id
+from app.services.google_map_scraper.place_queue import (
+    DoneTile,
+    PlaceTile,
+    PlaceTileQueue,
+    run_id,
+)
 
 
 def _query(**overrides) -> PlaceQuery:
@@ -12,32 +19,38 @@ def _query(**overrides) -> PlaceQuery:
     )
 
 
-def _tile(tile_id="tile-1", keyword="cafe", **overrides) -> dict:
-    return {
-        "ID": tile_id,
-        "keyword": keyword,
-        "keyword_index": 1,
-        "cell_index": None,
-        "name": keyword,
-        "settings": {"keywords": [keyword], "proxies": []},
-        "bounding_box": None,
-        "cell": None,
-        "attempts": 0,
-        "scrape_id": None,
-        **overrides,
-    }
+def _tile(tile_id="tile-1", keyword="cafe", **overrides) -> PlaceTile:
+    return cast(
+        PlaceTile,
+        {
+            "ID": tile_id,
+            "keyword": keyword,
+            "keyword_index": 1,
+            "cell_index": None,
+            "name": keyword,
+            "settings": {"keywords": [keyword], "proxies": []},
+            "bounding_box": None,
+            "cell": None,
+            "attempts": 0,
+            "scrape_id": None,
+            **overrides,
+        },
+    )
 
 
-def _done(**overrides) -> dict:
-    return {
-        "keyword_index": 1,
-        "kept": [],
-        "finished": 1,
-        "skipped": 0,
-        "blocked": False,
-        "rows": [],
-        **overrides,
-    }
+def _done(**overrides) -> DoneTile:
+    return cast(
+        DoneTile,
+        {
+            "keyword_index": 1,
+            "kept": [],
+            "finished": 1,
+            "skipped": 0,
+            "blocked": False,
+            "rows": [],
+            **overrides,
+        },
+    )
 
 
 @pytest.fixture
@@ -49,7 +62,9 @@ def test_take_returns_tiles_in_fifo_order_and_marks_them_in_flight(redis):
     queue = PlaceTileQueue(redis, _query(), 3600)
     queue.push(_tile("tile-1"))
     queue.push(_tile("tile-2"))
-    assert queue.take()["ID"] == "tile-1"
+    taken = queue.take()
+    assert taken is not None
+    assert taken["ID"] == "tile-1"
     assert [tile["ID"] for tile in queue.in_flight()] == ["tile-1"]
     assert [tile["ID"] for tile in queue.pending()] == ["tile-2"]
 
@@ -71,7 +86,9 @@ def test_push_front_puts_a_requeued_tile_first(redis):
     queue.push(_tile("tile-1"))
     queue.push(_tile("tile-2"))
     queue.push_front(_tile("tile-0"))
-    assert queue.take()["ID"] == "tile-0"
+    taken = queue.take()
+    assert taken is not None
+    assert taken["ID"] == "tile-0"
 
 
 def test_mark_scrape_stores_the_scrape_id_on_the_in_flight_tile(redis):

@@ -207,7 +207,7 @@ class GoogleMapProfileRepository(BaseRepository):
         return len(rows)
 
     async def _save_one_by_one(self, rows: list[LeadRow], scrape_id: str) -> int:
-        saved: list[tuple[LeadRow, object]] = []
+        saved: list[tuple[LeadRow, GoogleMapProfileModel]] = []
         for row in rows:
             try:
                 saved.append((row, await self._save_parent(row)))
@@ -261,7 +261,7 @@ class GoogleMapProfileRepository(BaseRepository):
                     profile = stored_by_title.get(key)
 
             if entry is None:
-                entry = _PreparedRow(dict(row), profile)
+                entry = _PreparedRow(row.copy(), profile)
                 prepared.append(entry)
             else:
                 self._merge_row(entry.row, row)
@@ -325,7 +325,7 @@ class GoogleMapProfileRepository(BaseRepository):
         """Fill ``into``'s blanks from ``row``, as a second save of the same business would."""
         for key, value in row.items():
             if key == "is_crawlable":
-                if value is not None:
+                if isinstance(value, bool):
                     into[key] = value
             elif into.get(key) in (None, "") and value not in (None, ""):
                 into[key] = value
@@ -336,9 +336,14 @@ class GoogleMapProfileRepository(BaseRepository):
             await self._insert_new(new)
         for entry in prepared:
             if entry.lead is None:
+                assert entry.profile is not None
                 await self._update_stored(entry.row, entry.profile)
         await self._save_children(
-            [(entry.row, entry.profile) for entry in prepared], scrape_id
+            [
+                (entry.row, cast(GoogleMapProfileModel, entry.profile))
+                for entry in prepared
+            ],
+            scrape_id,
         )
 
     async def _insert_new(self, entries: list[_PreparedRow]) -> None:
@@ -350,10 +355,13 @@ class GoogleMapProfileRepository(BaseRepository):
         }
         used: set[str] = set()
         if wanted:
-            used = set(
-                await LeadModel.filter(website_domain__in=list(wanted)).values_list(
-                    "website_domain", flat=True
-                )
+            used = cast(
+                set[str],
+                set(
+                    await LeadModel.filter(website_domain__in=list(wanted)).values_list(
+                        "website_domain", flat=True
+                    )
+                ),
             )
 
         leads: list[LeadModel] = []
@@ -375,9 +383,14 @@ class GoogleMapProfileRepository(BaseRepository):
             entry.lead = lead
             leads.append(lead)
         await LeadModel.bulk_create(leads, batch_size=BULK_SIZE)
+        # bulk_create inserts the rows but does not mark the instances as saved, and
+        # adding many-to-many relations below refuses instances it thinks are unsaved.
+        for lead in leads:
+            lead._saved_in_db = True
 
         profiles: list[GoogleMapProfileModel] = []
         for entry in entries:
+            assert entry.lead is not None
             profile = GoogleMapProfileModel(
                 counter=await self._next_global_counter(),
                 lead_id=entry.lead.id,
@@ -454,7 +467,7 @@ class GoogleMapProfileRepository(BaseRepository):
         profile.lead = lead
         await profile.save()
 
-    async def _save_parent(self, row: LeadRow):
+    async def _save_parent(self, row: LeadRow) -> GoogleMapProfileModel:
         existing = await self._find_profile(row)
         lead = await self._save_lead(row, existing)
         await self._leads.add_children(lead, _children(row))
@@ -484,7 +497,12 @@ class GoogleMapProfileRepository(BaseRepository):
             ),
         ).first()
 
-    async def _save_profile(self, row: LeadRow, lead, profile):
+    async def _save_profile(
+        self,
+        row: LeadRow,
+        lead: LeadModel,
+        profile: GoogleMapProfileModel | None,
+    ) -> GoogleMapProfileModel:
         values = _profile_values(row)
         if profile is None:
             return await self._model.create(
@@ -507,7 +525,7 @@ class GoogleMapProfileRepository(BaseRepository):
         return keyword_id
 
     async def _save_children(
-        self, saved: list[tuple[LeadRow, object]], scrape_id: str
+        self, saved: list[tuple[LeadRow, GoogleMapProfileModel]], scrape_id: str
     ) -> None:
         keywords: list[GoogleMapKeyword] = []
         hours: list[GoogleMapProfileHourModel] = []

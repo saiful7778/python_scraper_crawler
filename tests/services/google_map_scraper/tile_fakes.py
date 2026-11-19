@@ -9,6 +9,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import cast
 
 from app.services.buffer.finish_pool import FinishPool
 from app.services.google_map_scraper.scrape.scrape_run import RunOutcome
@@ -33,15 +34,18 @@ class Reply:
 
 def row(title: str, **overrides) -> LeadRow:
     """A lead inside the test city's bounding box, with a unique title and place id."""
-    return {
-        "title": title,
-        "place_id": f"p-{title}",
-        "latitude": 0.5,
-        "longitude": 0.5,
-        "phone": "",
-        "website": "",
-        **overrides,
-    }
+    return cast(
+        LeadRow,
+        {
+            "title": title,
+            "place_id": f"p-{title}",
+            "latitude": 0.5,
+            "longitude": 0.5,
+            "phone": "",
+            "website": "",
+            **overrides,
+        },
+    )
 
 
 def done(*titles: str) -> Reply:
@@ -137,7 +141,7 @@ class TileSession:
         check_crawlable=False,
     ):
         self._env = env
-        self._queue: deque[str] = deque()
+        self._queue: deque[tuple[str, int]] = deque()
         env.slot_counts.append(slots)
         env.check_crawlable.append(check_crawlable)
         # one slot cannot overlap, so only a multi-slot run finishes in the background

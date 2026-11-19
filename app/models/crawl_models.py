@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from tortoise import fields
 from tortoise.models import Model
@@ -12,6 +12,7 @@ class CrawlWebsiteModel(Model):
         null=True,
         on_delete=fields.CASCADE,
     )
+    lead_id: UUID | None
     host = fields.CharField(max_length=255)
     registrable_domain = fields.CharField(max_length=255, db_index=True)
     origin = fields.CharField(max_length=2048, unique=True)

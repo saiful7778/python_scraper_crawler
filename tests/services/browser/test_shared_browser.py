@@ -1,8 +1,20 @@
+from typing import Protocol, cast
+
 import pytest
 
 from app.services.browser import shared_browser
 from app.services.browser.browser_session import BrowserSession
 from app.services.browser.shared_browser import SharedBrowser
+
+
+class _FakeCDPLike(Protocol):
+    closed: bool
+
+
+class _FakeBrowserLike(Protocol):
+    cdp: _FakeCDPLike
+    closed: bool
+    killed: bool
 
 
 class FakeCDP:
@@ -32,8 +44,9 @@ def fake_browser_cls(monkeypatch: pytest.MonkeyPatch):
 
         def kill(self) -> None:
             self.killed = True
-            if type(self).kill_error is not None:
-                raise type(self).kill_error
+            error = type(self).kill_error
+            if error is not None:
+                raise error
             self.cdp.closed = True
 
     monkeypatch.setattr(shared_browser, "Browser", FakeBrowser)
@@ -59,7 +72,7 @@ def test_closing_one_attached_session_keeps_the_browser_for_the_other(fake_brows
     a.close()
     a.kill()
     assert b.browser is not None
-    assert not b.browser.closed
+    assert not cast(_FakeBrowserLike, b.browser).closed
 
 
 def test_restart_after_a_crash_starts_one_new_browser(fake_browser_cls):
@@ -79,9 +92,11 @@ def test_restart_kills_the_old_browser_before_replacing_it(fake_browser_cls):
     a = BrowserSession("en", True, shared=shared)
     a.start()
     old = a.browser
-    old.cdp.closed = True
+    assert old is not None
+    old_view = cast(_FakeBrowserLike, old)
+    old_view.cdp.closed = True
     a.restart()
-    assert old.killed
+    assert old_view.killed
     assert a.browser is not old
     assert fake_browser_cls.created == 2
 
@@ -92,9 +107,11 @@ def test_restart_still_replaces_the_browser_when_kill_fails(fake_browser_cls):
     a = BrowserSession("en", True, shared=shared)
     a.start()
     old = a.browser
-    old.cdp.closed = True
+    assert old is not None
+    old_view = cast(_FakeBrowserLike, old)
+    old_view.cdp.closed = True
     a.restart()
-    assert old.killed
+    assert old_view.killed
     assert a.browser is not old
     assert fake_browser_cls.created == 2
 

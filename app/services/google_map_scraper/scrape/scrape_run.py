@@ -3,6 +3,7 @@
 import threading
 import time
 from dataclasses import dataclass
+from typing import cast
 
 from redis import Redis
 
@@ -24,7 +25,7 @@ from .scrape_outcome import summarize_outcome
 from .scrape_progress import ScrapeProgress
 from .scrape_settings import ScrapeSettings
 from .scrape_status import ScrapeStage, ScrapeStatus
-from .scrape_types import LeadRow, ScrapeRecord
+from .scrape_types import LeadRow, ScrapeRecord, SettingsData
 
 logger = get_logger(__name__)
 
@@ -123,7 +124,11 @@ class ScrapeRun:
         resumed = self._scrape_state.get_settings(self.scrape_id) is not None
         if not resumed:
             self._scrape_state.create(
-                self.scrape_id, self.settings.model_dump(by_alias=True, mode="json")
+                self.scrape_id,
+                cast(
+                    SettingsData,
+                    self.settings.model_dump(by_alias=True, mode="json"),
+                ),
             )
         if self._known_keys or not resumed:
             self._known.load(self.scrape_id, self._known_keys)
@@ -302,7 +307,7 @@ class ScrapeRun:
         state = self._state
         self._progress.stamp(stage=ScrapeStage.DONE)
         status, note = summarize_outcome(
-            has_rows=self._progress.data["leads"] > 0,
+            has_rows=self._progress.data.get("leads", 0) > 0,
             errors=state.errors,
             blocked=state.blocked,
             timed_out=state.timed_out,
@@ -320,7 +325,7 @@ class ScrapeRun:
             "scrape %s %s: %s leads%s",
             self.scrape_id,
             status,
-            self._progress.data["leads"],
+            self._progress.data.get("leads", 0),
             f": {note}" if status == ScrapeStatus.FAILED else "",
         )
 

@@ -1,3 +1,5 @@
+from typing import cast
+
 import fakeredis
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -12,6 +14,11 @@ from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSetting
 from app.services.google_map_scraper.scrape.scrape_status import (
     ScrapeStage,
     ScrapeStatus,
+)
+from app.services.google_map_scraper.scrape.scrape_types import (
+    LeadRow,
+    ProgressData,
+    SettingsData,
 )
 from app.services.google_map_scraper.scraper import (
     ScrapeDeletedError,
@@ -36,8 +43,11 @@ def config(tmp_path):
     return EngineConfig(data_dir=tmp_path, headless=True)
 
 
-def _lead(title: str, website: str) -> dict:
-    return {"title": title, "website": website, "latitude": 52.5, "longitude": 13.4}
+def _lead(title: str, website: str) -> LeadRow:
+    return cast(
+        LeadRow,
+        {"title": title, "website": website, "latitude": 52.5, "longitude": 13.4},
+    )
 
 
 def test_run_scrape_skips_leads_whose_key_is_already_known(
@@ -105,15 +115,21 @@ def test_resumed_scrape_continues_from_redis_and_is_finished_with_its_outcome(
     config, postgres, fake_maps, redis_client, database
 ):
     settings = ScrapeSettings(keywords=("cafe",))
-    settings_data = settings.model_dump(by_alias=True, mode="json")
+    settings_data = cast(SettingsData, settings.model_dump(by_alias=True, mode="json"))
     interrupted = database.create("cafes", settings_data)
     database.set_status(interrupted, ScrapeStatus.WORKING)
     ScrapeState(redis_client, 3600).create(interrupted, settings_data)
     ScrapeState(redis_client, 3600).save_progress(
-        interrupted, {"stage": ScrapeStage.WEBSITES, "done": 1, "leads": 1}
+        interrupted,
+        cast(
+            ProgressData,
+            {"stage": ScrapeStage.WEBSITES, "done": 1, "leads": 1},
+        ),
     )
-    plain = {**_lead("Cafe A", "https://a-cafe.de"), "link": "https://maps/a"}
-    reviewed = {**plain, "phone": "+49 30 1"}
+    plain = cast(
+        LeadRow, {**_lead("Cafe A", "https://a-cafe.de"), "link": "https://maps/a"}
+    )
+    reviewed = cast(LeadRow, {**plain, "phone": "+49 30 1"})
     RowBuffer(redis_client, 3600).append(interrupted, [plain, reviewed])
 
     run_scrape(
@@ -125,15 +141,16 @@ def test_resumed_scrape_continues_from_redis_and_is_finished_with_its_outcome(
     )
 
     record = database.get(interrupted)
+    assert record is not None
     assert record["Status"] == ScrapeStatus.OK
-    assert record["Progress"]["resumes"] == 1
+    assert record["Progress"].get("resumes") == 1
     assert redis_client.keys("scrape:*") == []
 
 
 def test_latest_copies_keeps_the_last_copy_of_each_lead_in_first_seen_order():
-    first = {"title": "Cafe A", "link": "https://maps/a", "phone": ""}
-    other = {"title": "Cafe B", "link": "https://maps/b", "phone": ""}
-    reviewed = {**first, "phone": "+49 30 1"}
+    first = cast(LeadRow, {"title": "Cafe A", "link": "https://maps/a", "phone": ""})
+    other = cast(LeadRow, {"title": "Cafe B", "link": "https://maps/b", "phone": ""})
+    reviewed = cast(LeadRow, {**first, "phone": "+49 30 1"})
 
     copies = _latest_copies([first, other, reviewed])
 

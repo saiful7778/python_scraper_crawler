@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from tortoise.exceptions import IntegrityError
@@ -9,6 +10,9 @@ logger = get_logger(__name__)
 
 
 class BaseRepository:
+    #: The Tortoise model the global counter and helpers work on; subclasses set it.
+    _model: Any
+
     def __init__(self):
         self._counters: dict = {}
 

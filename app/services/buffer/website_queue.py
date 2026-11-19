@@ -82,7 +82,9 @@ class WebsiteQueue:
 
     def processing_jobs(self, scrape_id: str) -> list[WebsiteJob]:
         """The jobs claimed by a crawler thread and not yet completed."""
-        return cast(list[WebsiteJob], read_records(self._redis, processing_key(scrape_id)))
+        return cast(
+            list[WebsiteJob], read_records(self._redis, processing_key(scrape_id))
+        )
 
     def queued_jobs(self, scrape_id: str) -> list[WebsiteJob]:
         """The jobs no crawler thread has claimed yet."""
@@ -97,8 +99,8 @@ class WebsiteQueue:
         )
 
     def scrape_ids_with_work(self) -> list[str]:
-        return [
-            scrape_id
+        scrape_ids = [
+            scrape_id.decode() if isinstance(scrape_id, bytes) else scrape_id
             for scrape_id in self._redis.smembers(active_key())
-            if self.pending(scrape_id) > 0
         ]
+        return [scrape_id for scrape_id in scrape_ids if self.pending(scrape_id) > 0]

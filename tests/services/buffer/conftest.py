@@ -20,7 +20,7 @@ class FullFakeRedis(fakeredis.FakeRedis):
     def evalsha(self, *args, **kwargs):
         raise OutOfMemoryError(OOM_MESSAGE)
 
-    def pipeline(self, *args, **kwargs):
+    def pipeline(self, *args, **kwargs):  # pyright: ignore[reportIncompatibleMethodOverride]
         return _FullPipeline()
 
 

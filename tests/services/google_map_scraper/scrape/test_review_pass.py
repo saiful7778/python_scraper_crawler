@@ -2,11 +2,16 @@ import threading
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
+from app.services.browser import BrowserSession
 from app.services.google_map_scraper.scrape import review_pass as review_module
 from app.services.google_map_scraper.scrape.review_pass import ReviewPass
+from app.services.google_map_scraper.scrape.scrape_progress import ScrapeProgress
+from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSettings
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 
 
 class FakeTab:
@@ -30,13 +35,16 @@ class FakeProgress:
         pass
 
 
-def _rows(count: int) -> list[dict]:
+def _rows(count: int) -> list[LeadRow]:
     return [
-        {
-            "place_id": f"P{i}",
-            "link": f"https://www.google.com/maps/search/?x={i}",
-            "title": f"T{i}",
-        }
+        cast(
+            LeadRow,
+            {
+                "place_id": f"P{i}",
+                "link": f"https://www.google.com/maps/search/?x={i}",
+                "title": f"T{i}",
+            },
+        )
         for i in range(count)
     ]
 
@@ -44,12 +52,12 @@ def _rows(count: int) -> list[dict]:
 def _review_pass(notes: list[str]) -> ReviewPass:
     settings = SimpleNamespace(language="en", country="au")
     return ReviewPass(
-        browser=FakeBrowser(),
-        settings=settings,
+        browser=cast(BrowserSession, FakeBrowser()),
+        settings=cast(ScrapeSettings, settings),
         deadline=time.monotonic() + 60,
         stop=threading.Event(),
         proxies=[],
-        progress=FakeProgress(),
+        progress=cast(ScrapeProgress, FakeProgress()),
         notes=notes,
     )
 

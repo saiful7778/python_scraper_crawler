@@ -1,7 +1,10 @@
+from typing import cast
+
 import httpx
 import pytest
 
 from app.services.google_map_scraper.scrape import website_resolver
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.services.google_map_scraper.scrape.website_resolver import resolve_website
 
 
@@ -97,9 +100,13 @@ def test_each_raw_website_is_resolved_once_per_scrape(monkeypatch):
 
     monkeypatch.setattr(website_resolver, "resolve_website", fake)
     resolutions = website_resolver.WebsiteResolutions()
-    first = [{"website": "a.com"}, {"website": "b.com"}, {"website": "a.com"}]
+    first = [
+        cast(LeadRow, {"website": "a.com"}),
+        cast(LeadRow, {"website": "b.com"}),
+        cast(LeadRow, {"website": "a.com"}),
+    ]
     resolutions(first)
-    again = [{"website": "a.com"}]
+    again = [cast(LeadRow, {"website": "a.com"})]
     resolutions(again)
     assert [row["website"] for row in first] == [
         "https://a.com/",

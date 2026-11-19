@@ -1,5 +1,7 @@
 import queue
 import threading
+from collections.abc import Callable
+from typing import cast
 
 import fakeredis
 import pytest
@@ -11,8 +13,10 @@ from app.services.google_map_scraper import scraper as scraper_module
 from app.services.google_map_scraper.place_query import PlaceQuery
 from app.services.google_map_scraper.scrape.engine_config import EngineConfig
 from app.services.google_map_scraper.scrape.lead_filter import keep_lead
+from app.services.google_map_scraper.scrape.scrape_database import ScrapeDatabase
 from app.services.google_map_scraper.scrape.scrape_run import RunOutcome
 from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow, SettingsData
 from app.services.google_map_scraper.scraper import (
     BoundingBoxError,
     PlaceScraper,
@@ -20,6 +24,7 @@ from app.services.google_map_scraper.scraper import (
     finalize_rows,
     parse_bounding_box,
 )
+from config.tortoise import TortoiseConfig
 from tests.services.google_map_scraper.tile_fakes import Reply, TileEnv, done, row
 
 
@@ -33,15 +38,18 @@ def _query(**overrides) -> PlaceQuery:
     return PlaceQuery.model_validate(data)
 
 
-def _row(**overrides) -> dict:
-    return {
-        "title": "Cafe",
-        "latitude": 30.27,
-        "longitude": -97.74,
-        "phone": "",
-        "website": "",
-        **overrides,
-    }
+def _row(**overrides) -> LeadRow:
+    return cast(
+        LeadRow,
+        {
+            "title": "Cafe",
+            "latitude": 30.27,
+            "longitude": -97.74,
+            "phone": "",
+            "website": "",
+            **overrides,
+        },
+    )
 
 
 def test_parse_bounding_box_returns_four_floats():
@@ -146,8 +154,11 @@ def test_finish_saves_the_tiles_rows_before_it_checks_that_they_are_saved(redis)
     scrape_id = "tile-1"
     state = ScrapeState(redis, 3600)
     rows = RowBuffer(redis, 3600)
-    state.create(scrape_id, {})
-    rows.append(scrape_id, [{"title": "A"}])
+    state.create(
+        scrape_id,
+        cast(SettingsData, {"keywords": ["cafe"], "lang": "en", "max_time": 0}),
+    )
+    rows.append(scrape_id, [_row(title="A")])
     saved: list[tuple[str, str]] = []
 
     async def save(row, saved_id):
@@ -159,12 +170,12 @@ def test_finish_saves_the_tiles_rows_before_it_checks_that_they_are_saved(redis)
     session._finished = {
         scrape_id: (
             RunOutcome(ScrapeStatus.OK, "", blocked=False, connection_lost=False),
-            [{"title": "A"}],
+            [_row(title="A")],
         )
     }
     session._state = state
     session._rows = rows
-    session._database = database
+    session._database = cast(ScrapeDatabase, database)
     session._redis = redis
     session._flushers = [flusher]
     session._free_flushers = queue.Queue()
@@ -347,8 +358,8 @@ class _FakeWorker(threading.Thread):
         redis,
         headless=True,
         known_keys=frozenset(),
-        on_finished=None,
-        assignments=None,
+        on_finished: Callable[[str, RunOutcome, list[LeadRow]], None] | None = None,
+        assignments: queue.Queue[str] | None = None,
         browser=None,
         proxy_slot=0,
     ):
@@ -361,11 +372,14 @@ class _FakeWorker(threading.Thread):
 
     def run(self):
         while not self._stopped.is_set():
+            if self._assignments is None:
+                continue
             try:
                 scrape_id = self._assignments.get(timeout=0.05)
             except queue.Empty:
                 continue
-            self._on_finished(scrape_id, RunOutcome(ScrapeStatus.OK, ""), [])
+            if self._on_finished is not None:
+                self._on_finished(scrape_id, RunOutcome(ScrapeStatus.OK, ""), [])
 
     def cancel(self, scrape_id):
         pass
@@ -388,7 +402,7 @@ class _SessionEnv:
         session = scraper_module.ScrapeSession(
             EngineConfig(),
             self._redis,
-            None,
+            cast(TortoiseConfig, None),
             frozenset(),
             slots,
             locale="en-US",

@@ -1,4 +1,4 @@
-from worker import worker
+from worker import worker  # pyright: ignore[reportMissingTypeStubs]
 
 
 @worker

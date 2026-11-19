@@ -3,8 +3,9 @@ from uuid import uuid4
 
 from app.models import ScrapeModel
 from app.repositories.scrape_repository import ScrapeRepository
+from app.services.google_map_scraper.scrape.scrape_types import SettingsData
 
-SETTINGS = {"keywords": ["cafe"], "lang": "en", "max_time": 600}
+SETTINGS: SettingsData = {"keywords": ["cafe"], "lang": "en", "max_time": 600}
 
 
 async def test_claim_returns_oldest_pending_and_marks_it_working(db):
@@ -13,11 +14,16 @@ async def test_claim_returns_oldest_pending_and_marks_it_working(db):
     await repo.create(uuid4(), "second", SETTINGS, ["cafe"])
 
     claimed = await repo.claim_oldest_pending()
+    assert claimed is not None
 
     assert claimed["Name"] == "first"
     assert claimed["Status"] == "working"
-    assert (await repo.get(claimed["ID"]))["Status"] == "working"
-    assert (await repo.claim_oldest_pending())["Name"] == "second"
+    stored = await repo.get(claimed["ID"])
+    assert stored is not None
+    assert stored["Status"] == "working"
+    second = await repo.claim_oldest_pending()
+    assert second is not None
+    assert second["Name"] == "second"
     assert await repo.claim_oldest_pending() is None
 
 
@@ -27,6 +33,7 @@ async def test_create_and_get_return_the_scrape_record(db):
     await repo.create(scrape_id, "cafe @ Austin", SETTINGS, ["cafe"])
 
     record = await repo.get(scrape_id)
+    assert record is not None
 
     assert record["ID"] == str(scrape_id)
     assert record["Name"] == "cafe @ Austin"
@@ -56,6 +63,7 @@ async def test_set_status_truncates_the_error(db):
     await repo.set_status(scrape_id, "failed", "x" * 600)
 
     record = await repo.get(scrape_id)
+    assert record is not None
     assert record["Status"] == "failed"
     assert record["Error"] == "x" * 500
 
@@ -68,9 +76,11 @@ async def test_save_progress_merges_into_existing_progress(db):
     await repo.save_progress(scrape_id, {"stage": "search", "done": 1})
     await repo.save_progress(scrape_id, {"done": 2})
 
-    progress = (await repo.get(scrape_id))["Progress"]
-    assert progress["stage"] == "search"
-    assert progress["done"] == 2
+    record = await repo.get(scrape_id)
+    assert record is not None
+    progress = record["Progress"]
+    assert progress.get("stage") == "search"
+    assert progress.get("done") == 2
 
 
 async def test_finish_stores_the_outcome_and_reports_a_deleted_scrape(db):
@@ -81,8 +91,9 @@ async def test_finish_stores_the_outcome_and_reports_a_deleted_scrape(db):
     assert await repo.finish(scrape_id, "ok", "", {"stage": "done", "percent": 100})
 
     record = await repo.get(scrape_id)
+    assert record is not None
     assert record["Status"] == "ok"
-    assert record["Progress"]["percent"] == 100
+    assert record["Progress"].get("percent") == 100
     assert not await repo.finish(uuid4(), "ok", "", {})
 
 
@@ -105,8 +116,9 @@ async def test_requeue_resumes_working_scrapes_under_the_limit(db):
     assert await repo.requeue_interrupted(max_resumes=3) == (1, 0)
 
     record = await repo.get(scrape_id)
+    assert record is not None
     assert record["Status"] == "pending"
-    assert record["Progress"]["resumes"] == 1
+    assert record["Progress"].get("resumes") == 1
 
 
 async def test_requeue_fails_scrape_after_max_resumes(db):
@@ -119,6 +131,7 @@ async def test_requeue_fails_scrape_after_max_resumes(db):
     assert await repo.requeue_interrupted(max_resumes=3) == (0, 1)
 
     record = await repo.get(scrape_id)
+    assert record is not None
     assert record["Status"] == "failed"
     assert "4 times" in record["Error"]
 

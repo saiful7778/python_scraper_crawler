@@ -37,7 +37,9 @@ def test_origin_can_be_enqueued_again_after_completion(fake_redis):
     queue = CrawlQueue(fake_redis)
     job = make_job()
     queue.enqueue(job)
-    queue.complete(queue.claim())
+    claimed = queue.claim()
+    assert claimed is not None
+    queue.complete(claimed)
     assert queue.enqueue(job) is True
 
 
@@ -70,7 +72,9 @@ def test_complete_removes_job_from_processing_and_origin_set(fake_redis):
     queue = CrawlQueue(fake_redis)
     job = make_job()
     queue.enqueue(job)
-    queue.complete(queue.claim())
+    claimed = queue.claim()
+    assert claimed is not None
+    queue.complete(claimed)
     assert fake_redis.llen(crawl_processing_key()) == 0
     assert fake_redis.scard(crawl_queued_key()) == 0
     assert queue.pending() == 0

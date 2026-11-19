@@ -6,6 +6,7 @@ import fakeredis
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from app.services.browser import BrowserSession
 from app.services.buffer.client import BufferError, BufferFullError
 from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
@@ -13,7 +14,11 @@ from app.services.buffer.scrape_state import ScrapeState
 from app.services.google_map_scraper.scrape.scrape_database import ScrapeDatabase
 from app.services.google_map_scraper.scrape.scrape_run import ScrapeRun
 from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSettings
-from app.services.google_map_scraper.scrape.scrape_types import LeadRow, ScrapeRecord
+from app.services.google_map_scraper.scrape.scrape_types import (
+    LeadRow,
+    ScrapeRecord,
+    SettingsData,
+)
 
 SCRAPE_ID = "s1"
 TTL_SECONDS = 3600
@@ -48,7 +53,7 @@ def lead(title: str, website: str = "") -> LeadRow:
 
 def fake_scrape_run(database, redis, known_keys=frozenset(), **overrides) -> ScrapeRun:
     settings = ScrapeSettings(keywords=("bakery",), **overrides)
-    settings_data = settings.model_dump(by_alias=True, mode="json")
+    settings_data = cast(SettingsData, settings.model_dump(by_alias=True, mode="json"))
     ScrapeState(redis, TTL_SECONDS).create(SCRAPE_ID, settings_data)
     KnownKeys(redis, TTL_SECONDS).load(SCRAPE_ID, known_keys)
     scrape = cast(
@@ -190,7 +195,11 @@ def test_attached_run_does_not_kill_the_shared_browser(fake_redis, database):
     )
     browser = _FakeSharedBrowserSession()
     run = ScrapeRun(
-        database, database.get(scrape_id), True, fake_redis, browser=browser
+        database,
+        database.get(scrape_id),
+        True,
+        fake_redis,
+        browser=cast(BrowserSession, browser),
     )
     run._on_watchdog()
     assert browser.kill_calls == 0

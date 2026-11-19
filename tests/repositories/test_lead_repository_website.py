@@ -12,14 +12,22 @@ def test_website_domain_strips_and_drops_www() -> None:
 
 @pytest.mark.usefixtures("db")
 async def test_finds_lead_by_website_domain():
-    lead = await LeadModel.create(title="A", website="https://a.de", website_domain="a.de")
-    assert (await LeadRepository().find_by_host("a.de")).id == lead.id
+    lead = await LeadModel.create(
+        title="A", website="https://a.de", website_domain="a.de"
+    )
+    found = await LeadRepository().find_by_host("a.de")
+    assert found is not None
+    assert found.id == lead.id
 
 
 @pytest.mark.usefixtures("db")
 async def test_finds_lead_by_website_when_domain_is_empty():
-    lead = await LeadModel.create(title="A", website="https://www.a.de/", website_domain=None)
-    assert (await LeadRepository().find_by_host("a.de")).id == lead.id
+    lead = await LeadModel.create(
+        title="A", website="https://www.a.de/", website_domain=None
+    )
+    found = await LeadRepository().find_by_host("a.de")
+    assert found is not None
+    assert found.id == lead.id
 
 
 @pytest.mark.usefixtures("db")

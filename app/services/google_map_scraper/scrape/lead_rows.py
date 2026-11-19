@@ -4,6 +4,7 @@ import json
 import math
 import urllib.parse
 from collections.abc import Mapping
+from typing import TypedDict
 
 from app.constant import SOCIALS
 from app.services.crawler.extractors.tech import TECH_FIELDS
@@ -64,11 +65,7 @@ _MAPS_SEARCH_URL = "https://www.google.com/maps/search/?api=1&query="
 
 def result_columns(settings: ScrapeSettings) -> list[str]:
     """Return the ordered output column names for a scrape's settings."""
-    return (
-        COLUMNS
-        + (list(SOCIALS) if settings.collect_socials else [])
-        + TECH_FIELDS
-    )
+    return COLUMNS + (list(SOCIALS) if settings.collect_socials else []) + TECH_FIELDS
 
 
 def _sanitize_cell(value: object) -> str:
@@ -113,7 +110,7 @@ def _list_cell(source: Mapping[str, object], key: str) -> str:
     )
 
 
-def review_start_columns(histogram: str) -> dict[str, str]:
+def review_start_columns(histogram: str) -> "ReviewStartColumns":
     """Split a ``reviews_per_rating`` JSON histogram into one count per star rating."""
     try:
         counts = json.loads(histogram) if histogram else {}
@@ -121,12 +118,28 @@ def review_start_columns(histogram: str) -> dict[str, str]:
         counts = {}
     if not isinstance(counts, dict):
         counts = {}
-    return {
-        f"review_star_{star}_count": (
-            _sanitize_cell(counts[str(star)]) if counts.get(str(star)) is not None else ""
-        )
-        for star in range(1, 6)
-    }
+    return ReviewStartColumns(
+        review_star_1_count=_star_count(counts, 1),
+        review_star_2_count=_star_count(counts, 2),
+        review_star_3_count=_star_count(counts, 3),
+        review_star_4_count=_star_count(counts, 4),
+        review_star_5_count=_star_count(counts, 5),
+    )
+
+
+class ReviewStartColumns(TypedDict):
+    """The five per-star count columns split out of a ``reviews_per_rating`` histogram."""
+
+    review_star_1_count: str
+    review_star_2_count: str
+    review_star_3_count: str
+    review_star_4_count: str
+    review_star_5_count: str
+
+
+def _star_count(counts: Mapping[str, object], star: int) -> str:
+    count = counts.get(str(star))
+    return _sanitize_cell(count) if count is not None else ""
 
 
 def _coordinate(value: object) -> float | None:

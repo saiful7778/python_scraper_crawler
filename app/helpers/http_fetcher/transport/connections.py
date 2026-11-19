@@ -21,7 +21,9 @@ class _GuardedConnection:
         self._create_connection = create_public_connection
 
     def connect(self) -> None:
-        super().connect()
+        # ``super()`` is the concrete http.client connection, resolved through the
+        # MRO of the class that mixes this in, so TLS setup is not skipped.
+        super().connect()  # pyright: ignore[reportAttributeAccessIssue]
         FetchDeadline.arm(cast(http.client.HTTPConnection, self))
 
 

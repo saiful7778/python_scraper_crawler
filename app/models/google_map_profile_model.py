@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from tortoise import fields
 from tortoise.models import Model
@@ -39,6 +39,7 @@ class GoogleMapProfileModel(Model):
         related_name="map_profiles",
         on_delete=fields.CASCADE,
     )
+    lead_id: UUID
 
     hours: fields.ReverseRelation["GoogleMapProfileHourModel"]
     reviews: fields.ReverseRelation["GoogleMapProfileReviewModel"]
@@ -88,7 +89,9 @@ class GoogleMapProfileImageModel(Model):
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
     google_map = fields.ForeignKeyField(
-        "models.GoogleMapProfileModel", related_name="image_rows", on_delete=fields.CASCADE
+        "models.GoogleMapProfileModel",
+        related_name="image_rows",
+        on_delete=fields.CASCADE,
     )
 
     class Meta(Model.Meta):

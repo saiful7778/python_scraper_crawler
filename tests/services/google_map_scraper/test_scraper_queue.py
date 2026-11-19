@@ -1,6 +1,7 @@
 import itertools
 import threading
 import time
+from typing import cast
 
 import fakeredis
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from app.services.buffer.client import BufferError
 from app.services.google_map_scraper import scraper as scraper_module
 from app.services.google_map_scraper.place_query import PlaceQuery
-from app.services.google_map_scraper.place_queue import PlaceTileQueue
+from app.services.google_map_scraper.place_queue import PlaceTile, PlaceTileQueue
 from app.services.google_map_scraper.scrape.scrape_status import ScrapeStatus
 from app.services.google_map_scraper.scraper import (
     PlaceScraper,
@@ -49,20 +50,23 @@ def _cell() -> dict:
     }
 
 
-def _tile(tile_id, keyword, cell_index=None, **overrides) -> dict:
-    return {
-        "ID": tile_id,
-        "keyword": keyword,
-        "keyword_index": 1,
-        "cell_index": cell_index,
-        "name": keyword,
-        "settings": {"keywords": [keyword], "proxies": []},
-        "bounding_box": None,
-        "cell": None if cell_index is None else _cell(),
-        "attempts": 0,
-        "scrape_id": None,
-        **overrides,
-    }
+def _tile(tile_id, keyword, cell_index=None, **overrides) -> PlaceTile:
+    return cast(
+        PlaceTile,
+        {
+            "ID": tile_id,
+            "keyword": keyword,
+            "keyword_index": 1,
+            "cell_index": cell_index,
+            "name": keyword,
+            "settings": {"keywords": [keyword], "proxies": []},
+            "bounding_box": None,
+            "cell": None if cell_index is None else _cell(),
+            "attempts": 0,
+            "scrape_id": None,
+            **overrides,
+        },
+    )
 
 
 @pytest.fixture
@@ -108,7 +112,10 @@ def test_a_requeued_tile_keeps_its_rows_and_its_limit_across_a_restart(arrange, 
     queue.take()
     queue.requeue(
         "tile-1",
-        {**tile, "attempts": 1, "kept": [row("a")], "rows": [row("a")]},
+        cast(
+            PlaceTile,
+            {**tile, "attempts": 1, "kept": [row("a")], "rows": [row("a")]},
+        ),
     )
     result = PlaceScraper(redis).scrape(query)
     assert env.slots_used_for("cafes") == [0]

@@ -1,7 +1,7 @@
 """Progress bookkeeping that is persisted so an interrupted scrape can resume."""
 
 import time
-from typing import Unpack
+from typing import Unpack, cast
 
 from redis.exceptions import RedisError
 
@@ -58,7 +58,9 @@ class ScrapeProgress:
         """
         self.stamp(**fields)
         try:
-            self._state.save_progress(self._scrape_id, dict(self.data))
+            self._state.save_progress(
+                self._scrape_id, cast(ProgressData, dict(self.data))
+            )
         except RedisError as error:
             raise BufferError(
                 f"Redis failed while saving scrape progress: {describe(error)}"

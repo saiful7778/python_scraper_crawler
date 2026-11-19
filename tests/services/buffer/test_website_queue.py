@@ -61,7 +61,7 @@ def test_each_job_is_handed_out_once_across_claims(fake_redis):
 
     claimed = [queue.claim("s1") for _ in range(25)]
 
-    assert len({job["position"] for job in claimed}) == 25
+    assert len({job["position"] for job in claimed if job is not None}) == 25
     assert queue.claim("s1") is None
     assert queue.pending("s1") == 25
 
@@ -70,6 +70,7 @@ def test_complete_removes_job_from_processing(fake_redis):
     queue = WebsiteQueue(fake_redis, ttl_seconds=TTL)
     queue.enqueue("s1", make_job())
     claimed = queue.claim("s1")
+    assert claimed is not None
     queue.complete("s1", claimed)
     assert fake_redis.llen(processing_key("s1")) == 0
     assert queue.pending("s1") == 0

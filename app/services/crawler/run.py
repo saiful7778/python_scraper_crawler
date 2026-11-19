@@ -1,6 +1,8 @@
 """Runs the crawl on the websites of scraped leads, or on one website, and stores each finished crawl."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TypedDict
 
 from redis import Redis
 
@@ -17,7 +19,6 @@ from app.services.crawler.site.crawl import CrawlOptions, FetchFn
 from app.services.crawler.site.scope import origin_of, registrable_domain
 from app.services.crawler.worker import check_website
 from app.services.google_map_scraper.scrape.scrape_limits import BUFFER_TTL_SECONDS
-from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
 from config.tortoise import TortoiseConfig
@@ -43,8 +44,14 @@ class CrawlSummary:
     checked: int
 
 
+class CrawlRow(TypedDict):
+    """The only column the crawl stage needs from a row: the website to crawl."""
+
+    website: str
+
+
 def run_crawl_stage(
-    rows: list[LeadRow],
+    rows: Sequence[CrawlRow],
     *,
     redis: Redis,
     postgres: TortoiseConfig,
@@ -118,7 +125,7 @@ def crawl_one(
     try:
         origin = origin_of(website)
         host = hostname_of(origin)
-    except Exception as error:
+    except ValueError as error:
         logger.warning("website %r has no usable origin: %s", website, describe(error))
         return CrawlSummary(queued=0, rejected=0, skipped=1, checked=0)
 

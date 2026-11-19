@@ -1,8 +1,15 @@
+from typing import cast
+
 import fakeredis
 
-from app.services.browser import CDPError
+from app.services.browser import BrowserSession, CDPError
+from app.services.google_map_scraper.scrape.scrape_database import ScrapeDatabase
 from app.services.google_map_scraper.scrape.scrape_run import ScrapeRun
 from app.services.google_map_scraper.scrape.scrape_settings import ScrapeSettings
+from app.services.google_map_scraper.scrape.scrape_types import (
+    ScrapeRecord,
+    SettingsData,
+)
 
 SCRAPE_ID = "s-conn"
 
@@ -43,21 +50,24 @@ def _run(monkeypatch, browser, error, closes_connection):
 
     monkeypatch.setattr(ScrapeRun, "_search", fail)
     settings = ScrapeSettings(keywords=("bakery",))
-    scrape = {
-        "ID": SCRAPE_ID,
-        "Name": "bakery",
-        "Date": "2026-11-15T00:00:00",
-        "Status": "working",
-        "Data": settings.model_dump(by_alias=True, mode="json"),
-        "Error": "",
-        "Progress": {},
-    }
+    scrape = cast(
+        ScrapeRecord,
+        {
+            "ID": SCRAPE_ID,
+            "Name": "bakery",
+            "Date": "2026-11-15T00:00:00",
+            "Status": "working",
+            "Data": cast(SettingsData, settings.model_dump(by_alias=True, mode="json")),
+            "Error": "",
+            "Progress": {},
+        },
+    )
     run = ScrapeRun(
-        _Database(),
+        cast(ScrapeDatabase, _Database()),
         scrape,
         True,
         fakeredis.FakeRedis(decode_responses=True),
-        browser=browser,
+        browser=cast(BrowserSession, browser),
     )
     run.execute()
     assert run.outcome is not None
@@ -100,21 +110,25 @@ def test_a_watchdog_kill_is_not_a_lost_chrome(monkeypatch):
 
     monkeypatch.setattr(ScrapeRun, "_search", fail)
     settings = ScrapeSettings(keywords=("bakery",))
-    scrape = {
-        "ID": SCRAPE_ID,
-        "Name": "bakery",
-        "Date": "2026-11-15T00:00:00",
-        "Status": "working",
-        "Data": settings.model_dump(by_alias=True, mode="json"),
-        "Error": "",
-        "Progress": {},
-    }
+    scrape = cast(
+        ScrapeRecord,
+        {
+            "ID": SCRAPE_ID,
+            "Name": "bakery",
+            "Date": "2026-11-15T00:00:00",
+            "Status": "working",
+            "Data": cast(SettingsData, settings.model_dump(by_alias=True, mode="json")),
+            "Error": "",
+            "Progress": {},
+        },
+    )
     run = ScrapeRun(
-        _Database(),
+        cast(ScrapeDatabase, _Database()),
         scrape,
         True,
         fakeredis.FakeRedis(decode_responses=True),
-        browser=browser,
+        browser=cast(BrowserSession, browser),
     )
     run.execute()
+    assert run.outcome is not None
     assert run.outcome.connection_lost is False

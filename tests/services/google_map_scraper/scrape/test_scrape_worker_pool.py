@@ -1,8 +1,10 @@
 import queue
 import time
 from collections.abc import Callable
+from typing import cast
 
 import pytest
+from redis import Redis
 
 from app.services.google_map_scraper.scrape import scrape_worker
 from app.services.google_map_scraper.scrape.scrape_worker import ScrapeWorker
@@ -67,7 +69,9 @@ def test_assigned_worker_runs_only_the_ids_it_is_given(fake_db, fake_run_factory
     ids = queue.Queue()
     ids.put("tile-1")
     ids.put("tile-2")
-    worker = ScrapeWorker(fake_db, redis=None, assignments=ids, browser=None)
+    worker = ScrapeWorker(
+        fake_db, redis=cast(Redis, None), assignments=ids, browser=None
+    )
     worker.start()
     wait_until(lambda: len(fake_run_factory) == 2)
     worker.shutdown(wait=2)
@@ -82,7 +86,7 @@ def test_assigned_worker_skips_an_id_that_is_no_longer_pending(
     fake_db.refuse = {"tile-1"}
     ids = queue.Queue()
     ids.put("tile-1")
-    worker = ScrapeWorker(fake_db, redis=None, assignments=ids)
+    worker = ScrapeWorker(fake_db, redis=cast(Redis, None), assignments=ids)
     worker.start()
     wait_until(lambda: "tile-1" in fake_db.refused_seen)
     worker.shutdown(wait=2)
@@ -93,7 +97,7 @@ def test_assigned_worker_does_not_claim_an_id_received_after_shutdown(
     fake_db, fake_run_factory
 ):
     ids = queue.Queue()
-    worker = ScrapeWorker(fake_db, redis=None, assignments=ids)
+    worker = ScrapeWorker(fake_db, redis=cast(Redis, None), assignments=ids)
     worker.start()
     worker.shutdown()
     ids.put("tile-1")

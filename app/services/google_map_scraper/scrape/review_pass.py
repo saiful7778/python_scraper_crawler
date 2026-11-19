@@ -135,7 +135,12 @@ class ReviewPass:
     def _merge_panel(row: LeadRow, panel: PanelRecord) -> None:
         row["user_reviews"] = panel.get("user_reviews", "")
         row["reviews_per_rating"] = panel.get("reviews_per_rating", "")
-        row.update(review_start_columns(row["reviews_per_rating"]))
+        start_columns = review_start_columns(row["reviews_per_rating"])
+        row["review_star_1_count"] = start_columns["review_star_1_count"]
+        row["review_star_2_count"] = start_columns["review_star_2_count"]
+        row["review_star_3_count"] = start_columns["review_star_3_count"]
+        row["review_star_4_count"] = start_columns["review_star_4_count"]
+        row["review_star_5_count"] = start_columns["review_star_5_count"]
         for key, value in panel.items():
             if (
                 is_lead_key(key)

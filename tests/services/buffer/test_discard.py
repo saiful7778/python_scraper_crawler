@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from app.services.buffer.crawl_buffer import RedisCrawlBuffer
@@ -7,14 +9,26 @@ from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteJob, WebsiteQueue
+from app.services.google_map_scraper.scrape.scrape_types import LeadRow, SettingsData
 
 TTL = 3600
+SETTINGS: SettingsData = {
+    "keywords": ["cafe"],
+    "lang": "en",
+    "max_time": 600,
+    "email": True,
+}
+
+
+def row(title: str) -> LeadRow:
+    """A sparse row, as the buffer stores whatever fields a lead has."""
+    return cast(LeadRow, {"title": title})
 
 
 def seed(redis, scrape_id, host="a.de"):
-    ScrapeState(redis, TTL).create(scrape_id, {"email": True})
+    ScrapeState(redis, TTL).create(scrape_id, SETTINGS)
     ScrapeState(redis, TTL).save_progress(scrape_id, {"done": 1})
-    RowBuffer(redis, TTL).append(scrape_id, [{"title": "A"}])
+    RowBuffer(redis, TTL).append(scrape_id, [row("A")])
     KnownKeys(redis, TTL).load(scrape_id, ["title:A"])
     queue = WebsiteQueue(redis, TTL)
     job = WebsiteJob(
@@ -33,8 +47,12 @@ def seed(redis, scrape_id, host="a.de"):
         registrable_domain=host,
         origin=f"https://{host}",
     )
-    run_id = crawl.create_run(website_id=website_id, requested_url="https://a.de", config={})
-    crawl.finish_run(run_id, status="done", progress={}, error_code=None, error_message=None)
+    run_id = crawl.create_run(
+        website_id=website_id, requested_url="https://a.de", config={}
+    )
+    crawl.finish_run(
+        run_id, status="done", progress={}, error_code=None, error_message=None
+    )
     return website_id, run_id
 
 
@@ -102,5 +120,5 @@ def test_discard_scrape_calls_every_buffer_discard(
 
 
 def test_writes_refresh_the_expiry(fake_redis):
-    RowBuffer(fake_redis, 3600).append("s1", [{"title": "A"}])
+    RowBuffer(fake_redis, 3600).append("s1", [row("A")])
     assert 0 < fake_redis.ttl(rows_key("s1")) <= 3600

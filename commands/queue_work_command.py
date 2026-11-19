@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from typing import ClassVar
 
 from cleo.helpers import option
 from fastapi_startkit.console.command import Command
@@ -8,7 +9,9 @@ from fastapi_startkit.console.command import Command
 class QueueWorkCommand(Command):
     name = "queue:work"
     description = "Start the TaskIQ worker."
-    options = [option("workers", "w", "Number of worker processes", flag=False, default="1")]
+    options: ClassVar[list] = [
+        option("workers", "w", "Number of worker processes", flag=False, default="1")
+    ]
 
     def handle(self):
         try:
@@ -18,6 +21,16 @@ class QueueWorkCommand(Command):
         except (TypeError, ValueError):
             self.line_error("--workers must be a positive integer", style="error")
             return 1
-        return subprocess.run([
-            sys.executable, "-m", "taskiq", "worker", "worker:broker", "tasks.example_task", "--workers", str(workers),
-        ], check=False).returncode
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "taskiq",
+                "worker",
+                "worker:broker",
+                "tasks.example_task",
+                "--workers",
+                str(workers),
+            ],
+            check=False,
+        ).returncode

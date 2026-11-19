@@ -33,7 +33,7 @@ class CrawlIntake:
             try:
                 origin = origin_of(website)
                 host = hostname_of(origin)
-            except Exception:
+            except ValueError:
                 logger.warning("website %r has no usable origin", website)
                 skipped += 1
                 continue

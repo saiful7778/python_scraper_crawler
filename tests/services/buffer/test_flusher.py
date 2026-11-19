@@ -2,7 +2,7 @@ import asyncio
 import time
 
 import pytest
-from asyncpg.exceptions import ConnectionDoesNotExistError
+from asyncpg.exceptions import ConnectionDoesNotExistError  # pyright: ignore[reportMissingTypeStubs]
 from tortoise.context import TortoiseContext
 
 from app.models import GoogleMapProfileModel, LeadModel

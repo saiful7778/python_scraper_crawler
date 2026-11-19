@@ -16,7 +16,9 @@ def test_saved_progress_counts_leads_found_before_a_resume(fake_redis):
 
     progress.save(stage="search")
 
-    assert state.get_progress("s1")["leads"] == 7
+    saved = state.get_progress("s1")
+    assert saved is not None
+    assert saved.get("leads") == 7
 
 
 def test_a_redis_failure_while_saving_progress_names_redis(fake_redis):

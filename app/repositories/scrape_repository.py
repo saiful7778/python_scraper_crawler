@@ -36,8 +36,8 @@ class ScrapeRepository(BaseRepository):
 
     @staticmethod
     def _merge_progress(scrape: ScrapeModel, progress: ProgressData) -> None:
-        values = dict(progress)
-        resumes = values.pop("resumes", None)
+        resumes = progress.get("resumes")
+        values = {key: value for key, value in progress.items() if key != "resumes"}
         if resumes is not None:
             scrape.resumes = resumes
         scrape.progress = {**scrape.progress, **values}
