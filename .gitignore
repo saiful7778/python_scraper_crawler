@@ -70,7 +70,5 @@ graphify-out/
 .engine/
 *.csv
 
-# Local scratch type definitions
-type.py
 # subagent-driven workspace scratch
 .superpowers/
