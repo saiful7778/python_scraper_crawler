@@ -62,14 +62,51 @@ def proxy_names(text: str) -> list[str]:
     return comma_list(text, "proxy")
 
 
+class KeywordAction(argparse.Action):
+    """Open a keyword plan: the --depth/--grid that follow belong to it."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        plans = getattr(namespace, "keyword_plans", None)
+        if plans is None:
+            plans = namespace.keyword_plans = []
+        names: list[str] = (
+            [values] if isinstance(values, str) else [str(v) for v in values or ()]
+        )
+        opened = [{"keyword": name, "depth": None, "grid": None} for name in names]
+        plans.extend(opened)
+        # the flag's scope: every plan it just opened, so a list shares its values
+        namespace.keyword_scope = opened
+
+
+class KeywordScopedAction(argparse.Action):
+    """Set a value on the plan the last keyword flag opened."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        scope = getattr(namespace, "keyword_scope", None)
+        if not scope:
+            namespace.keyword_plan_error = (
+                f"{option_string} must follow a --keyword or --keywords flag"
+            )
+            return
+        for plan in scope:
+            plan[self.dest] = values
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Scrape Google Maps business listings.")
     ap.add_argument(
+        "--keyword",
+        "-k",
+        action=KeywordAction,
+        metavar="KEYWORD",
+        help='a business type to search for, e.g. "coffee shops"; repeat it for more keywords, and give each its own --depth/--grid after it',
+    )
+    ap.add_argument(
         "--keywords",
         type=keyword_names,
-        required=True,
+        action=KeywordAction,
         metavar="KW,...",
-        help='comma-separated business types to search for, e.g. "coffee shops, bakeries"; each keyword is its own scrape',
+        help="comma-separated business types; all of them take the --depth/--grid that follow",
     )
     ap.add_argument("--city", required=True, help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -87,7 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="URL,...",
         help="comma-separated proxies for the engine: http://[user:pass@]host:port, https://, socks5:// or socks5h://host:port (no user:pass on SOCKS5); the scrapes take turns through the proxies",
     )
-    ap.add_argument("--depth", type=int, default=5)
+    ap.add_argument(
+        "--depth",
+        type=int,
+        action=KeywordScopedAction,
+        metavar="N",
+        help="batches of results per keyword, 1 to 10 (default: 5); follows a --keyword/--keywords flag",
+    )
     ap.add_argument(
         "--lang",
         default="en",
@@ -97,8 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--grid",
         type=int,
+        action=KeywordScopedAction,
         metavar="N",
-        help="split the --city area into N x N map tiles, one scrape each, deduped (breaks Google's ~120 per search cap; max 10)",
+        help="split the --city area into N x N map tiles for that keyword, one scrape each, deduped (breaks Google's ~120 per search cap; default: 1, max 10); follows a --keyword/--keywords flag",
     )
     ap.add_argument(
         "--max-time",
@@ -136,6 +180,21 @@ def read_query() -> CliQuery:
     values = {
         k: v for k, v in vars(build_parser().parse_args()).items() if v is not None
     }
+    error = values.pop("keyword_plan_error", None)
+    if error:
+        logger.warning("invalid arguments: %s", error)
+        sys.exit(f"✗ {error}")
+    plans = values.pop("keyword_plans", None)
+    if not plans:
+        logger.warning("invalid arguments: no keyword")
+        sys.exit(
+            "✗ --keyword is required: give at least one keyword "
+            '(--keyword "coffee shops" or --keywords "a,b").'
+        )
+    values["keyword_plans"] = [
+        {key: value for key, value in plan.items() if value is not None}
+        for plan in plans
+    ]
     if values.get("proxies"):
         values["proxies"] = list(dict.fromkeys(values["proxies"]))
     try:
@@ -143,7 +202,14 @@ def read_query() -> CliQuery:
     except ValidationError as error:
         lines = []
         for problem in error.errors():
-            field = str(problem["loc"][0]) if problem["loc"] else ""
+            field = next(
+                (
+                    str(part)
+                    for part in reversed(problem["loc"])
+                    if isinstance(part, str)
+                ),
+                "",
+            )
             flag = FLAG_NAMES.get(field, f"--{field.replace('_', '-')}")
             if problem["type"] == "missing":
                 lines.append(f"✗ {flag} is required.")
@@ -173,21 +239,18 @@ async def load_known_keys() -> frozenset[str]:
 
 
 def print_plan(query: CliQuery) -> None:
-    tiles = (query.grid or 1) ** 2
     place = ", ".join(
         part for part in (query.city, query.state, query.country.upper()) if part
     )
     print("Dry run: nothing will be scraped or written.\n")
-    keywords = ", ".join(repr(keyword) for keyword in query.keywords)
+    keywords = ", ".join(repr(plan.keyword) for plan in query.keyword_plans)
     print(f"Search: {keywords} in {place}")
-    print(f"Tiles: {tiles}")
-    if tiles > 1:
-        print(f"Scrapes: {len(query.keywords)} keyword(s) × {tiles} tiles")
-    else:
-        print(f"Scrapes: one per keyword ({len(query.keywords)})")
-    print(
-        f"Depth: {query.scroll_depth} batch(es) per keyword, {query.max_seconds}s per scrape"
-    )
+    for plan in query.keyword_plans:
+        tiles = plan.grid**2
+        where = "whole city" if plan.grid == 1 else f"{plan.grid}x{plan.grid} grid"
+        print(f"  {plan.keyword!r}: depth {plan.depth}, {tiles} scrape(s), {where}")
+    print(f"Scrapes: {sum(plan.grid**2 for plan in query.keyword_plans)}")
+    print(f"Max time: {query.max_seconds}s per scrape")
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
     row_limit = f"{query.limit} per scrape" if query.limit else "none"
@@ -206,13 +269,11 @@ def print_plan(query: CliQuery) -> None:
 def main() -> None:
     query = read_query()
     logger.info(
-        "query: keywords=%r city=%r state=%r country=%s grid=%s depth=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
-        query.keywords,
+        "query: plans=%r city=%r state=%r country=%s max_seconds=%s limit=%s has_phone=%s has_website=%s dry_run=%s proxies=%d",
+        [(plan.keyword, plan.depth, plan.grid) for plan in query.keyword_plans],
         query.city,
         query.state,
         query.country,
-        query.grid,
-        query.scroll_depth,
         query.max_seconds,
         query.limit,
         query.has_phone,
@@ -221,7 +282,7 @@ def main() -> None:
         len(query.proxies or []),
     )
 
-    if query.scroll_depth >= 10 or (query.grid or 1) ** 2 >= 4:
+    if any(plan.depth >= 10 or plan.grid >= 2 for plan in query.keyword_plans):
         print(
             "\nHeads-up: this is a large scrape (high depth or a grid).\n"
             "Running it back-to-back without proxies can get your IP temporarily rate-limited by Google (clears in minutes-hours; returns empty/failed scrapes meanwhile).\n"

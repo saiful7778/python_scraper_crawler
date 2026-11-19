@@ -115,3 +115,161 @@ def test_deep_scan_is_rejected(monkeypatch) -> None:
     )
     with pytest.raises(SystemExit):
         read_query()
+
+
+def test_each_keyword_takes_the_depth_and_grid_that_follow_it(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    args = [
+        "--keyword",
+        "coffee shops",
+        "--depth",
+        "6",
+        "--grid",
+        "1",
+        "--keyword",
+        "pizza",
+        "--depth",
+        "3",
+        "--grid",
+        "2",
+        "--city",
+        "Austin",
+        "--state",
+        "TX",
+        "--country",
+        "US",
+    ]
+    monkeypatch.setattr(sys, "argv", ["google_map_scrape_cli.py", *args])
+    query = read_query()
+    assert [(p.keyword, p.depth, p.grid) for p in query.keyword_plans] == [
+        ("coffee shops", 6, 1),
+        ("pizza", 3, 2),
+    ]
+    assert query.keywords == ("coffee shops", "pizza")
+
+
+def test_a_keyword_without_flags_gets_depth_five_and_grid_one(monkeypatch):
+    query = parse(monkeypatch, "-k", "pizza")
+    assert [(p.keyword, p.depth, p.grid) for p in query.keyword_plans] == [
+        ("coffee shops", 5, 1),
+        ("pizza", 5, 1),
+    ]
+
+
+def test_a_keyword_list_shares_the_depth_and_grid_after_it(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    args = [
+        "--keywords",
+        "coffee shops,bakeries",
+        "--depth",
+        "6",
+        "--grid",
+        "2",
+        "--city",
+        "Austin",
+        "--country",
+        "us",
+    ]
+    monkeypatch.setattr(sys, "argv", ["google_map_scrape_cli.py", *args])
+    assert [(p.keyword, p.depth, p.grid) for p in read_query().keyword_plans] == [
+        ("coffee shops", 6, 2),
+        ("bakeries", 6, 2),
+    ]
+
+
+def test_a_numeric_keyword_is_a_name_not_a_depth(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["google_map_scrape_cli.py", "-k", "3", "--city", "Austin", "--country", "us"],
+    )
+    assert [(p.keyword, p.depth) for p in read_query().keyword_plans] == [("3", 5)]
+
+
+def test_a_depth_before_any_keyword_exits_with_a_named_error(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            "--depth",
+            "6",
+            "-k",
+            "pizza",
+            "--city",
+            "Austin",
+            "--country",
+            "us",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--depth must follow a --keyword or --keywords flag" in str(exit_info.value)
+
+
+def test_no_keyword_exits_with_the_required_message(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys, "argv", ["google_map_scrape_cli.py", "--city", "Austin", "--country", "us"]
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "--keyword is required" in str(exit_info.value)
+
+
+def test_a_depth_out_of_range_is_reported_against_the_depth_flag(monkeypatch):
+    from cli.google_map_scrape_cli import read_query
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "google_map_scrape_cli.py",
+            "-k",
+            "pizza",
+            "--depth",
+            "11",
+            "--city",
+            "Austin",
+            "--country",
+            "us",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        read_query()
+    assert "✗ --depth:" in str(exit_info.value)
+
+
+def test_dry_run_prints_one_line_per_keyword(monkeypatch, capsys):
+    import cli.google_map_scrape_cli as cli
+
+    args = [
+        "--keyword",
+        "coffee shops",
+        "--depth",
+        "6",
+        "--keyword",
+        "pizza",
+        "--depth",
+        "3",
+        "--grid",
+        "2",
+        "--city",
+        "Austin",
+        "--country",
+        "us",
+        "--dry-run",
+    ]
+    monkeypatch.setattr(sys, "argv", ["google_map_scrape_cli.py", *args])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "  'coffee shops': depth 6, 1 scrape(s), whole city" in out
+    assert "  'pizza': depth 3, 4 scrape(s), 2x2 grid" in out
+    assert "Scrapes: 5" in out

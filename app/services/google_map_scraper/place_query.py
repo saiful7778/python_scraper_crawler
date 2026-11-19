@@ -51,7 +51,7 @@ class PlaceQuery(ScrapeSettings):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        plans = data.get("plans")
+        plans = data.get("plans") or data.get("keyword_plans")
         keywords = data.get("keywords")
         if plans:
             data["keywords"] = [
