@@ -1,6 +1,12 @@
 import pytest
 
-from app.utils.proxies import ProxyRotation, mask_proxy_credentials, parse_proxy_urls
+from app.utils.proxies import (
+    MAX_PARALLEL_TILES,
+    ProxyRotation,
+    build_lanes,
+    mask_proxy_credentials,
+    parse_proxy_urls,
+)
 
 
 @pytest.mark.parametrize("value", [None, ""])
@@ -90,3 +96,39 @@ def test_rotation_counts_distinct_proxies() -> None:
     rotation = ProxyRotation(["a", "a", "b"])
     assert len(rotation) == 3
     assert rotation.distinct_count == 2
+
+
+def test_build_lanes_gives_each_proxy_its_own_lane() -> None:
+    assert build_lanes(["a", "b", "c"]) == [("a",), ("b",), ("c",)]
+
+
+def test_build_lanes_without_proxies_is_one_laneless_slot() -> None:
+    assert build_lanes([]) == [()]
+
+
+def test_build_lanes_caps_the_parallel_slots() -> None:
+    proxies = [f"http://h{index}:1" for index in range(MAX_PARALLEL_TILES + 7)]
+    lanes = build_lanes(proxies)
+    assert len(lanes) == MAX_PARALLEL_TILES
+    assert MAX_PARALLEL_TILES == 25
+
+
+def test_build_lanes_rotates_the_extra_proxies_round_robin() -> None:
+    proxies = [f"p{index}" for index in range(30)]
+    lanes = build_lanes(proxies)
+    # proxy i goes to lane i % 25, in order, so the first five lanes get a spare
+    assert lanes[0] == ("p0", "p25")
+    assert lanes[1] == ("p1", "p26")
+    assert lanes[4] == ("p4", "p29")
+    assert lanes[5] == ("p5",)
+    assert lanes[24] == ("p24",)
+    # every proxy is scheduled exactly once
+    assert sorted(proxy for lane in lanes for proxy in lane) == sorted(proxies)
+    assert sum(len(lane) for lane in lanes) == len(proxies)
+
+
+def test_build_lanes_keeps_a_single_proxy_per_lane_at_the_cap() -> None:
+    proxies = [f"p{index}" for index in range(MAX_PARALLEL_TILES)]
+    lanes = build_lanes(proxies)
+    assert len(lanes) == MAX_PARALLEL_TILES
+    assert all(len(lane) == 1 for lane in lanes)

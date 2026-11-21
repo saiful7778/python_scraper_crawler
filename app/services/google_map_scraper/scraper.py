@@ -25,7 +25,7 @@ from app.services.buffer.website_queue import WebsiteQueue
 from app.utils.errors import ScraperError, describe
 from app.utils.failure_messages import is_proxy_failure, is_timeout_failure
 from app.utils.logger import get_logger
-from app.utils.proxies import mask_proxy_credentials
+from app.utils.proxies import build_lanes, mask_proxy_credentials
 from config.redis import RedisConfig
 from config.tortoise import TortoiseConfig
 
@@ -598,6 +598,9 @@ class _TileRun:
         self._load = [0] * len(lanes)
         self._retired: set[int] = set()
         self._dead: set[int] = set()
+        #: Which proxy of its lane each slot currently uses; a lane with spare
+        #: proxies moves to the next one instead of idling when a proxy fails.
+        self._lane_index = [0] * len(lanes)
         self._fresh_keys: dict[int, set[str]] = defaultdict(set)
         self._kept_keys: dict[int, set[str]] = defaultdict(set)
         self._rows_by_keyword: Counter[int] = Counter()
@@ -704,6 +707,18 @@ class _TileRun:
                 self._deleted(flight.tile, scrape_id)
         return dropped
 
+    def _lane_proxy(self, slot: int) -> tuple[str, ...]:
+        """The one proxy this slot uses now, or no proxy when its lane has none."""
+        lane = self._lanes[slot]
+        return (lane[self._lane_index[slot]],) if lane else ()
+
+    def _next_lane_proxy(self, slot: int) -> bool:
+        """Move a slot to the next spare proxy in its lane. False when there is none."""
+        if self._lane_index[slot] + 1 >= len(self._lanes[slot]):
+            return False
+        self._lane_index[slot] += 1
+        return True
+
     def _slot_for(self, scrape_id: str) -> int:
         proxies = self._session.proxies_of(scrape_id) or ()
         return self._lanes.index(proxies) if proxies in self._lanes else 0
@@ -738,7 +753,7 @@ class _TileRun:
             self._start_tile(tile, slot)
 
     def _start_tile(self, tile: PlaceTile, slot: int) -> None:
-        lane = self._lanes[slot]
+        lane = self._lane_proxy(slot)
         settings = cast(SettingsData, {**tile["settings"], "proxies": lane})
         keyword = tile["keyword_index"]
         index = tile["cell_index"]
@@ -764,7 +779,7 @@ class _TileRun:
                     f"▶ Cell {index}/{self._cells_by_keyword[keyword]} @ {cell['lat']},{cell['lon']} depth={depth} radius={cell['radius']}m"
                 )
         scrape_id = self._session.create(tile["name"], settings)
-        self._tiles.mark_scrape(tile["ID"], scrape_id)
+        self._tiles.mark_scrape(tile["ID"], scrape_id, tile)
         self._submit(scrape_id, slot, {**tile, "scrape_id": scrape_id})
 
     def _submit(self, scrape_id: str, slot: int, tile: PlaceTile | None) -> None:
@@ -816,16 +831,21 @@ class _TileRun:
             and is_timeout_failure(outcome.note)
         )
         if blocked or proxy_failed or timed_out:
-            self._retired.add(slot)
-            if blocked or proxy_failed:
-                self._dead.add(slot)
             attempts = tile["attempts"] + 1
+            failed_proxy = self._lane_proxy(slot)
+            # A lane with a spare proxy keeps running on the next one; only a
+            # lane with none left retires, as one proxy per slot always did.
+            spare = False if blocked else self._next_lane_proxy(slot)
+            if not spare:
+                self._retired.add(slot)
+                if blocked or proxy_failed:
+                    self._dead.add(slot)
             if attempts < len(self._query.proxies):
                 # Keep what this attempt found before the block: the run may end
                 # before the tile runs again, and those leads are still real.
                 fresh, kept = self._keep(tile, rows)
                 self._persist(scrape_id)
-                proxy = mask_proxy_credentials(self._lanes[slot][0])
+                proxy = mask_proxy_credentials(failed_proxy[0])
                 if blocked:
                     cause = "was rate-limited: its tiles stop"
                 elif proxy_failed:
@@ -1199,7 +1219,7 @@ class PlaceScraper:
     ) -> ScrapeResult:
         """Run the queued tiles on one slot per proxy, then clear the queue unless a lost Chrome connection stopped the run."""
         self._cancel.clear()
-        lanes = [(proxy,) for proxy in query.proxies] or [()]
+        lanes = build_lanes(query.proxies)
         session = ScrapeSession(
             EngineConfig(),
             self._redis,

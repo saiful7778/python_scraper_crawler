@@ -55,13 +55,10 @@ return raw
 """
 
 _MARK_SCRAPE = """
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-if not raw then
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
     return 0
 end
-local tile = cjson.decode(raw)
-tile['scrape_id'] = ARGV[2]
-redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(tile))
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 return 1
 """
@@ -169,12 +166,21 @@ class PlaceTileQueue:
         )
         return None if not raw else json.loads(raw)
 
-    def mark_scrape(self, tile_id: str, scrape_id: str) -> None:
-        """Store the scrape id on an in-flight tile."""
+    def mark_scrape(self, tile_id: str, scrape_id: str, tile: PlaceTile) -> None:
+        """Store the scrape id on an in-flight tile.
+
+        The tile is re-encoded in Python: Redis's Lua ``cjson`` turns an empty
+        JSON array such as ``"proxies": []`` into ``{}``, which no longer
+        validates as :class:`ScrapeSettings` when the run resumes.
+        """
         marked = self._run(
             self._mark_scrape,
             keys=[self._in_flight_data_key],
-            args=[tile_id, scrape_id, self._ttl_seconds],
+            args=[
+                tile_id,
+                json.dumps({**tile, "scrape_id": scrape_id}, sort_keys=True),
+                self._ttl_seconds,
+            ],
             what="mark place tile",
         )
         if not marked:

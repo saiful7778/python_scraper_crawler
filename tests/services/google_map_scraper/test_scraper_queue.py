@@ -15,6 +15,7 @@ from app.services.google_map_scraper.scraper import (
     PlaceScraper,
     UnsavedLeadsError,
 )
+from app.utils.proxies import MAX_PARALLEL_TILES
 from tests.services.google_map_scraper.tile_fakes import (
     Reply,
     TileEnv,
@@ -236,7 +237,7 @@ def test_resume_submits_in_flight_scrape_ids_and_does_not_rerun_done_tiles(
     queue.push(_tile("tile-a", "cafes"))
     queue.push(_tile("tile-b", "bakeries"))
     queue.take()
-    queue.mark_scrape("tile-a", "scrape-a")
+    queue.mark_scrape("tile-a", "scrape-a", _tile("tile-a", "cafes"))
     env = arrange(lambda kw, slot: done(kw), carried=["scrape-a"])
     env.scrapes["scrape-a"] = {
         "name": "cafes",
@@ -888,3 +889,25 @@ def test_a_whole_city_keyword_of_a_mixed_run_is_not_trimmed_to_the_city_box(
     arrange(behave)
     result = PlaceScraper(redis).scrape(_planned(("cafes", 5, 1), ("pizza", 5, 2)))
     assert "far-cafes" in [r["title"] for r in result.rows]
+
+
+def test_more_proxies_than_the_cap_run_in_at_most_25_slots(arrange, redis):
+    proxies = [f"http://h{index}:1" for index in range(40)]
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(
+        _query(keywords=[f"cafe{index}" for index in range(40)], proxies=proxies)
+    )
+    assert not any(slot >= MAX_PARALLEL_TILES for _, slot in env.submitted)
+    assert max(slot for _, slot in env.submitted) == MAX_PARALLEL_TILES - 1
+
+
+def test_a_spare_proxy_in_a_lane_takes_over_without_retiring_the_slot(arrange, redis):
+    proxies = [f"http://h{index}:1" for index in range(MAX_PARALLEL_TILES + 1)]
+    env = arrange(lambda kw, slot: proxy_failure() if slot == 0 else done(kw))
+    result = PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries"], proxies=proxies)
+    )
+    # lane 0 held proxy 0 then proxy 25; both were used, and the tile still ran
+    used = [next(iter(env.settings_of(sid)["proxies"])) for sid, _ in env.submitted]
+    assert proxies[0] in used and proxies[MAX_PARALLEL_TILES] in used
+    assert result.finished >= 1

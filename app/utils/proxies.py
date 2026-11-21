@@ -8,6 +8,9 @@ from app.utils.errors import ProxyConfigError, describe
 
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 
+#: Most tiles that run at once, so a wide proxy pool cannot exhaust Redis.
+MAX_PARALLEL_TILES = 25
+
 _PROXY_FORMAT_HELP = "use http://, https://, socks5:// or socks5h://host:port"
 
 
@@ -61,6 +64,25 @@ def mask_proxy_credentials(proxy: str) -> str:
     userinfo, _, host = parts.netloc.rpartition("@")
     shown = userinfo.partition(":")[0] + ":***" if parts.password else "***"
     return urllib.parse.urlunsplit(parts._replace(netloc=f"{shown}@{host}"))
+
+
+def build_lanes(proxies: Sequence[str]) -> list[tuple[str, ...]]:
+    """Group proxies into the lanes that run at once, at most :data:`MAX_PARALLEL_TILES` of them.
+
+    One proxy per lane while there are no more proxies than lanes. Past that the
+    extra proxies are dealt round robin, so lane ``n`` also holds proxy
+    ``n + MAX_PARALLEL_TILES`` and so on. Those spare proxies are picked when the
+    lane's first proxy refuses or times out, which keeps every proxy in use
+    without opening more slots than Redis can buffer for.
+
+    With no proxies there is a single laneless slot, as before.
+    """
+    if not proxies:
+        return [()]
+    lanes: list[list[str]] = [[] for _ in range(min(len(proxies), MAX_PARALLEL_TILES))]
+    for position, proxy in enumerate(proxies):
+        lanes[position % len(lanes)].append(proxy)
+    return [tuple(lane) for lane in lanes]
 
 
 class ProxyRotation:

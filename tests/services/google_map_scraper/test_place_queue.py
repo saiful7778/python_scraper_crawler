@@ -95,14 +95,14 @@ def test_mark_scrape_stores_the_scrape_id_on_the_in_flight_tile(redis):
     queue = PlaceTileQueue(redis, _query(), 3600)
     queue.push(_tile("tile-1"))
     queue.take()
-    queue.mark_scrape("tile-1", "scrape-a")
+    queue.mark_scrape("tile-1", "scrape-a", _tile("tile-1"))
     assert queue.in_flight()[0]["scrape_id"] == "scrape-a"
 
 
 def test_mark_scrape_on_a_tile_not_in_flight_is_a_buffer_error(redis):
     queue = PlaceTileQueue(redis, _query(), 3600)
     with pytest.raises(BufferError):
-        queue.mark_scrape("missing", "scrape-a")
+        queue.mark_scrape("missing", "scrape-a", _tile("missing"))
 
 
 def test_finish_removes_the_tile_from_in_flight_and_appends_it_to_done(redis):
@@ -120,7 +120,7 @@ def test_requeue_moves_an_in_flight_tile_back_to_the_front_with_its_attempts(red
     queue.push(_tile("tile-1"))
     queue.push(_tile("tile-2"))
     queue.take()
-    queue.mark_scrape("tile-1", "scrape-a")
+    queue.mark_scrape("tile-1", "scrape-a", _tile("tile-1"))
     queue.requeue("tile-1", _tile("tile-1", attempts=1, scrape_id=None))
     assert queue.in_flight() == []
     assert [tile["ID"] for tile in queue.pending()] == ["tile-1", "tile-2"]
@@ -198,3 +198,13 @@ def test_enqueue_redis_error_is_a_buffer_error(redis, monkeypatch):
     monkeypatch.setattr(redis, "pipeline", boom)
     with pytest.raises(BufferError):
         queue.push(_tile())
+
+
+def test_mark_scrape_keeps_an_empty_proxy_list_a_list(redis):
+    # Redis Lua cjson turns [] into {} when it re-encodes a tile, which then
+    # fails ScrapeSettings validation on resume.
+    queue = PlaceTileQueue(redis, _query(), 3600)
+    queue.push(_tile("tile-1"))
+    queue.take()
+    queue.mark_scrape("tile-1", "scrape-a", _tile("tile-1"))
+    assert queue.in_flight()[0]["settings"]["proxies"] == []

@@ -14,6 +14,7 @@ from app.services.google_map_scraper.scrape.dedupe import seen_keys_of
 from app.services.google_map_scraper.scraper import PlaceScraper
 from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
+from app.utils.proxies import build_lanes
 from config.tortoise import TORTOISE_ORM
 
 logger = get_logger(__name__)
@@ -328,6 +329,13 @@ def print_plan(query: CliQuery) -> None:
     print(f"Max time: {query.max_seconds}s per scrape")
     print(f"Website: level {query.website_depth}")
     print(f"Proxies: {len(query.proxies or [])}")
+    slots = len(build_lanes(query.proxies or []))
+    rotation = (
+        " (extra proxies rotate in round robin)"
+        if len(query.proxies or []) > slots
+        else ""
+    )
+    print(f"Parallel scrapes: {slots} at a time{rotation}")
     row_limit = f"{query.limit} per scrape" if query.limit else "none"
     print(f"Row limit: {row_limit}")
     filters = [
