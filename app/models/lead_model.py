@@ -18,7 +18,7 @@ class LeadModel(Model):
     address = fields.TextField(null=True)
     phone = fields.TextField(null=True)
     website = fields.TextField(null=True)
-    website_domain = fields.CharField(max_length=255, null=True, unique=True)
+    website_domain = fields.CharField(max_length=255, null=True)
     is_crawlable = fields.BooleanField(default=False, db_default=False)
     descriptions = fields.TextField(null=True)
     owner = fields.TextField(null=True)
