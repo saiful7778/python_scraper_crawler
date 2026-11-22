@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 
 from cli.serper_map_scrape_cli import (
@@ -171,7 +173,7 @@ def test_an_exhausted_run_exits_zero_and_says_the_job_is_saved(monkeypatch, caps
     class Exhausted:
         def __init__(self, *args, **kwargs):
             self._result = SerperMapResult(
-                job_id="j1",
+                job_id=uuid4(),
                 status="exhausted",
                 requests_done=2,
                 requests_failed=0,
@@ -217,7 +219,7 @@ def test_a_failed_run_exits_one(monkeypatch, capsys):
 
         async def run(self, job_id):
             return SerperMapResult(
-                job_id="j1",
+                job_id=uuid4(),
                 status="failed",
                 requests_done=0,
                 requests_failed=1,

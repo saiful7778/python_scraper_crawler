@@ -1,7 +1,17 @@
 from uuid import uuid4
 
 from app.models import SerperMapJobStatus, SerperMapRequestModel
-from app.repositories.serper_map_repository import SerperMapPage, SerperMapRepository
+from app.repositories.serper_map_repository import (
+    SerperMapJobInfo,
+    SerperMapPage,
+    SerperMapRepository,
+)
+
+
+def found(info: SerperMapJobInfo | None) -> SerperMapJobInfo:
+    """Narrow a lookup that the test knows succeeded, for the type checker."""
+    assert info is not None
+    return info
 
 PAGES = [
     SerperMapPage("plumbers", 1, 0, 0, 30.1, -97.7, 13),
@@ -22,7 +32,7 @@ async def test_create_job_writes_one_request_row_per_page(db):
 async def test_find_unfinished_matches_the_config_key_only(db):
     repo = SerperMapRepository()
     job = await repo.create_job("j", {}, "k1", PAGES[:1], 1)
-    assert (await repo.find_unfinished("k1")).id == job.id
+    assert found(await repo.find_unfinished("k1")).id == job.id
     assert await repo.find_unfinished("other") is None
 
 
@@ -41,7 +51,7 @@ async def test_find_unfinished_returns_the_newest(db):
     repo = SerperMapRepository()
     await repo.create_job("old", {}, "k1", PAGES[:1], 1)
     newest = await repo.create_job("new", {}, "k1", PAGES[:1], 1)
-    assert (await repo.find_unfinished("k1")).id == newest.id
+    assert found(await repo.find_unfinished("k1")).id == newest.id
 
 
 async def test_pending_pages_returns_pending_and_failed_and_keeps_order(db):
@@ -61,7 +71,7 @@ async def test_mark_done_updates_the_job_counters(db):
     await repo.mark_done(
         job.id, PAGES[0], http_status=200, places=20, credits=3, key_hint=0, saved=7
     )
-    stored = await repo.get(job.id)
+    stored = found(await repo.get(job.id))
     assert stored.done_requests == 1
     assert stored.places_found == 20
     assert stored.places_saved == 7
@@ -81,7 +91,7 @@ async def test_finish_sets_status_and_error(db):
     repo = SerperMapRepository()
     job = await repo.create_job("j", {}, "k1", PAGES[:1], 1)
     await repo.finish(job.id, SerperMapJobStatus.EXHAUSTED, "all keys are out of credits")
-    stored = await repo.get(job.id)
+    stored = found(await repo.get(job.id))
     assert stored.status == "exhausted"
     assert stored.error == "all keys are out of credits"
 

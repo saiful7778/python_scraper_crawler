@@ -5,9 +5,8 @@ environment, prints, prompts, or exits.
 """
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
 from uuid import UUID
 
 from app.repositories import (
@@ -27,9 +26,9 @@ from app.services.google_map_scraper.scrape.scrape_types import LeadRow
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
-from .serper_map_client import CREDITS_PER_PAGE, SerperMapClient
+from .serper_map_client import CREDITS_PER_PAGE, SerperMapCaller
 from .serper_map_config import SerperMapConfig
-from .serper_map_errors import SerperConfigError, SerperNoCreditsError
+from .serper_map_errors import SerperConfigError
 from .serper_map_plan import SerperMapPlan, build_plan
 from .serper_map_rows import places_to_rows
 from .serper_map_state import (
@@ -47,7 +46,7 @@ _SAVE_LOCK_TIMEOUT_SECONDS = 120
 
 CrawlCheck = Callable[[list[LeadRow]], None]
 EventSink = Callable[[SerperMapEvent], None]
-ClientFactory = Callable[[str], SerperMapClient]
+ClientFactory = Callable[[str], SerperMapCaller]
 
 
 @dataclass(frozen=True)
@@ -93,8 +92,8 @@ class SerperMapService:
         self._known: set[str] | None = set(known_keys) if known_keys is not None else None
         self._crawlability = crawlability or LeadCrawlability()
         self._on_event = on_event
-        self._client_factory = client_factory or (lambda key: SerperMapClient(key))
-        self._clients: list[SerperMapClient] = []
+        self._client_factory = client_factory or (lambda key: _default_client(key))
+        self._clients: list[SerperMapCaller] = []
         self._cancelled = asyncio.Event()
         self._job_id: UUID | None = None
 
@@ -148,19 +147,19 @@ class SerperMapService:
         pages = await self._repository.pending_pages(job_id)
         if not pages:
             await self._repository.finish(job_id, "finished")
-            return self._result(job_id, "finished", "")
+            return await self._result(job_id, "finished", "")
 
         known = await self._known_keys()
         clients, skipped = await self._live_clients()
         if len(clients) == 0:
             status = "failed" if skipped else "exhausted"
             error = (
-                "every API key was refused"
+                "every API key has too few credits to run a page"
                 if skipped
                 else "every API key is out of credits"
             )
             await self._repository.finish(job_id, status, error)
-            return self._result(job_id, status, error)
+            return await self._result(job_id, status, error)
 
         if known is None:
             known = set()
@@ -263,15 +262,15 @@ class SerperMapService:
         if self._known is not None:
             return self._known
         rows = await self._profiles.key_rows()
-        self._known = set(
+        self._known = {
             key for row in rows for key in _keys_of(row)
-        )
+        }
         logger.debug("loaded %d known lead keys", len(self._known))
         return self._known
 
-    async def _live_clients(self) -> tuple[list[SerperMapClient], int]:
+    async def _live_clients(self) -> tuple[list[SerperMapCaller], int]:
         """One client per key that still has credits; also count the refused keys."""
-        clients: list[SerperMapClient] = []
+        clients: list[SerperMapCaller] = []
         skipped = 0
         for key in self._api_keys:
             client = self._client_factory(key)
@@ -336,6 +335,12 @@ class SerperMapService:
         )
 
 
+def _default_client(key: str) -> SerperMapCaller:
+    from .serper_map_client import SerperMapClient
+
+    return SerperMapClient(key)
+
+
 def _clean_keys(api_keys: Sequence[str]) -> list[str]:
     """Drop blanks and repeats, keeping the order the list gives."""
     seen: dict[str, None] = {}
@@ -357,11 +362,11 @@ def _bounding_box_of(config: dict) -> BoundingBox | None:
     return (south, north, west, east)
 
 
-def _keys_of(row: dict) -> list[str]:
+def _keys_of(row: Mapping[str, object]) -> list[str]:
     """The dedupe keys of one stored row, the way the browser engine reads them."""
     from app.repositories.google_map_profile_repository import KEY_FIELDS
 
     return [f"{field}:{row[field]}" for field in KEY_FIELDS if row.get(field)]
 
 
-__all__ = ["SerperMapResult", "SerperMapService", "KEY_DRY"]
+__all__ = ["KEY_DRY", "SerperMapResult", "SerperMapService"]

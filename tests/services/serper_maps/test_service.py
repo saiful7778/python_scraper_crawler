@@ -6,12 +6,16 @@ from app.models import LeadModel
 from app.repositories.serper_map_repository import SerperMapRepository
 from app.services.serper.maps import serper_map_service as service_module
 from app.services.serper.maps.serper_map_config import SerperMapConfig
-from app.services.serper.maps.serper_map_errors import SerperConfigError, SerperNoCreditsError
+from app.services.serper.maps.serper_map_errors import (
+    SerperConfigError,
+    SerperNoCreditsError,
+)
 from app.services.serper.maps.serper_map_plan import SerperMapPlan
 from app.services.serper.maps.serper_map_service import SerperMapService
 from app.services.serper.maps.serper_map_type import Place, SearchResult
 
 from .test_rows import PLACE
+
 
 def _config(**overrides):
     values = {"keywords": ("plumbers",), "city": "Austin", "state": "TX", "country": "US"}
@@ -40,7 +44,7 @@ def _result_with_two_places():
         phoneNumber="(512) 555-0101",
         website="https://second.example",
     )
-    return SearchResult({}, "", [PLACE, second], 3)
+    return SearchResult(ll="", places=[PLACE, second], credits=3)
 
 
 class FakeClient:
@@ -50,7 +54,7 @@ class FakeClient:
         self.index = index
         self.answers = list(answers or [])
         #: A single answer repeats, so one script can serve every page.
-        self.default = self.answers[-1] if len(self.answers) == 1 else SearchResult({}, "", [], 3)
+        self.default = self.answers[-1] if len(self.answers) == 1 else SearchResult(ll="", places=[], credits=3)
         self.calls = []
 
     async def search(self, keyword, lat, lon, zoom, page):
@@ -60,7 +64,7 @@ class FakeClient:
             raise answer
         return answer
 
-    async def balance(self):
+    async def balance(self) -> int:
         return 100
 
     async def aclose(self):
@@ -78,7 +82,6 @@ def _service(keys=("k1",), answers=None, clients=None, **overrides):
         api_keys=list(keys),
         client_factory=lambda key: factory_clients[key],
     )
-    service._created = list(factory_clients.values())
     return service
 
 
@@ -87,6 +90,7 @@ async def test_start_writes_the_job_and_every_request(db, monkeypatch):
     service = _service()
     job_id = await service.start()
     info = await SerperMapRepository().get(job_id)
+    assert info is not None
     assert info.total_requests == 2
     assert info.pending_requests == 2
     assert info.status == "running"
@@ -149,7 +153,8 @@ async def test_an_exhausted_run_is_not_failed_and_stays_pending(db, monkeypatch)
     assert result.status == "exhausted"
     assert result.requests_pending == 2
     assert result.requests_failed == 0
-    assert (await SerperMapRepository().get(job_id)).status == "exhausted"
+    stored = await SerperMapRepository().get(job_id)
+    assert stored is not None and stored.status == "exhausted"
     await service.aclose()
 
 
@@ -172,7 +177,8 @@ async def test_find_unfinished_matches_the_same_config_only(db, monkeypatch):
     service = _service(answers=[SerperNoCreditsError("out")] * 4)
     job_id = await service.start()
     await service.run(job_id)
-    assert (await service.find_unfinished()).id == job_id
+    unfinished = await service.find_unfinished()
+    assert unfinished is not None and unfinished.id == job_id
     assert await _service(depth=2).find_unfinished() is None
     await service.aclose()
 
@@ -186,7 +192,8 @@ async def test_cancel_marks_the_job_interrupted_and_keeps_progress(db, monkeypat
     await service.cancel()
     result = await task
     assert result.status == "interrupted"
-    assert (await SerperMapRepository().get(job_id)).status == "interrupted"
+    stored = await SerperMapRepository().get(job_id)
+    assert stored is not None and stored.status == "interrupted"
     await service.aclose()
 
 
@@ -196,7 +203,7 @@ async def test_cancelling_the_task_keeps_the_progress_that_was_saved(db, monkeyp
     class Blocking(FakeClient):
         async def search(self, keyword, lat, lon, zoom, page):
             await asyncio.sleep(1)
-            return SearchResult({}, "", [], 3)
+            return SearchResult(ll="", places=[], credits=3)
 
     clients = {"k1": Blocking(0, [])}
     service = SerperMapService(
@@ -208,7 +215,8 @@ async def test_cancelling_the_task_keeps_the_progress_that_was_saved(db, monkeyp
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert (await SerperMapRepository().get(job_id)).status == "interrupted"
+    stored = await SerperMapRepository().get(job_id)
+    assert stored is not None and stored.status == "interrupted"
     await service.aclose()
 
 
@@ -247,7 +255,7 @@ async def test_a_key_with_too_little_balance_is_not_used(db, monkeypatch):
     monkeypatch.setattr(service_module, "build_plan", _fake_plan)
 
     class Poor(FakeClient):
-        async def balance(self):
+        async def balance(self) -> int:
             return 2
 
     clients = {
@@ -279,9 +287,40 @@ async def test_rows_outside_the_city_are_dropped_on_a_grid(db, monkeypatch):
     outside = Place(
         position=1, title="Far Away", latitude=40.0, longitude=-80.0, placeId="far"
     )
-    result_places = SearchResult({}, "", [PLACE, outside], 3)
+    result_places = SearchResult(ll="", places=[PLACE, outside], credits=3)
     service = _service(answers=[result_places])
     result = await service.run(await service.start())
     assert result.places_saved == 1
     assert await LeadModel.filter(title="Far Away").count() == 0
+    await service.aclose()
+
+
+async def test_a_job_with_no_pending_page_finishes_without_a_request(db, monkeypatch):
+    monkeypatch.setattr(service_module, "build_plan", _fake_plan)
+    service = _service(answers=_result_with_two_places())
+    job_id = await service.start()
+    await service.run(job_id)
+
+    again = await service.run(job_id)
+    assert again.status == "finished"
+    assert again.requests_pending == 0
+    await service.aclose()
+
+
+async def test_a_run_whose_keys_are_all_refused_fails(db, monkeypatch):
+    monkeypatch.setattr(service_module, "build_plan", _fake_plan)
+
+    class Poor(FakeClient):
+        async def balance(self) -> int:
+            return 0
+
+    service = SerperMapService(
+        _config(), api_keys=["k1"], client_factory=lambda key: Poor(0, [])
+    )
+    job_id = await service.start()
+    result = await service.run(job_id)
+    assert result.status == "failed"
+    assert "credits" in result.error
+    stored = await SerperMapRepository().get(job_id)
+    assert stored is not None and stored.status == "failed"
     await service.aclose()

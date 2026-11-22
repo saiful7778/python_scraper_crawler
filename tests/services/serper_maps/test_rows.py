@@ -47,7 +47,9 @@ def test_the_row_carries_every_dedupe_key_and_field():
 
 def test_the_phone_is_formatted_for_the_country():
     row = place_to_row(PLACE, "plumbers")
-    from app.services.google_map_scraper.scrape.phone_numbers import format_phone_numbers
+    from app.services.google_map_scraper.scrape.phone_numbers import (
+        format_phone_numbers,
+    )
 
     format_phone_numbers([row], "us")
     assert row["phone"] == "+17373009817"

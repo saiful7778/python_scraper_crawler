@@ -8,7 +8,7 @@ from app.repositories.serper_map_repository import SerperMapPage
 from app.utils.errors import describe
 from app.utils.logger import get_logger
 
-from .serper_map_client import SerperMapClient
+from .serper_map_client import SerperMapCaller
 from .serper_map_errors import (
     SerperAuthError,
     SerperConfigError,
@@ -48,7 +48,7 @@ class KeySlot:
     """One API key and the state the run gives it."""
 
     index: int
-    client: SerperMapClient
+    client: SerperMapCaller
     state: str = KEY_READY
 
     @property
@@ -99,7 +99,7 @@ class SerperMapScheduler:
     def __init__(
         self,
         pages: list[SerperMapPage],
-        clients: list[SerperMapClient],
+        clients: list[SerperMapCaller],
         *,
         parallel: int = 5,
         rest_seconds: float = 1.5,
@@ -220,7 +220,7 @@ class SerperMapScheduler:
 
             try:
                 await handle(page, result, slot.index)
-            except Exception as error:  # noqa: BLE001 - one bad page must not stop the run
+            except Exception as error:
                 logger.exception("page %d of %r could not be saved", page.page, page.keyword)
                 await self._fail(page, None, describe(error))
                 return

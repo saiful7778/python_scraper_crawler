@@ -1,6 +1,5 @@
 import hashlib
 import json
-
 from typing import Annotated
 
 from pydantic import (
@@ -14,7 +13,7 @@ from app.services.google_map_scraper.scrape.scrape_settings import CleanText
 
 from .serper_map_errors import SerperGeocodeError
 
-__all__ = ["SerperMapConfig", "SerperGeocodeError"]
+__all__ = ["SerperGeocodeError", "SerperMapConfig"]
 
 Country = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2}$")]
 

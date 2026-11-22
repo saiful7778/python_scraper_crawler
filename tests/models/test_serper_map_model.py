@@ -42,16 +42,16 @@ async def test_a_request_is_unique_per_job_keyword_page_and_grid(db):
         config_key="k",
         total_requests=1,
     )
-    fields = dict(
-        job_id=job.id,
-        keyword="plumbers",
-        page=2,
-        grid_x=1,
-        grid_y=0,
-        lat=30.1,
-        lng=-97.7,
-        zoom=13,
-    )
+    fields = {
+        "job_id": job.id,
+        "keyword": "plumbers",
+        "page": 2,
+        "grid_x": 1,
+        "grid_y": 0,
+        "lat": 30.1,
+        "lng": -97.7,
+        "zoom": 13,
+    }
     await SerperMapRequestModel.create(**fields)
     with pytest.raises(IntegrityError):
         await SerperMapRequestModel.create(**fields)

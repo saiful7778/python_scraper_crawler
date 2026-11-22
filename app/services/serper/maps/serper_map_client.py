@@ -1,5 +1,7 @@
 """One Serper /maps call, with its failures turned into the typed errors above."""
 
+from typing import Protocol
+
 import httpx
 
 from app.utils.logger import get_logger
@@ -47,6 +49,18 @@ def _retry_after(response: httpx.Response) -> float | None:
         return None
 
 
+class SerperMapCaller(Protocol):
+    """What the scheduler needs from a key's caller, so a fake or another client fits."""
+
+    async def search(
+        self, keyword: str, lat: float, lon: float, zoom: int, page: int
+    ) -> SearchResult: ...
+
+    async def balance(self) -> int: ...
+
+    async def aclose(self) -> None: ...
+
+
 class SerperMapClient:
     """Calls the Serper maps endpoint with one API key.
 
@@ -84,7 +98,7 @@ class SerperMapClient:
         response = await self._get(ACCOUNT_URL)
         balance = response.get("balance")
         try:
-            return int(balance)
+            return int(balance) if balance is not None else 0
         except (TypeError, ValueError):
             return 0
 

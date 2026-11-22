@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from app.repositories.serper_map_repository import SerperMapPage
+from app.services.serper.maps.serper_map_client import SerperMapCaller
 from app.services.serper.maps.serper_map_errors import (
     SerperAuthError,
     SerperConfigError,
@@ -12,7 +13,6 @@ from app.services.serper.maps.serper_map_errors import (
 )
 from app.services.serper.maps.serper_map_state import (
     KEY_DEAD,
-    KEY_DRY,
     KEY_READY,
     SerperMapScheduler,
 )
@@ -29,12 +29,12 @@ class FakeClient:
 
     async def search(self, keyword, lat, lon, zoom, page):
         self.calls.append((keyword, page))
-        answer = self.answers.pop(0) if self.answers else SearchResult({}, "", [], 3)
+        answer = self.answers.pop(0) if self.answers else SearchResult(ll="", places=[], credits=3)
         if isinstance(answer, Exception):
             raise answer
         return answer
 
-    async def balance(self):
+    async def balance(self) -> int:
         return 100
 
     async def aclose(self):
@@ -69,7 +69,7 @@ async def test_each_key_runs_parallel_requests_at_a_time():
             peak[self.index] = max(peak[self.index], active[self.index])
             await asyncio.sleep(0.02)
             active[self.index] -= 1
-            return SearchResult({}, "", [], 3)
+            return SearchResult(ll="", places=[], credits=3)
 
     async def handle(page, result, key):
         return 0
@@ -106,7 +106,7 @@ async def test_all_keys_dry_stops_with_pending_work_and_is_not_a_failure():
         return 0
 
     summary = await SerperMapScheduler(
-        _pages(10), dry, parallel=2, rest_seconds=0
+        _pages(10), list[SerperMapCaller](dry), parallel=2, rest_seconds=0
     ).run(handle)
     assert summary.exhausted is True
     assert summary.done == 0
@@ -182,7 +182,7 @@ async def test_a_transient_failure_is_retried_then_marked_failed():
 
 async def test_a_transient_failure_recovers_on_a_later_try():
     flaky = FakeClient(
-        0, [SerperUnavailableError("500"), SearchResult({}, "", [], 3)]
+        0, [SerperUnavailableError("500"), SearchResult(ll="", places=[], credits=3)]
     )
 
     async def handle(page, result, key):
@@ -233,7 +233,7 @@ async def test_a_cancelled_run_returns_its_pages_to_the_queue():
     class Slow(FakeClient):
         async def search(self, keyword, lat, lon, zoom, page):
             await asyncio.sleep(0)
-            return SearchResult({}, "", [], 3)
+            return SearchResult(ll="", places=[], credits=3)
 
     async def handle(page, result, key):
         cancelled.set()  # cancel while the first page is being saved
@@ -268,7 +268,7 @@ async def test_a_slow_page_on_the_last_batch_is_not_counted_as_pending():
     class Slow(FakeClient):
         async def search(self, keyword, lat, lon, zoom, page):
             await asyncio.sleep(0.02)
-            return SearchResult({}, "", [], 3)
+            return SearchResult(ll="", places=[], credits=3)
 
     async def handle(page, result, key):
         return 0
@@ -279,14 +279,11 @@ async def test_a_slow_page_on_the_last_batch_is_not_counted_as_pending():
     assert summary.done == 3
     assert summary.pending == 0
     assert summary.exhausted is False
-    with pytest.raises(SerperConfigError):
-        await SerperMapScheduler(_pages(3), [], parallel=1).run(
-            lambda *a: asyncio.sleep(0)
-        )
 
 
 async def test_no_keys_is_a_config_error_not_an_exhausted_run():
+    async def handle(page, result, key):
+        return 0
+
     with pytest.raises(SerperConfigError):
-        await SerperMapScheduler(_pages(3), [], parallel=1).run(
-            lambda *a: asyncio.sleep(0)
-        )
+        await SerperMapScheduler(_pages(3), [], parallel=1).run(handle)
