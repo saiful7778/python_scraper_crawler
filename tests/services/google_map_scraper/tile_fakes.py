@@ -97,6 +97,7 @@ class TileEnv:
         self.delivered = 0
         self.slot_counts: list[int] = []
         self.check_crawlable: list[bool] = []
+        self.sessions: list = []
         self.stopped = 0
         self.deleted: set[str] = (
             set()
@@ -105,6 +106,7 @@ class TileEnv:
         self.finish_started = threading.Event()
         self.finish_gate: threading.Event | None = None  # set to hold a save open
         self.deferred: list[str] = []
+        self.discarded_shared_keys: list[str | None] = []
         self._count = 0
 
     def slots_used_for(self, keyword: str) -> list[int]:
@@ -139,16 +141,23 @@ class TileSession:
         locale,
         country="",
         check_crawlable=False,
+        shared_known_key=None,
     ):
         self._env = env
         self._queue: deque[tuple[str, int]] = deque()
         env.slot_counts.append(slots)
         env.check_crawlable.append(check_crawlable)
+        self.shared_known_key = shared_known_key
+        env.sessions.append(self)
         # one slot cannot overlap, so only a multi-slot run finishes in the background
         self._pool = FinishPool(self.finish, workers=4) if slots > 1 else None
 
     def start(self) -> list[str]:
         return list(self._env.carried)
+
+    def discard_shared_known_keys(self) -> None:
+        if self.shared_known_key is not None:
+            self._env.discarded_shared_keys.append(self.shared_known_key)
 
     def create(self, name: str, settings: dict) -> str:
         env = self._env

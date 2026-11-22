@@ -46,7 +46,16 @@ def fake_run_factory(monkeypatch):
     ran: list[str] = []
 
     class FakeRun:
-        def __init__(self, database, scrape, headless, redis, known_keys, browser=None):
+        def __init__(
+            self,
+            database,
+            scrape,
+            headless,
+            redis,
+            known_keys,
+            browser=None,
+            shared_known_key=None,
+        ):
             self.scrape_id = scrape["ID"]
             self.outcome = None
             self.rows = []

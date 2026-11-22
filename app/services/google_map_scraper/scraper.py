@@ -19,6 +19,7 @@ from app.services.buffer.client import BufferError, connect
 from app.services.buffer.discard import discard_scrape
 from app.services.buffer.finish_pool import FinishPool
 from app.services.buffer.flusher import Flusher
+from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
 from app.services.buffer.website_queue import WebsiteQueue
@@ -38,7 +39,12 @@ from .google_map.geo import (
     is_in_bounding_box,
 )
 from .place_query import PlaceQuery
-from .place_queue import PlaceTile, PlaceTileQueue
+from .place_queue import (
+    PlaceTile,
+    PlaceTileQueue,
+    run_id,
+    shared_key_for,
+)
 from .scrape.dedupe import dedupe_rows, lead_keys
 from .scrape.engine_config import EngineConfig
 from .scrape.lead_crawlability import LeadCrawlability
@@ -158,11 +164,16 @@ class ScrapeSession:
         locale: str,
         country: str = "",
         check_crawlable: bool = False,
+        shared_known_key: str | None = None,
     ):
         self._redis = redis
         self._state = ScrapeState(redis, BUFFER_TTL_SECONDS)
         self._rows = RowBuffer(redis, BUFFER_TTL_SECONDS)
         self._queue = WebsiteQueue(redis, BUFFER_TTL_SECONDS)
+        self._known_keys = known_keys
+        #: The keys the run already knew, in one set the whole run shares, loaded
+        #: once here instead of copied into each tile's own set.
+        self._shared_known_key: str | None = shared_known_key
         self._finished: dict[str, tuple[RunOutcome, list[LeadRow]]] = {}
         self._finished_queue: queue.Queue[FinishedTile] = queue.Queue()
         self._deleted: set[str] = set()
@@ -179,6 +190,7 @@ class ScrapeSession:
                     redis,
                     headless=config.headless,
                     known_keys=known_keys,
+                    shared_known_key=self._shared_known_key,
                     on_finished=partial(self._keep_finished, slot=slot),
                     assignments=assignments,
                     browser=(
@@ -229,11 +241,26 @@ class ScrapeSession:
         """Resume interrupted scrapes, start the Flusher and the workers; returns the carried ids."""
         self._database.check_connection()
         carried = self._resume_interrupted()
+        if self._shared_known_key is not None:
+            self._load_shared_known_keys()
         for flusher in self._flushers:
             flusher.start()
         for worker in self._workers:
             worker.start()
         return carried
+
+    def _load_shared_known_keys(self) -> None:
+        """Load the run's known keys into the one set every tile shares."""
+        assert self._shared_known_key is not None
+        size = KnownKeys(self._redis, BUFFER_TTL_SECONDS, self._shared_known_key).load(
+            self._shared_known_key, self._known_keys
+        )
+        logger.debug("loaded %d known keys into %s", size, self._shared_known_key)
+
+    def discard_shared_known_keys(self) -> None:
+        """Delete the set the run's tiles shared, once no tile will need it again."""
+        if self._shared_known_key is not None:
+            self._redis.delete(self._shared_known_key)
 
     def submit(self, scrape_id: str, slot: int) -> None:
         """Give a scrape id to the worker of ``slot``."""
@@ -1229,6 +1256,7 @@ class PlaceScraper:
             locale=query.locale_tag,
             country=query.country,
             check_crawlable=query.has_website,
+            shared_known_key=shared_key_for(run_id(query)) if known_keys else None,
         )
         try:
             carried = session.start()
@@ -1238,6 +1266,8 @@ class PlaceScraper:
             run.run()
         finally:
             session.stop()
+            if not run.stopped:
+                session.discard_shared_known_keys()
 
         if not run.stopped:
             tiles.clear()

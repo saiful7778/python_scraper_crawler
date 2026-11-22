@@ -46,17 +46,21 @@ class ScrapeWorker(threading.Thread):
         assignments: queue.Queue[str] | None = None,
         browser: BrowserSession | None = None,
         proxy_slot: int = 0,
+        shared_known_key: str | None = None,
     ):
         """Create the worker thread; call :meth:`start` to begin.
 
         ``on_finished`` receives each scrape's outcome and accepted leads when
         its run ends, whether it finished or failed. A paused run reports nothing.
+        With ``shared_known_key``, the keys the run already knew stay in that one
+        set instead of being copied into each scrape's own set.
         """
         super().__init__(daemon=True, name="scrapes")
         self._database = database
         self._redis = redis
         self._headless = headless
         self._known_keys = known_keys
+        self._shared_known_key = shared_known_key
         self._on_finished = on_finished
         self._assignments = assignments
         self._browser = browser
@@ -132,6 +136,7 @@ class ScrapeWorker(threading.Thread):
             self._redis,
             self._known_keys,
             browser=self._browser,
+            shared_known_key=self._shared_known_key,
         )
         self._current = run
         logger.info("scrape %s: starting", scrape["ID"])

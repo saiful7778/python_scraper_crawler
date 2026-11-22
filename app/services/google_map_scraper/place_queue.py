@@ -100,6 +100,11 @@ def run_id(query: PlaceQuery) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def shared_key_for(run: str) -> str:
+    """The one set holding the keys a run's tiles all start out knowing."""
+    return f"place_known:{run}"
+
+
 class PlaceTileQueue:
     """The tiles of one city run in Redis: pending, in flight, and done.
 

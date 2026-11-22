@@ -891,6 +891,28 @@ def test_a_whole_city_keyword_of_a_mixed_run_is_not_trimmed_to_the_city_box(
     assert "far-cafes" in [r["title"] for r in result.rows]
 
 
+def test_a_proxy_run_shares_one_known_key_set_instead_of_copying_it_per_tile(
+    arrange, redis
+):
+    proxies = [f"http://h{index}:1" for index in range(3)]
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(
+        _query(keywords=["cafes", "bakeries"], proxies=proxies),
+        frozenset({"title:Known"}),
+    )
+    keys = [session.shared_known_key for session in env.sessions]
+    assert keys and all(keys), "every tile must point at the run's shared set"
+    assert len(set(keys)) == 1, "all tiles of a run share that one set"
+    assert env.discarded_shared_keys == [keys[0]], "it is deleted when the run ends"
+
+
+def test_a_run_without_known_keys_has_no_shared_set_to_copy(arrange, redis):
+    env = arrange(lambda kw, slot: done(kw))
+    PlaceScraper(redis).scrape(_query(keywords=["cafes"]))
+    assert all(session.shared_known_key is None for session in env.sessions)
+    assert env.discarded_shared_keys == []
+
+
 def test_more_proxies_than_the_cap_run_in_at_most_25_slots(arrange, redis):
     proxies = [f"http://h{index}:1" for index in range(40)]
     env = arrange(lambda kw, slot: done(kw))

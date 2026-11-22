@@ -362,6 +362,7 @@ class _FakeWorker(threading.Thread):
         assignments: queue.Queue[str] | None = None,
         browser=None,
         proxy_slot=0,
+        shared_known_key=None,
     ):
         super().__init__(daemon=True)
         self.failure = None
@@ -398,15 +399,16 @@ class _SessionEnv:
         self._redis = redis
         self.sessions = []
 
-    def session(self, slots, country=""):
+    def session(self, slots, country="", known_keys=frozenset(), shared_known_key=None):
         session = scraper_module.ScrapeSession(
             EngineConfig(),
             self._redis,
             cast(TortoiseConfig, None),
-            frozenset(),
+            known_keys,
             slots,
             locale="en-US",
             country=country,
+            shared_known_key=shared_known_key,
         )
         self.sessions.append(session)
         return session
@@ -418,6 +420,34 @@ def fake_session_env(monkeypatch, redis):
     yield env
     for session in env.sessions:
         session.stop()
+
+
+def test_a_session_loads_the_run_known_keys_once_into_the_shared_set(fake_session_env):
+    shared = "place_known:run"
+    session = fake_session_env.session(
+        2, known_keys=frozenset({"title:Known"}), shared_known_key=shared
+    )
+    session.start()
+    assert fake_session_env._redis.sismember(shared, "title:Known") == 1
+    assert fake_session_env._redis.exists("scrape:" + "x" + ":known") == 0
+
+
+def test_a_session_without_a_shared_set_loads_no_run_keys(fake_session_env):
+    session = fake_session_env.session(2)
+    session.start()
+    assert session._shared_known_key is None
+    session.discard_shared_known_keys()
+    assert fake_session_env._redis.dbsize() == 0
+
+
+def test_discarding_the_shared_set_removes_it_once_the_run_ends(fake_session_env):
+    shared = "place_known:run"
+    session = fake_session_env.session(
+        2, known_keys=frozenset({"title:Known"}), shared_known_key=shared
+    )
+    session.start()
+    session.discard_shared_known_keys()
+    assert fake_session_env._redis.exists(shared) == 0
 
 
 def test_session_checks_the_database_before_it_starts(fake_session_env):

@@ -15,6 +15,7 @@ from app.utils.errors import describe
 from app.utils.logger import get_logger
 from app.utils.proxies import ProxyRotation
 
+from .dedupe import seen_keys_of
 from .keyword_search import KeywordSearch
 from .lead_filter import keep_lead
 from .review_pass import ReviewPass
@@ -77,17 +78,21 @@ class ScrapeRun:
         redis: Redis,
         known_keys: frozenset[str] = frozenset(),
         browser: BrowserSession | None = None,
+        shared_known_key: str | None = None,
     ):
         """Read the scrape's settings; nothing runs until :meth:`execute`.
 
         With ``browser``, the run uses that session and leaves its browser
-        alone; otherwise it owns a session of its own.
+        alone; otherwise it owns a session of its own. With ``shared_known_key``,
+        the keys the run already knew live in that one set for the whole run, so
+        a tile does not copy them into a set of its own.
         """
         self.scrape_id: str = scrape["ID"]
         self.settings = ScrapeSettings.model_validate(scrape["Data"])
         self._database = database
         self._rows = RowBuffer(redis, BUFFER_TTL_SECONDS)
-        self._known = KnownKeys(redis, BUFFER_TTL_SECONDS)
+        self._known = KnownKeys(redis, BUFFER_TTL_SECONDS, shared_known_key)
+        self._shared_known_key = shared_known_key
         self._scrape_state = ScrapeState(redis, BUFFER_TTL_SECONDS)
         self._known_keys = known_keys
         self.outcome: RunOutcome | None = None
@@ -102,6 +107,21 @@ class ScrapeRun:
         self._deadline = 0.0
         self._killed_by_watchdog = False
         self._connection_lost = False
+
+    def _load_known_keys(self, resumed: bool) -> None:
+        """Put the run's known keys where they belong before the search starts.
+
+        Without a shared set the scrape holds every key itself, as before. With
+        one, the session has already loaded the run's keys into that single set,
+        so a resumed scrape only needs to add its own saved rows to its own set.
+        """
+        if self._shared_known_key is None:
+            self._known.load(self.scrape_id, self._known_keys)
+            return
+        if resumed:
+            self._known.load_tile(
+                self.scrape_id, seen_keys_of(self._rows.read_all(self.scrape_id))
+            )
 
     def cancel(self) -> None:
         """Stop the run because its scrape was deleted."""
@@ -131,7 +151,7 @@ class ScrapeRun:
                 ),
             )
         if self._known_keys or not resumed:
-            self._known.load(self.scrape_id, self._known_keys)
+            self._load_known_keys(resumed)
         saved = self._scrape_state.get_progress(self.scrape_id)
         keywords = self.settings.keywords
         seconds_used = saved.get("elapsed", 0)

@@ -8,6 +8,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.services.browser import BrowserSession
 from app.services.buffer.client import BufferError, BufferFullError
+from app.services.buffer.keys import known_key
 from app.services.buffer.known_keys import KnownKeys
 from app.services.buffer.row_buffer import RowBuffer
 from app.services.buffer.scrape_state import ScrapeState
@@ -141,6 +142,36 @@ def test_failed_buffer_append_releases_the_lead_so_it_can_be_retried(
     accepted = run.accept([lead("Cafe", "https://cafe.example")])
     assert [row["title"] for row in accepted] == ["Cafe"]
     assert RowBuffer(fake_redis, TTL_SECONDS).length(SCRAPE_ID) == 1
+
+
+def test_shared_known_keys_are_not_copied_into_the_scrapes_own_set(
+    fake_redis, database
+):
+    shared = "place_known:run"
+    baseline = frozenset({"title:Cafe"})
+    settings = ScrapeSettings(keywords=("bakery",))
+    settings_data = cast(SettingsData, settings.model_dump(by_alias=True, mode="json"))
+    ScrapeState(fake_redis, TTL_SECONDS).create(SCRAPE_ID, settings_data)
+    scrape = cast(
+        ScrapeRecord,
+        {
+            "ID": SCRAPE_ID,
+            "Name": "bakery",
+            "Date": "2026-11-11T00:00:00",
+            "Status": "working",
+            "Data": settings_data,
+            "Error": "",
+            "Progress": {},
+        },
+    )
+    run = ScrapeRun(
+        database, scrape, True, fake_redis, baseline, shared_known_key=shared
+    )
+    run._known.load(shared, baseline)
+
+    assert run.accept([lead("Cafe", "https://cafe.example")]) == []
+    assert fake_redis.scard(known_key(SCRAPE_ID)) == 0
+    assert fake_redis.scard(shared) == 1
 
 
 class _FakeBrowserSession:

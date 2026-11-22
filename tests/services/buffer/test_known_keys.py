@@ -89,6 +89,59 @@ def test_discard_deletes_the_set(fake_redis):
     assert fake_redis.exists(known_key("s1")) == 0
 
 
+def test_shared_baseline_is_not_copied_into_the_tile_set(fake_redis):
+    shared = "place_known:run"
+    KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared).load(
+        shared, ["title:Cafe A"]
+    )
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared)
+    assert keys.add_if_new("s1", lead(title="Cafe A")) is False
+    assert fake_redis.scard(known_key("s1")) == 0
+
+
+def test_shared_baseline_is_checked_by_add_if_new_many(fake_redis):
+    shared = "place_known:run"
+    KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared).load(
+        shared, ["place_id:p1"]
+    )
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared)
+    rows = [lead(title="Cafe A"), lead(title="Cafe B", place_id="p1")]
+    assert keys.add_if_new_many("s1", rows) == [0]
+    assert fake_redis.scard(known_key("s1")) == 1
+
+
+def test_tile_discoveries_still_dedupe_within_the_tile(fake_redis):
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key="place_known:run")
+    assert keys.add_if_new("s1", lead(title="Cafe B")) is True
+    assert keys.add_if_new("s1", lead(title="Cafe B")) is False
+    assert fake_redis.scard(known_key("s1")) == 1
+
+
+def test_forget_leaves_the_shared_baseline_alone(fake_redis):
+    shared = "place_known:run"
+    KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared).load(
+        shared, ["title:Cafe A"]
+    )
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared)
+    keys.forget("s1", lead(title="Cafe A"))
+    assert fake_redis.sismember(shared, "title:Cafe A") == 1
+
+
+def test_load_sets_the_ttl_of_the_shared_baseline(fake_redis):
+    shared = "place_known:run"
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared)
+    keys.load(shared, ["title:x"])
+    assert 0 < fake_redis.ttl(shared) <= 3600
+
+
+def test_load_tile_keeps_a_resumed_tiles_own_keys_out_of_the_shared_set(fake_redis):
+    shared = "place_known:run"
+    keys = KnownKeys(fake_redis, ttl_seconds=3600, shared_key=shared)
+    keys.load_tile("s1", ["title:Cafe A"])
+    assert fake_redis.sismember(known_key("s1"), "title:Cafe A") == 1
+    assert fake_redis.exists(shared) == 0
+
+
 def test_full_redis_raises_buffer_full(fake_redis_full):
     keys = KnownKeys(fake_redis_full, ttl_seconds=3600)
     with pytest.raises(BufferFullError, match="500mb"):
