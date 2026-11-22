@@ -1,5 +1,5 @@
 from .serper_map_client import SerperMapClient
-from .serper_map_config import SerperMapConfig
+from .serper_map_config import SerperKeywordPlan, SerperMapConfig
 from .serper_map_errors import (
     SerperAuthError,
     SerperConfigError,
@@ -34,6 +34,7 @@ __all__ = [
     "SerperConfigError",
     "SerperError",
     "SerperGeocodeError",
+    "SerperKeywordPlan",
     "SerperMapClient",
     "SerperMapConfig",
     "SerperMapEvent",

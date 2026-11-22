@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from pydantic import ValidationError
 from tortoise import Tortoise
@@ -33,10 +34,36 @@ logger = get_logger(__name__)
 KEY_VARIABLE = "SERPER_API_KEYS"
 
 FLAG_NAMES = {
+    "plans": "--keyword",
     "keywords": "--keyword",
     "has_phone": "--has-phone",
     "has_website": "--has-website",
 }
+
+
+class KeywordAction(argparse.Action):
+    """Start a keyword plan: the --depth/--grid that follow belong to it."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        plan = {"keyword": str(values), "depth": None, "grid": None}
+        plans = getattr(namespace, "plans", None)
+        if plans is None:
+            plans = namespace.plans = []
+        plans.append(plan)
+        namespace.keyword_scope = plan
+
+
+class KeywordScopedAction(argparse.Action):
+    """Set a value on the plan the last --keyword flag started."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        plan = getattr(namespace, "keyword_scope", None)
+        if plan is None:
+            namespace.keyword_plan_error = (
+                f"{option_string} must follow a --keyword flag"
+            )
+            return
+        plan[self.dest] = cast(int, values)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,9 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--keyword",
         "-k",
-        action="append",
+        action=KeywordAction,
         metavar="KEYWORD",
-        help='a business type to search for, e.g. "plumbers"; repeat it for more keywords',
+        help='a business type to search for, e.g. "plumbers"; repeat it for more keywords, and give each its own --depth/--grid after it',
     )
     ap.add_argument("--city", help='city name, e.g. "Austin"')
     ap.add_argument("--state", help='optional state or region, e.g. "TX"')
@@ -60,16 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--depth",
         type=int,
-        default=1,
+        action=KeywordScopedAction,
         metavar="N",
-        help="Serper pages per tile, 1 to 10 (default: 1). Each page is one API call and 3 credits.",
+        help="Serper pages for that keyword, 1 to 10 (default: 1). Each page is one API call and 3 credits; follows a --keyword flag",
     )
     ap.add_argument(
         "--grid",
         type=int,
-        default=1,
+        action=KeywordScopedAction,
         metavar="N",
-        help="split the city into N x N tiles, 1 to 10 (default: 1, the whole city)",
+        help="split the city into N x N tiles for that keyword, 1 to 10 (default: 1, the whole city); follows a --keyword flag",
     )
     ap.add_argument(
         "--parallel",
@@ -109,9 +136,30 @@ def read_config(argv: list[str] | None = None) -> SerperMapConfig:
 def config_of(args: argparse.Namespace) -> SerperMapConfig:
     """Validate parsed arguments into a config; exits with one line per problem."""
     values = vars(args).copy()
-    values["keywords"] = tuple(values.pop("keyword") or ())
+    values.pop("keyword_scope", None)
+    values.pop("keyword", None)
+    values.pop("depth", None)
+    values.pop("grid", None)
     values.pop("dry_run")
     values.pop("no_resume")
+    error = values.pop("keyword_plan_error", None)
+    if error:
+        logger.warning("invalid arguments: %s", error)
+        sys.exit(f"✗ {error}")
+    plans = values.pop("plans", None)
+    if not plans:
+        logger.warning("invalid arguments: no keyword")
+        sys.exit(
+            '✗ --keyword is required: give at least one keyword, e.g. --keyword "plumbers".'
+        )
+    values["plans"] = [
+        {
+            key: value
+            for key, value in plan.items()
+            if value is not None and not key.startswith("_")
+        }
+        for plan in plans
+    ]
     try:
         return SerperMapConfig.model_validate(values)
     except ValidationError as error:
@@ -127,8 +175,7 @@ def config_of(args: argparse.Namespace) -> SerperMapConfig:
             )
             flag = FLAG_NAMES.get(field, f"--{field.replace('_', '-')}")
             if problem["type"] == "missing" or (
-                problem["type"] == "string_type"
-                and values.get(field) is None
+                problem["type"] == "string_type" and values.get(field) is None
             ):
                 lines.append(f"✗ {flag} is required.")
             elif field == "keywords" and problem["type"] == "too_short":
@@ -157,10 +204,27 @@ def print_plan(plan: SerperMapPlan, api_keys: list[str]) -> None:
     """Print what the run would do, and what it would cost. Never prints a key."""
     config = plan.config
     print("Dry run: nothing will be scraped or written.\n")
-    print(f"Search: {', '.join(repr(word) for word in config.keywords)} in {config.place}")
-    where = "whole city" if config.grid == 1 else f"{config.grid}x{config.grid} grid"
-    print(f"Tiles: {plan.tile_count} ({where})")
-    print(f"Pages per tile: {config.depth}")
+    print(
+        f"Search: {', '.join(repr(word) for word in config.keywords)} in {config.place}"
+    )
+    for keyword_plan in config.plans:
+        tiles = len(
+            {
+                (page.grid_x, page.grid_y)
+                for page in plan.pages
+                if page.keyword == keyword_plan.keyword
+            }
+        )
+        where = (
+            "whole city"
+            if keyword_plan.grid == 1
+            else f"{keyword_plan.grid}x{keyword_plan.grid} grid"
+        )
+        print(
+            f"  {keyword_plan.keyword!r}: depth {keyword_plan.depth}, "
+            f"{tiles} tiles, {where}"
+        )
+    print(f"Tiles: {plan.tile_count}")
     print(f"Requests: {plan.page_count} page(s)")
     print(f"Cost: {plan.estimated_credits} credits at 3 per page")
     print(f"Keys: {len(api_keys)} key(s), {config.parallel} parallel each")
@@ -202,8 +266,10 @@ def make_progress_printer() -> Callable[[SerperMapEvent], None]:
     def on_event(event: SerperMapEvent) -> None:
         if event.kind in ("request_done", "request_failed") and event.done is not None:
             mark = "✓" if event.kind == "request_done" else "✗"
-            print(f"  {mark} page {event.page.page if event.page else '?'} "
-                  f"({event.done}/{event.total})")
+            print(
+                f"  {mark} page {event.page.page if event.page else '?'} "
+                f"({event.done}/{event.total})"
+            )
         elif event.kind in ("key_dry", "key_dead"):
             print(f"  ⚠ key #{event.key_index}: {event.detail}")
 
@@ -212,7 +278,9 @@ def make_progress_printer() -> Callable[[SerperMapEvent], None]:
 
 async def run(config: SerperMapConfig, api_keys: list[str], *, no_resume: bool) -> int:
     """Drive the service for one command; returns the process exit code."""
-    service = SerperMapService(config, api_keys=api_keys, on_event=make_progress_printer())
+    service = SerperMapService(
+        config, api_keys=api_keys, on_event=make_progress_printer()
+    )
     try:
         job = None if no_resume else await service.find_unfinished()
         if job is not None and await asyncio.to_thread(ask_resume, job):
@@ -255,12 +323,10 @@ def main(argv: list[str] | None = None) -> int:
     config = config_of(args)
     api_keys = load_api_keys()
     logger.info(
-        "serper query: keywords=%r place=%r depth=%d grid=%d parallel=%d "
+        "serper query: plans=%r place=%r parallel=%d "
         "has_phone=%s has_website=%s keys=%d dry_run=%s",
-        config.keywords,
+        [(plan.keyword, plan.depth, plan.grid) for plan in config.plans],
         config.place,
-        config.depth,
-        config.grid,
         config.parallel,
         config.has_phone,
         config.has_website,

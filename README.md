@@ -18,16 +18,29 @@ same job through Serper's `/maps` endpoint instead: one API call per page, 3
 credits per call, at most 20 places per page.
 
 ```bash
+# one keyword: grid 3 splits the city 3x3, depth 2 reads two pages per tile
 uv run serper-map-scrape \
   --keyword plumbers --depth 2 --grid 3 \
+  --city Austin --state TX --country us
+
+# several keywords, each with its own depth and grid
+uv run serper-map-scrape \
+  --keyword plumber --depth 2 --grid 4 \
+  --keyword hvac --depth 4 --grid 2 \
   --city Austin --state TX --country us
 ```
 
 `SERPER_API_KEYS` in `.env` holds a comma-separated list of keys. Every key runs
 `--parallel` requests at a time (default 5) and rests 1.5 s between batches; when
-one key runs out of credits its work moves to the others. `--grid 3` splits the
-city into 3x3 tiles, `--depth 2` reads two pages per tile, so the command above
-is 3 x 3 x 2 = 18 calls, about 54 credits.
+one key runs out of credits its work moves to the others.
+
+`--depth` and `--grid` belong to the `--keyword` flag in front of them, so each
+keyword gets its own effort: `--keyword plumber --grid 4` searches 4x4 tiles while
+`--keyword hvac --grid 2` searches 2x2. Both default to 1, the whole city and one
+page; a `--depth` or `--grid` before any `--keyword` is an error. The first
+command above is 3 x 3 x 2 = 18 calls, about 54 credits; the second is
+4 x 4 x 2 + 2 x 2 x 4 = 48 calls, about 144 credits. Run with `--dry-run` to see
+the plan and the cost per keyword before spending anything.
 
 Jobs and their requests are stored in `serper_map_jobs` and
 `serper_map_requests`. If a run stops because the keys ran out of credits, the

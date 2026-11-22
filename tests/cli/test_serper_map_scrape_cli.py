@@ -16,7 +16,7 @@ BASE = ["--keyword", "plumbers", "--city", "Austin", "--state", "TX", "--country
 def test_the_flags_build_the_config():
     config = read_config(BASE + ["--depth", "2", "--grid", "3", "--parallel", "7"])
     assert config.keywords == ("plumbers",)
-    assert (config.depth, config.grid, config.parallel) == (2, 3, 7)
+    assert (config.plans[0].depth, config.plans[0].grid, config.parallel) == (2, 3, 7)
 
 
 def test_repeated_keyword_flags_make_one_keyword_each():
@@ -24,9 +24,55 @@ def test_repeated_keyword_flags_make_one_keyword_each():
     assert config.keywords == ("plumbers", "pizza")
 
 
+def test_each_keyword_keeps_the_depth_and_grid_that_follow_it():
+    config = read_config(
+        [
+            "--keyword",
+            "plumber",
+            "--depth",
+            "2",
+            "--grid",
+            "4",
+            "--keyword",
+            "hvac",
+            "--depth",
+            "4",
+            "--grid",
+            "2",
+            "--city",
+            "Austin",
+            "--state",
+            "TX",
+            "--country",
+            "us",
+        ]
+    )
+    assert [(plan.keyword, plan.depth, plan.grid) for plan in config.plans] == [
+        ("plumber", 2, 4),
+        ("hvac", 4, 2),
+    ]
+
+
+def test_a_keyword_without_its_own_flags_gets_one_page_one_tile():
+    config = read_config(BASE + ["--keyword", "pizza", "--depth", "4"])
+    assert [(plan.depth, plan.grid) for plan in config.plans] == [(1, 1), (4, 1)]
+
+
+def test_a_depth_before_any_keyword_is_refused():
+    with pytest.raises(SystemExit) as info:
+        read_config(["--depth", "2", *BASE])
+    assert "--depth must follow a --keyword flag" in str(info.value)
+
+
+def test_a_grid_before_any_keyword_is_refused():
+    with pytest.raises(SystemExit) as info:
+        read_config(["--grid", "3", *BASE])
+    assert "--grid must follow a --keyword flag" in str(info.value)
+
+
 def test_defaults_are_one_page_one_tile_and_five_parallel():
     config = read_config(BASE)
-    assert (config.depth, config.grid, config.parallel) == (1, 1, 5)
+    assert (config.plans[0].depth, config.plans[0].grid, config.parallel) == (1, 1, 5)
 
 
 def test_filters_default_off_and_can_be_turned_on():
@@ -63,6 +109,9 @@ def test_the_parser_names_the_per_key_meaning_of_parallel():
     help_text = build_parser().format_help()
     assert "per API key" in help_text
     assert "page" in help_text.lower()
+    # Both scoped flags say whose keyword they belong to (the help wraps, so
+    # only the phrase's start is asserted as one piece).
+    assert help_text.count("follows a") == 2
 
 
 def test_the_keys_are_read_from_the_environment(monkeypatch):
@@ -86,7 +135,9 @@ def test_a_key_is_never_printed_in_the_plan(capsys):
         config=config,
         center=(30.26, -97.74),
         bounding_box=None,
-        pages=[SerperMapPage("plumbers", page, 0, 0, 30.26, -97.74, 15) for page in (1, 2)],
+        pages=[
+            SerperMapPage("plumbers", page, 0, 0, 30.26, -97.74, 15) for page in (1, 2)
+        ],
     )
     print_plan(plan, ["secret-key-1"])
     printed = capsys.readouterr().out
@@ -94,6 +145,54 @@ def test_a_key_is_never_printed_in_the_plan(capsys):
     assert "2 page(s)" in printed
     assert "6 credits" in printed
     assert "1 key(s)" in printed
+
+
+def test_the_plan_prints_each_keyword_with_its_own_effort(capsys):
+    from app.repositories.serper_map_repository import SerperMapPage
+    from app.services.serper.maps.serper_map_plan import SerperMapPlan
+
+    config = read_config(
+        [
+            "--keyword",
+            "plumber",
+            "--depth",
+            "2",
+            "--grid",
+            "4",
+            "--keyword",
+            "hvac",
+            "--depth",
+            "4",
+            "--grid",
+            "2",
+            "--city",
+            "Austin",
+            "--state",
+            "TX",
+            "--country",
+            "us",
+        ]
+    )
+    pages = [
+        SerperMapPage("plumber", 1, x, y, 30.26, -97.74, 12)
+        for x in range(4)
+        for y in range(4)
+    ] + [
+        SerperMapPage("hvac", 1, x, y, 30.26, -97.74, 13)
+        for x in range(2)
+        for y in range(2)
+    ]
+    print_plan(
+        SerperMapPlan(
+            config=config, center=(30.26, -97.74), bounding_box=None, pages=pages
+        ),
+        ["k"],
+    )
+    printed = capsys.readouterr().out
+    assert "'plumber': depth 2, 16 tiles, 4x4 grid" in printed
+    assert "'hvac': depth 4, 4 tiles, 2x2 grid" in printed
+    assert "Tiles: 20" in printed
+    assert "20 page(s)" in printed
 
 
 def test_the_resume_question_accepts_yes_and_defaults_to_yes(monkeypatch):

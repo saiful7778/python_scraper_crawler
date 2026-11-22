@@ -40,16 +40,19 @@ serper-map-scrape \
 
 1. **Parse.** `--keyword` (repeatable), `--city`, `--state`, `--country`, `--depth`,
    `--grid`, `--parallel`, `--has-phone`, `--has-website`, `--dry-run`, plus the
-   resume flags described below. Validation is pydantic, the way the existing CLI
-   does it, and an invalid flag exits with the reason.
+   resume flags described below. `--depth` and `--grid` attach to the `--keyword`
+   before them, and a `--depth` or `--grid` before any `--keyword` exits with the
+   reason. Validation is pydantic, the way the existing CLI does it, and an
+   invalid flag exits with the reason.
 2. **Geocode once** through `get_geocode(place, with_bbox=True, country=country)`.
-   The centre point is used when `grid == 1`; the bounding box is split with
-   `build_grid_cells(bbox, grid)` otherwise. No geocode, no run — that is a hard
-   error, not a partial scrape.
-3. **Build the request list in memory.** For every keyword: every grid cell (or
-   the one city centre) × page `1..depth`. Each entry is
-   `(keyword, lat, lng, zoom, grid_index, page)`, and the list keeps that order.
-   A duplicate cell centre is collapsed.
+   The centre point is used by every keyword whose own grid is 1; the bounding box
+   is split per keyword with `build_grid_cells(bbox, grid)` for the rest. No
+   geocode, no run — that is a hard error, not a partial scrape, and the same goes
+   for a grid keyword when the city has no box.
+3. **Build the request list in memory.** For every keyword, with its own depth and
+   grid: every grid cell (or the one city centre) × page `1..depth`. Each entry is
+   `(keyword, lat, lng, zoom, grid_index, page)`, keyword by keyword, and a tile
+   covers all its pages before the next tile.
 4. **Open the job.** A `serper_map_jobs` row is created with the full config and
    the request count; one `serper_map_requests` row per entry, all `pending`.
 5. **Load known keys** through `GoogleMapProfileRepository.key_rows()` so rows
@@ -124,41 +127,41 @@ style (UUID pk, `created_at`, `updated_at`).
 
 `serper_map_jobs`
 
-| column | type | notes |
-| --- | --- | --- |
-| `id` | UUID | pk |
-| `name` | varchar(200) | e.g. `plumbers @ Austin, TX, US` |
-| `status` | varchar(16), indexed | `running` / `exhausted` / `interrupted` / `finished` / `failed` |
-| `error` | text | last error, empty when none |
-| `config` | JSON | keywords, city, state, country, depth, grid, parallel, filters, lat/lon/zoom, bbox |
-| `key_count` | int | keys used; never the keys themselves |
-| `total_requests` | int | size of the queue |
-| `done_requests` | int | pages with a 200 and a save attempt |
-| `failed_requests` | int | pages that ended in a permanent failure |
-| `places_found` | int | raw places returned |
-| `places_saved` | int | rows written after dedupe and filters |
-| `credits_spent` | int | sum of the `credits` in responses |
-| `created_at`, `updated_at` | datetime | |
+| column                     | type                 | notes                                                                              |
+| -------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `id`                       | UUID                 | pk                                                                                 |
+| `name`                     | varchar(200)         | e.g. `plumbers @ Austin, TX, US`                                                   |
+| `status`                   | varchar(16), indexed | `running` / `exhausted` / `interrupted` / `finished` / `failed`                    |
+| `error`                    | text                 | last error, empty when none                                                        |
+| `config`                   | JSON                 | keywords, city, state, country, depth, grid, parallel, filters, lat/lon/zoom, bbox |
+| `key_count`                | int                  | keys used; never the keys themselves                                               |
+| `total_requests`           | int                  | size of the queue                                                                  |
+| `done_requests`            | int                  | pages with a 200 and a save attempt                                                |
+| `failed_requests`          | int                  | pages that ended in a permanent failure                                            |
+| `places_found`             | int                  | raw places returned                                                                |
+| `places_saved`             | int                  | rows written after dedupe and filters                                              |
+| `credits_spent`            | int                  | sum of the `credits` in responses                                                  |
+| `created_at`, `updated_at` | datetime             |                                                                                    |
 
 `serper_map_requests`
 
-| column | type | notes |
-| --- | --- | --- |
-| `id` | UUID | pk |
-| `job` | FK → `serper_map_jobs` | cascade |
-| `keyword` | varchar(500) | |
-| `page` | int | 1-based |
-| `grid_x`, `grid_y` | int | 0 when there is no grid |
-| `lat`, `lng` | float | the tile centre |
-| `zoom` | int | from `build_grid_cells` |
-| `status` | varchar(16), indexed | `pending` / `done` / `failed` |
-| `attempts` | int | calls made, across keys |
-| `key_hint` | int, nullable | index of the key that succeeded last (never the key) |
-| `http_status` | int, nullable | |
-| `error` | text | empty when none |
-| `places` | int | places returned |
-| `credits` | int | credits the response reported |
-| `created_at`, `updated_at` | datetime | |
+| column                     | type                   | notes                                                |
+| -------------------------- | ---------------------- | ---------------------------------------------------- |
+| `id`                       | UUID                   | pk                                                   |
+| `job`                      | FK → `serper_map_jobs` | cascade                                              |
+| `keyword`                  | varchar(500)           |                                                      |
+| `page`                     | int                    | 1-based                                              |
+| `grid_x`, `grid_y`         | int                    | 0 when there is no grid                              |
+| `lat`, `lng`               | float                  | the tile centre                                      |
+| `zoom`                     | int                    | from `build_grid_cells`                              |
+| `status`                   | varchar(16), indexed   | `pending` / `done` / `failed`                        |
+| `attempts`                 | int                    | calls made, across keys                              |
+| `key_hint`                 | int, nullable          | index of the key that succeeded last (never the key) |
+| `http_status`              | int, nullable          |                                                      |
+| `error`                    | text                   | empty when none                                      |
+| `places`                   | int                    | places returned                                      |
+| `credits`                  | int                    | credits the response reported                        |
+| `created_at`, `updated_at` | datetime               |                                                      |
 
 Unique together on `(job, keyword, page, grid_x, grid_y)`, so building the queue
 twice, or resuming, cannot duplicate a request row.
@@ -170,26 +173,26 @@ Migration `0006_serper_map_tables.py`, depending on `0005`, created with
 
 `Place` (Serper) → `LeadRow` (existing), keeping the existing dedupe keys alive:
 
-| LeadRow | from Serper |
-| --- | --- |
-| `title` | `title` |
-| `address` | `address` |
-| `phone` | `phoneNumber`, formatted for the country with `format_phone_numbers` so `--has-phone` behaves like the browser CLI |
-| `website` | `website` |
-| `categories` | `types` joined with `" | "`, which `address_fields`/`_split` expect |
-| `latitude`, `longitude` | `latitude`, `longitude` |
-| `cid` | `cid` |
-| `data_id` | `fid` (it is `0x…:0x…`, the shape the parser already turns into a CID) |
-| `place_id` | `placeId` |
-| `link` | the Google Maps place URL for `title` + `placeId` |
-| `open_hours` | `openingHours` as JSON |
-| `review_count` | `ratingCount` |
-| `review_rating` | `rating` |
-| `thumbnail` | `thumbnailUrl` |
-| `descriptions` | `type` (the primary category) |
-| `input_id` | the keyword that found it |
-| `complete_address` | `""` — Serper gives only the one-line address |
-| everything else | `""` / `None`, so the repository's `fill_empty` never blanks stored data |
+| LeadRow                 | from Serper                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `title`                 | `title`                                                                                                            |
+| `address`               | `address`                                                                                                          |
+| `phone`                 | `phoneNumber`, formatted for the country with `format_phone_numbers` so `--has-phone` behaves like the browser CLI |
+| `website`               | `website`                                                                                                          |
+| `categories`            | `types` joined with `"                                                                                             | "`, which `address_fields`/`_split` expect |
+| `latitude`, `longitude` | `latitude`, `longitude`                                                                                            |
+| `cid`                   | `cid`                                                                                                              |
+| `data_id`               | `fid` (it is `0x…:0x…`, the shape the parser already turns into a CID)                                             |
+| `place_id`              | `placeId`                                                                                                          |
+| `link`                  | the Google Maps place URL for `title` + `placeId`                                                                  |
+| `open_hours`            | `openingHours` as JSON                                                                                             |
+| `review_count`          | `ratingCount`                                                                                                      |
+| `review_rating`         | `rating`                                                                                                           |
+| `thumbnail`             | `thumbnailUrl`                                                                                                     |
+| `descriptions`          | `type` (the primary category)                                                                                      |
+| `input_id`              | the keyword that found it                                                                                          |
+| `complete_address`      | `""` — Serper gives only the one-line address                                                                      |
+| everything else         | `""` / `None`, so the repository's `fill_empty` never blanks stored data                                           |
 
 `is_crawlable` is set only when `--has-website` is on, using `LeadCrawlability`,
 matching the browser scraper (`check_crawlable=settings.has_website`).
@@ -305,8 +308,8 @@ Rules that make it reusable:
 --city             required
 --state            optional
 --country          required, 2 letters
---depth            pages per tile, 1..10, default 1
---grid             N x N tiles, 1..10, default 1
+--depth            pages per tile for the keyword before it, 1..10, default 1
+--grid             N x N tiles for the keyword before it, 1..10, default 1
 --parallel         requests per API key at a time, 1..20, default 5
 --has-phone        keep rows with a phone
 --has-website      keep rows with a website, and check crawlability
@@ -314,9 +317,15 @@ Rules that make it reusable:
 --no-resume        never ask; always start a new job
 ```
 
+`--depth` and `--grid` belong to the `--keyword` flag in front of them, so one
+run can give each keyword its own effort; a `--depth` or `--grid` before any
+`--keyword` is refused, and either left out defaults to 1. The config stores a
+`plans` tuple of `(keyword, depth, grid)` and derives `keywords` from it, and the
+plans are part of the config hash the resume lookup matches on.
+
 `--depth` here means Serper pages, not browser scroll batches: depth 2 is pages
-1 and 2 per tile. The help text says so. Cost is printed in the plan: 3 credits
-× tiles × pages.
+1 and 2 per tile. The help text says so. Cost is printed in the plan per
+keyword: 3 credits × tiles × pages, summed over the keywords.
 
 ## Goals
 
@@ -336,7 +345,7 @@ Rules that make it reusable:
 - Replacing the browser scraper, or sharing its Redis tile queue.
 - A REST endpoint, a web UI, or a scheduler. Those come later and call the
   service; this plan builds only the service and its CLI.
-- Per-keyword depth or grid, deep scan, sub-tiles, proxies.
+- Depth ranges (`--depth-from` / `--depth-to`), deep scan, sub-tiles, proxies.
 - Collecting place details beyond what `/maps` returns (no reviews text, no
   images, no emails, no socials).
 - Storing or logging API keys.

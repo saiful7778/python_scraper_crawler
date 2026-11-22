@@ -1,6 +1,5 @@
 """A grid run through the service: 4 keys, one dry, dedupe across tiles."""
 
-
 from app.models import LeadModel, SerperMapRequestModel
 from app.repositories.serper_map_repository import SerperMapPage
 from app.services.google_map_scraper.google_map.geo import (
@@ -18,7 +17,12 @@ CITY_BOX: BoundingBox = (30.09, 30.51, -97.93, -97.56)
 
 
 def _config(**overrides):
-    values = {"keywords": ("plumbers",), "city": "Austin", "state": "TX", "country": "US"}
+    values = {
+        "keywords": ("plumbers",),
+        "city": "Austin",
+        "state": "TX",
+        "country": "US",
+    }
     values.update(overrides)
     return SerperMapConfig(**values)
 
@@ -27,17 +31,17 @@ def _grid_plan(config: SerperMapConfig) -> SerperMapPlan:
     """The same tiling build_plan produces, without the network geocode."""
     pages = [
         SerperMapPage(
-            keyword=keyword,
+            keyword=plan.keyword,
             page=page,
-            grid_x=index % config.grid,
-            grid_y=index // config.grid,
+            grid_x=index % plan.grid,
+            grid_y=index // plan.grid,
             lat=cell["lat"],
             lng=cell["lon"],
             zoom=cell["zoom"],
         )
-        for keyword in config.keywords
-        for index, cell in enumerate(build_grid_cells(CITY_BOX, config.grid))
-        for page in range(1, config.depth + 1)
+        for plan in config.plans
+        for index, cell in enumerate(build_grid_cells(CITY_BOX, plan.grid))
+        for page in range(1, plan.depth + 1)
     ]
     return SerperMapPlan(
         config=config, center=(30.2649, -97.7474), bounding_box=CITY_BOX, pages=pages
@@ -164,9 +168,7 @@ async def test_a_resumed_exhausted_job_finishes_without_refetching(db, monkeypat
             pass
 
     dry = Dry()
-    failing = SerperMapService(
-        config, api_keys=["k"], client_factory=lambda key: dry
-    )
+    failing = SerperMapService(config, api_keys=["k"], client_factory=lambda key: dry)
     job_id = await failing.start()
     first = await failing.run(job_id)
     assert first.status == "exhausted"
