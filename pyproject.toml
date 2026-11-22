@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 google-map-scrape = "cli.google_map_scrape_cli:main"
+serper-map-scrape = "cli.serper_map_scrape_cli:main"
 crawler = "cli.crawler_cli:main"
 
 [dependency-groups]

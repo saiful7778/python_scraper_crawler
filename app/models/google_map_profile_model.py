@@ -57,6 +57,8 @@ class GoogleMapProfileHourModel(Model):
     google_map = fields.ForeignKeyField(
         "models.GoogleMapProfileModel", related_name="hours", on_delete=fields.CASCADE
     )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta(Model.Meta):
         table = "google_map_profile_hours"
