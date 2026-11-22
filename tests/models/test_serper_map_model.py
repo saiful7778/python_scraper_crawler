@@ -55,3 +55,24 @@ async def test_a_request_is_unique_per_job_keyword_page_and_grid(db):
     await SerperMapRequestModel.create(**fields)
     with pytest.raises(IntegrityError):
         await SerperMapRequestModel.create(**fields)
+
+
+async def test_the_hours_table_stamps_every_row(db):
+    """Every other profile table has timestamps; the hours table must too.
+
+    The live table has had NOT NULL created_at/updated_at since the
+    add_timestamps_to_hours migration, so a model without them fails to insert.
+    """
+    from app.models import (
+        GoogleMapProfileHourModel,
+        GoogleMapProfileModel,
+        LeadModel,
+    )
+
+    lead = await LeadModel.create(title="Cafe")
+    profile = await GoogleMapProfileModel.create(lead_id=lead.id)
+    hour = await GoogleMapProfileHourModel.create(
+        google_map_id=profile.id, day="Monday", position=0, span="9-5"
+    )
+    assert hour.created_at is not None
+    assert hour.updated_at is not None

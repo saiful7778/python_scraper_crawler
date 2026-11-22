@@ -111,3 +111,20 @@ async def test_a_grid_without_a_bounding_box_raises(monkeypatch):
 def test_unknown_fields_are_refused():
     with pytest.raises(ValidationError):
         _config(proxy="http://x")
+
+
+async def test_a_whole_city_uses_the_zoom_its_own_box_gives(monkeypatch):
+    box = [str(v) for v in (30.09, 30.51, -97.93, -97.56)]
+    monkeypatch.setattr(
+        plan_module, "get_geocode", lambda *a, **k: ((30.26, -97.74), box)
+    )
+    built = await build_plan(_config())
+    # A city box at 1x1 is zoom 12 in build_grid_cells, not a neighbourhood's 15.
+    assert built.pages[0].zoom == 12
+    assert built.bounding_box is None  # a whole-city run is not trimmed to a box
+
+
+async def test_a_whole_city_without_a_box_falls_back_to_the_default_zoom(monkeypatch):
+    monkeypatch.setattr(plan_module, "get_geocode", lambda *a, **k: ((30.26, -97.74), None))
+    built = await build_plan(_config())
+    assert built.pages[0].zoom == plan_module.WHOLE_CITY_ZOOM

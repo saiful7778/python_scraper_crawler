@@ -12,6 +12,7 @@ from app.services.google_map_scraper.google_map.geo import (
     get_geocode,
 )
 from app.services.google_map_scraper.scraper import parse_bounding_box
+from app.utils.errors import ScraperError, describe
 from app.utils.logger import get_logger
 
 from .serper_map_client import CREDITS_PER_PAGE
@@ -48,19 +49,31 @@ class SerperMapPlan:
 
 async def build_plan(config: SerperMapConfig) -> SerperMapPlan:
     """Resolve the city and lay out one page request per keyword, tile and page."""
-    found = await asyncio.to_thread(
-        get_geocode, config.place, True, config.country
-    )
+    found = await asyncio.to_thread(get_geocode, config.place, True, config.country)
     if not found:
         raise SerperGeocodeError(f"could not find coordinates for {config.place!r}")
     center, raw_box = cast(tuple[LatLon, list[str] | None], found)
 
     if config.grid == 1:
+        # The ll zoom is the search area, so a whole-city run uses the zoom the
+        # city's own box would give a 1x1 grid, not a neighbourhood zoom.
+        zoom = WHOLE_CITY_ZOOM
+        if raw_box:
+            try:
+                zoom = build_grid_cells(
+                    parse_bounding_box(config.place, raw_box), 1
+                )[0]["zoom"]
+            except ScraperError as error:
+                logger.warning(
+                    "the city box could not be read, using zoom %d: %s",
+                    WHOLE_CITY_ZOOM,
+                    describe(error),
+                )
         return SerperMapPlan(
             config=config,
             center=center,
             bounding_box=None,
-            pages=_whole_city_pages(config, center),
+            pages=_whole_city_pages(config, center, zoom),
         )
 
     if not raw_box:
@@ -76,7 +89,9 @@ async def build_plan(config: SerperMapConfig) -> SerperMapPlan:
     )
 
 
-def _whole_city_pages(config: SerperMapConfig, center: LatLon) -> list[SerperMapPage]:
+def _whole_city_pages(
+    config: SerperMapConfig, center: LatLon, zoom: int
+) -> list[SerperMapPage]:
     lat, lon = center
     return [
         SerperMapPage(
@@ -86,7 +101,7 @@ def _whole_city_pages(config: SerperMapConfig, center: LatLon) -> list[SerperMap
             grid_y=0,
             lat=lat,
             lng=lon,
-            zoom=WHOLE_CITY_ZOOM,
+            zoom=zoom,
         )
         for keyword in config.keywords
         for page in range(1, config.depth + 1)

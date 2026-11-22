@@ -8,7 +8,7 @@ from tortoise.migrations import operations as ops
 
 
 class Migration(migrations.Migration):
-    dependencies = [("models", "0005_remove_unique_idx")]
+    dependencies = [("models", "0006_add_timestamps_to_hours")]
 
     initial = False
 
