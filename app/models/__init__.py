@@ -22,6 +22,12 @@ from .lead_model import (
     LeadSocialModel,
 )
 from .scrape_model import ScrapeModel
+from .serper_map_model import (
+    SerperMapJobModel,
+    SerperMapJobStatus,
+    SerperMapRequestModel,
+    SerperMapRequestStatus,
+)
 
 __all__ = [
     "CrawlEventModel",
@@ -42,4 +48,8 @@ __all__ = [
     "LeadModel",
     "LeadSocialModel",
     "ScrapeModel",
+    "SerperMapJobModel",
+    "SerperMapJobStatus",
+    "SerperMapRequestModel",
+    "SerperMapRequestStatus",
 ]
