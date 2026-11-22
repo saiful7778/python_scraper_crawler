@@ -281,3 +281,16 @@ def test_the_unfinished_job_is_offered_and_resumed(monkeypatch, capsys):
     assert cli.main(BASE) == 0
     assert resumed == [job.id]
     assert started == []
+
+
+def test_a_missing_city_says_it_is_required():
+    with pytest.raises(SystemExit) as info:
+        read_config(["--keyword", "plumbers", "--country", "us"])
+    assert "✗ --city is required." in str(info.value)
+
+
+def test_an_empty_keyword_exits_with_the_flag_named():
+    with pytest.raises(SystemExit) as info:
+        read_config(["--city", "Austin", "--country", "us"])
+    assert "--keyword" in str(info.value)
+    assert "at least one keyword" in str(info.value)

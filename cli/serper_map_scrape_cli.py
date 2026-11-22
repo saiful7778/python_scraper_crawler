@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 KEY_VARIABLE = "SERPER_API_KEYS"
 
 FLAG_NAMES = {
+    "keywords": "--keyword",
     "has_phone": "--has-phone",
     "has_website": "--has-website",
 }
@@ -125,8 +126,13 @@ def config_of(args: argparse.Namespace) -> SerperMapConfig:
                 "",
             )
             flag = FLAG_NAMES.get(field, f"--{field.replace('_', '-')}")
-            if problem["type"] == "missing":
+            if problem["type"] == "missing" or (
+                problem["type"] == "string_type"
+                and values.get(field) is None
+            ):
                 lines.append(f"✗ {flag} is required.")
+            elif field == "keywords" and problem["type"] == "too_short":
+                lines.append(f"✗ {flag} is required: give at least one keyword.")
             elif field:
                 lines.append(f"✗ {flag}: {problem['msg']}.")
             else:
