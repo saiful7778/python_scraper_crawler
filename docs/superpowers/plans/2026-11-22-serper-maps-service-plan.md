@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-22-serper-maps-cli-design.md`
 
+**Status:** implemented
+
 ## Global Constraints
 
 - Service modules (`app/services/serper/**`) must not import `argparse`, call `print`, prompt, read `os.getenv`, or call `sys.exit`. Typed errors only.

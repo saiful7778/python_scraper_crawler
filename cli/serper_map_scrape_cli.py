@@ -102,7 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def read_config(argv: list[str] | None = None) -> SerperMapConfig:
     """Parse the command line into a validated config; exits with the reason if it is invalid."""
-    values = vars(build_parser().parse_args(argv))
+    return config_of(build_parser().parse_args(argv))
+
+
+def config_of(args: argparse.Namespace) -> SerperMapConfig:
+    """Validate parsed arguments into a config; exits with one line per problem."""
+    values = vars(args).copy()
     values["keywords"] = tuple(values.pop("keyword") or ())
     values.pop("dry_run")
     values.pop("no_resume")
@@ -241,7 +246,7 @@ def report(result: SerperMapResult) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = read_config(argv)
+    config = config_of(args)
     api_keys = load_api_keys()
     logger.info(
         "serper query: keywords=%r place=%r depth=%d grid=%d parallel=%d "
